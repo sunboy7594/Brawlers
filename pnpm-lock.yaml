@@ -20,6 +20,15 @@ importers:
       '@quenty/loader':
         specifier: ^10.10.0
         version: 10.10.0
+      '@quenty/mouseshiftlockservice':
+        specifier: ^11.16.0
+        version: 11.16.0
+      '@quenty/playerhumanoidbinder':
+        specifier: ^14.33.0
+        version: 14.33.0
+      '@quenty/r15utils':
+        specifier: ^13.28.0
+        version: 13.28.0
       '@quenty/servicebag':
         specifier: ^11.16.0
         version: 11.16.0
@@ -77,6 +86,9 @@ packages:
   '@quenty/grouputils@10.16.0':
     resolution: {integrity: sha512-pGpJoq7QtNA57sSYqI28Yec5O2OSF01WfWU0cyR+XvRNFGjYIKtKnFV5CbhW+W1yAvFDBDy5Ed1W2QYJqt22oQ==}
 
+  '@quenty/humanoidtracker@13.28.0':
+    resolution: {integrity: sha512-4KLcecGIL6qSbPeviixfcKXlIB4OBOiSyPD5XwFh4AgwKc1GBoYL84yNlUYJA54jmoHWjhOKLCTvZzA9fkykgg==}
+
   '@quenty/insertserviceutils@10.16.0':
     resolution: {integrity: sha512-wqMPU33unihwSAOP4mYGXMgENQ+DQ0aH+Paq2XGrEqoeoVcxRJ3QQMLQRrXnV2Wl3KbshEO4hRDZmGjA+rxGFg==}
 
@@ -95,6 +107,9 @@ packages:
   '@quenty/math@2.7.5':
     resolution: {integrity: sha512-tYOvmTwijqm1og6QdO+j9EDKSk0/0TCae83H1yUElYWuzV1PAG1Q18VT0Yk0q/05Uduulb2s3Dx6QmyI/qKSgA==}
 
+  '@quenty/mouseshiftlockservice@11.16.0':
+    resolution: {integrity: sha512-LazOyDqV45Tw/GrLfmmSlnAVcfWKtJaGMQMPAAXJTR0JGsetXwyI4GEh7MkL+6HCvLTK+fuwExBMCMvEGW688g==}
+
   '@quenty/nevermore-test-runner@1.3.0':
     resolution: {integrity: sha512-qCPluVpOPfWIQkwGiFF09BNbDfvkskwM1Kynfqvd42fz2qrVGyJQrnV7f7wabWbu8KXMzW3grCkY92Q5NX1wDA==}
 
@@ -103,6 +118,9 @@ packages:
 
   '@quenty/permissionprovider@14.33.0':
     resolution: {integrity: sha512-7/1xLSVZb9r9hpERR2WKzWq/K081IAmUVHatRAlRiyCBn7qQ4Y2/YRB0y8YgJntn2Fclhqe7RLJUgm9RcWhkrQ==}
+
+  '@quenty/playerhumanoidbinder@14.33.0':
+    resolution: {integrity: sha512-p6Uip1OBlYkxud+Qd/YsEVQsb5RCsOz5tKt8UsUD9o7GRCWk2PIINUKISgkHL/GEaKaqkwPny+Sd7wM1smbxJQ==}
 
   '@quenty/playerutils@8.29.0':
     resolution: {integrity: sha512-iGEgvP8nfCBMKPCfXdod3hjQMTBecSqGmkWDGeDDxa06xW53MzZiAJWm/TyLL+rkW9PFL9Q27T58pAbp4r1d6g==}
@@ -115,6 +133,9 @@ packages:
 
   '@quenty/pseudolocalize@3.5.2':
     resolution: {integrity: sha512-xtk0UEtUAR1NUpFTkD8gIY6SB91QeTGdxhiCVg75u/IDiK2kLFfveMabfTzosbTlkzuXTcuQI7y7T6IVANShpw==}
+
+  '@quenty/r15utils@13.28.0':
+    resolution: {integrity: sha512-TE77d6iJyuk4JOHcC3TfIz0YSdGhCuPJWbXofKbtusM04mSCjPB/RmiTkbd99/1KZ3TCC6BRcVdTCOuilloDhQ==}
 
   '@quenty/remotefunctionutils@10.16.0':
     resolution: {integrity: sha512-0+5CNzUkFsecyOoePM+oQ9wG7RY48+6cyJ1tOYB6VIg7O3ZVXQV/9qbbEszEs2odn4Mgu7ybg2Js3HN06XB7Zw==}
@@ -312,6 +333,17 @@ snapshots:
       '@quenty/loader': 10.10.0
       '@quenty/promise': 10.16.0
 
+  '@quenty/humanoidtracker@13.28.0':
+    dependencies:
+      '@quenty/baseobject': 10.12.0
+      '@quenty/brio': 14.27.0
+      '@quenty/loader': 10.10.0
+      '@quenty/maid': 3.8.0
+      '@quenty/promise': 10.16.0
+      '@quenty/rx': 13.26.0
+      '@quenty/signal': 7.12.0
+      '@quenty/valueobject': 13.28.0
+
   '@quenty/insertserviceutils@10.16.0':
     dependencies:
       '@quenty/loader': 10.10.0
@@ -345,6 +377,11 @@ snapshots:
       '@quentystudios/jest-lua': 3.10.0-quenty.2
 
   '@quenty/math@2.7.5': {}
+
+  '@quenty/mouseshiftlockservice@11.16.0':
+    dependencies:
+      '@quenty/loader': 10.10.0
+      '@quenty/promise': 10.16.0
 
   '@quenty/nevermore-test-runner@1.3.0':
     dependencies:
@@ -387,6 +424,15 @@ snapshots:
       '@quenty/table': 3.9.2
       '@quentystudios/jest-lua': 3.10.0-quenty.2
 
+  '@quenty/playerhumanoidbinder@14.33.0':
+    dependencies:
+      '@quenty/binder': 14.32.0
+      '@quenty/humanoidtracker': 13.28.0
+      '@quenty/loader': 10.10.0
+      '@quenty/maid': 3.8.0
+      '@quenty/servicebag': 11.16.0
+      '@quenty/valueobject': 13.28.0
+
   '@quenty/playerutils@8.29.0':
     dependencies:
       '@quenty/brio': 14.27.0
@@ -412,6 +458,13 @@ snapshots:
       '@quenty/promise': 10.16.0
 
   '@quenty/pseudolocalize@3.5.2': {}
+
+  '@quenty/r15utils@13.28.0':
+    dependencies:
+      '@quenty/brio': 14.27.0
+      '@quenty/instanceutils': 13.27.0
+      '@quenty/loader': 10.10.0
+      '@quenty/rx': 13.26.0
 
   '@quenty/remotefunctionutils@10.16.0':
     dependencies:

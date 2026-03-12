@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /d/RobloxDocuments/RobloxProjects/Brawlers/node_modules -path \"*spring*\" -name \"*.lua\" 2>/dev/null | head -10)",
+      "Bash(find /d/RobloxDocuments/RobloxProjects/Brawlers/node_modules -path \"*baseobject*\" -name \"*.lua\" 2>/dev/null | head -5)",
+      "Bash(find /d/RobloxDocuments/RobloxProjects/Brawlers/node_modules -path \"*mouseshiftlock*\" -name \"*.lua\" 2>/dev/null | head -10)",
+      "Bash(find /d/RobloxDocuments/RobloxProjects/Brawlers/node_modules -path \"*r15utils*\" -name \"*.lua\" 2>/dev/null | head -10)",
+      "Bash(find /d/RobloxDocuments/RobloxProjects/Brawlers/node_modules -path \"*playerhumanoidbinder*\" -name \"*.lua\" 2>/dev/null | head -10)",
+      "Bash(find /d/RobloxDocuments/RobloxProjects/Brawlers/node_modules -maxdepth 3 -name \"package.json\" | xargs grep -l '\"name\"' | head -30 | while read f; do cat \"$f\" | python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(d.get\\('name','?'\\)\\)\" 2>/dev/null; done)",
+      "Read(//d/RobloxDocuments/RobloxProjects/Brawlers_old/node_modules/.pnpm/**)",
+      "Bash(cd \"D:\\\\RobloxDocuments\\\\RobloxProjects\\\\Brawlers\" && pnpm add @quenty/mouseshiftlockservice @quenty/r15utils @quenty/playerhumanoidbinder 2>&1)",
+      "Bash(cd D:/RobloxDocuments/RobloxProjects/Brawlers && pnpm run lint:selene 2>&1 | head -80)",
+      "Bash(cd D:/RobloxDocuments/RobloxProjects/Brawlers && pnpm run lint:selene 2>&1 | head -100)"
+    ]
+  }
+}

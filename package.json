@@ -25,6 +25,9 @@
     "@quenty/clienttranslator": "^14.33.0",
     "@quenty/cmdrservice": "^13.39.0",
     "@quenty/loader": "^10.10.0",
+    "@quenty/mouseshiftlockservice": "^11.16.0",
+    "@quenty/playerhumanoidbinder": "^14.33.0",
+    "@quenty/r15utils": "^13.28.0",
     "@quenty/servicebag": "^11.16.0"
   },
   "publishConfig": {
