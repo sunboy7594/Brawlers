@@ -18,5 +18,14 @@ serviceBag:GetService(require("CameraControllerClient"))
 serviceBag:GetService(require("BasicMovementClient"))
 serviceBag:GetService(require("HumanoidBinderClient"))
 
+-- 어빌리티 시스템
+-- AimController는 BasicAttackClient보다 먼저 등록해야 Init에서 GetService 가능
+serviceBag:GetService(require("AimController"))
+serviceBag:GetService(require("BasicAttackClient"))
+serviceBag:GetService(require("SkillClient"))
+serviceBag:GetService(require("UltimateClient"))
+-- 테스트용 장착 클라이언트 (슬롯 시스템 완성 시 제거)
+serviceBag:GetService(require("TestLoadoutClient"))
+
 serviceBag:Init()
 serviceBag:Start()

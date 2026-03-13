@@ -4,8 +4,8 @@
 
 	책임:
 	- Shift 입력 감지 → 달리기/걷기 판단
-	- 상태 변경 시 서버에 전송 (MovementStateEvent)
-	- 서버로부터 클래스 변경 수신 → 애니메이션 전환
+	- 상태 변경 시 서버에 전송 (MovementRemoting.IsRunning)
+	- 서버로부터 클래스 변경 수신 → 애니메이션 전환 (ClassRemoting.ClassChanged)
 	- SetAnimator()로 주입받은 애니메이터 사용
 	- SetCameraAnimator()로 주입받은 카메라 애니메이터 사용
 	- SetHumanoid()로 주입받은 Humanoid 사용
@@ -15,16 +15,18 @@
 
 local require = require(script.Parent.loader).load(script)
 
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+
 local AnimationControllerClient = require("AnimationControllerClient")
 local CameraAnimator = require("CameraAnimator")
+local ClassRemoting = require("ClassRemoting")
 local EntityAnimator = require("EntityAnimator")
 local KeybindConfig = require("KeybindConfig")
 local Maid = require("Maid")
 local MovementConfig = require("MovementConfig")
+local MovementRemoting = require("MovementRemoting")
 local ServiceBag = require("ServiceBag")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
 
 local BasicMovementClient = {}
 BasicMovementClient.ServiceName = "BasicMovementClient"
@@ -41,8 +43,6 @@ export type BasicMovementClient = typeof(setmetatable(
 		_isRunning: boolean,
 		_isMoving: boolean,
 		_isShiftDown: boolean,
-		_movementStateEvent: RemoteEvent,
-		_classUpdateEvent: RemoteEvent,
 	},
 	{} :: typeof({ __index = BasicMovementClient })
 ))
@@ -60,20 +60,18 @@ function BasicMovementClient.Init(self: BasicMovementClient, serviceBag: Service
 	self._isRunning = false
 	self._isMoving = false
 	self._isShiftDown = false
-end
 
-function BasicMovementClient.Start(self: BasicMovementClient): ()
-	local assets = ReplicatedStorage:WaitForChild("Assets")
-	local events = assets:WaitForChild("Events")
-	self._movementStateEvent = events:WaitForChild("MovementStateEvent") :: RemoteEvent
-	self._classUpdateEvent = events:WaitForChild("ClassUpdateEvent") :: RemoteEvent
-
-	self._maid:GiveTask(self._classUpdateEvent.OnClientEvent:Connect(function(className: unknown)
+	-- 서버 → 클라이언트: 클래스 변경 수신
+	-- Remoting이 자동으로 ClassRemotes 폴더가 생길 때까지 대기 후 연결
+	self._maid:GiveTask(ClassRemoting.ClassChanged:Connect(function(className: unknown)
 		if type(className) == "string" then
 			self:_onClassChanged(className)
 		end
 	end))
+end
 
+function BasicMovementClient.Start(self: BasicMovementClient): ()
+	-- 매 프레임 이동 상태 감지
 	self._maid:GiveTask(RunService.Heartbeat:Connect(function()
 		self:_poll()
 	end))
@@ -138,10 +136,12 @@ function BasicMovementClient:_poll()
 	self._isMoving = isMoving
 	self._isShiftDown = isShiftDown
 
+	-- Shift 상태가 바뀔 때만 서버로 전송
 	if prevShiftDown ~= isShiftDown then
-		self._movementStateEvent:FireServer(isShiftDown)
+		MovementRemoting.IsRunning:FireServer(isShiftDown)
 	end
 
+	-- 이동 상태에 따라 애니메이션 전환
 	if not self._isMoving then
 		self:_playAnim("Idle", true)
 		self:_playCamAnim("RunFOV", false)

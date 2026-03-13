@@ -18,12 +18,14 @@
 
 local require = require(script.Parent.loader).load(script)
 
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+
+local ClassRemoting = require("ClassRemoting")
 local Maid = require("Maid")
 local MovementConfig = require("MovementConfig")
+local MovementRemoting = require("MovementRemoting")
 local ServiceBag = require("ServiceBag")
-local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
 
 local BasicMovementService = {}
 BasicMovementService.ServiceName = "BasicMovementService"
@@ -65,8 +67,6 @@ export type BasicMovementService = typeof(setmetatable(
 		_maid: any,
 		_playerStates: { [number]: PlayerState },
 		_playerMaids: { [number]: any },
-		_movementStateEvent: RemoteEvent, -- Client → Server: (isRunning: boolean)
-		_classUpdateEvent: RemoteEvent, -- Server → Client: (className: string)
 	},
 	{} :: typeof({ __index = BasicMovementService })
 ))
@@ -80,11 +80,28 @@ function BasicMovementService.Init(self: BasicMovementService, serviceBag: Servi
 	self._playerStates = {}
 	self._playerMaids = {}
 
-	-- RemoteEvent 가져오기
-	local assets = ReplicatedStorage:WaitForChild("Assets")
-	local events = assets:WaitForChild("Events")
-	self._movementStateEvent = events:WaitForChild("MovementStateEvent") :: RemoteEvent
-	self._classUpdateEvent = events:WaitForChild("ClassUpdateEvent") :: RemoteEvent
+	-- IsRunning 이벤트 수신 (레이트 리밋 + 검증 포함)
+	self._maid:GiveTask(MovementRemoting.IsRunning:Connect(function(player: Player, isRunning: unknown)
+		self:_onMovementStateReceived(player, isRunning)
+	end))
+
+	-- 클라이언트 클래스 변경 요청 수신
+	-- TODO: 나중에 골드 차감, 쿨다운, 전투 중 제한 등 검증 추가
+	self._maid:GiveTask(ClassRemoting.RequestClassChange:Bind(function(player: Player, className: unknown)
+		-- 타입 검증
+		if type(className) ~= "string" then
+			return false, "Invalid class name"
+		end
+
+		-- 유효한 클래스인지 확인
+		if not MovementConfig.Classes[className] then
+			return false, "Unknown class: " .. className
+		end
+
+		-- 확정 및 적용
+		self:_setPlayerClass(player, className)
+		return true, className
+	end))
 end
 
 function BasicMovementService.Start(self: BasicMovementService): ()
@@ -97,11 +114,6 @@ function BasicMovementService.Start(self: BasicMovementService): ()
 	end))
 	self._maid:GiveTask(Players.PlayerRemoving:Connect(function(player)
 		self:_onPlayerRemoving(player)
-	end))
-
-	-- 클라이언트 이동 상태 수신 (레이트 리밋 + 검증 포함)
-	self._maid:GiveTask(self._movementStateEvent.OnServerEvent:Connect(function(player: Player, isRunning: unknown)
-		self:_onMovementStateReceived(player, isRunning)
 	end))
 
 	-- 서버 관성 루프
@@ -143,7 +155,7 @@ function BasicMovementService:_onPlayerAdded(player: Player)
 		-- 서버에서 초기 속도 설정
 		humanoid.WalkSpeed = config.walkSpeed
 
-		-- 사망 시 레퍼런스 정리
+		-- 사망 시 캐릭터 레퍼런스 정리
 		pMaid:GiveTask(humanoid.Died:Connect(function()
 			local state = self._playerStates[player.UserId]
 			if state then
@@ -185,7 +197,6 @@ function BasicMovementService:_onMovementStateReceived(player: Player, isRunning
 			state.isRunning = false
 			local config = MovementConfig.GetConfig(state.className)
 			state.targetSpeed = config.walkSpeed
-			-- lastEventTime 업데이트 안 함 → 이후 true 이벤트가 rate limit에 안 걸림
 			return
 		end
 		self:_registerViolation(state, now, "Rate limit exceeded")
@@ -199,9 +210,9 @@ function BasicMovementService:_onMovementStateReceived(player: Player, isRunning
 		return
 	end
 
-	-- [3] 속도 검증: isRunning=true일 때만 체크 (핵심 수정)
+	-- [3] 속도 검증: isRunning=true일 때만 체크
 	-- isRunning=false는 서버 관성으로 인해 실제 속도가 아직 빠를 수 있으므로 검증 제외
-	if isRunning and state.rootPart then -- ✅ isRunning 조건 추가
+	if isRunning and state.rootPart then
 		local actualSpeed = state.rootPart.AssemblyLinearVelocity.Magnitude
 		local config = MovementConfig.GetConfig(state.className)
 		local maxAllowed = config.runSpeed + VELOCITY_TOLERANCE
@@ -285,29 +296,26 @@ function BasicMovementService:_updateInertia(dt: number)
 	end
 end
 
--- ─── 공개 API (다른 서비스에서 호출) ────────────────
+-- ─── 내부 ────────────────────────────────────────────
 
---[=[
-	플레이어의 직업 클래스를 변경합니다.
-	직업 변경 시 즉시 해당 클래스의 기본 속도로 전환됩니다.
-	@param player Player
-	@param className string -- MovementConfig.Classes의 키
-]=]
-function BasicMovementService:SetPlayerClass(player: Player, className: string)
+-- 클래스 변경 확정 및 클라이언트 통보
+-- RequestClassChange 핸들러에서만 호출
+function BasicMovementService:_setPlayerClass(player: Player, className: string)
 	local state = self._playerStates[player.UserId]
 	if not state then
 		return
 	end
 
-	-- 유효한 클래스인지 확인
 	local config = MovementConfig.GetConfig(className)
 	state.className = className
 	state.targetSpeed = if state.isRunning then config.runSpeed else config.walkSpeed
 	-- currentSpeed는 관성으로 서서히 따라감
 
 	-- 클라이언트에 클래스 변경 알림 (애니메이션 전환용)
-	self._classUpdateEvent:FireClient(player, className)
+	ClassRemoting.ClassChanged:FireClient(player, className)
 end
+
+-- ─── 공개 API (다른 서비스에서 호출) ────────────────
 
 --[=[
 	플레이어 이동을 외부에서 강제로 잠급니다. (예: 스킬 시전 중)
