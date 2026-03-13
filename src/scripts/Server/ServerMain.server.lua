@@ -32,24 +32,8 @@ local require = require(loader).bootstrapGame(ServerScriptService.Brawlers)
 
 local serviceBag = require("ServiceBag").new()
 serviceBag:GetService(require("BrawlersService"))
+serviceBag:GetService(require("TagService"))
+serviceBag:GetService(require("BasicMovementService"))
+
 serviceBag:Init()
 serviceBag:Start()
-
--- ─── 캐릭터에 "Player" 태그 부착 (HumanoidBinderClient 트리거용) ───────────────
-local function tagCharacter(character: Model)
-	CollectionService:AddTag(character, "Player")
-end
-
-Players.PlayerAdded:Connect(function(player)
-	if player.Character then
-		tagCharacter(player.Character)
-	end
-	player.CharacterAdded:Connect(tagCharacter)
-end)
-
-for _, player in Players:GetPlayers() do
-	if player.Character then
-		tagCharacter(player.Character)
-	end
-	player.CharacterAdded:Connect(tagCharacter)
-end

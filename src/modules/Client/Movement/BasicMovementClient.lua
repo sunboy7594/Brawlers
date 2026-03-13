@@ -66,16 +66,14 @@ function BasicMovementClient.Start(self: BasicMovementClient): ()
 	local assets = ReplicatedStorage:WaitForChild("Assets")
 	local events = assets:WaitForChild("Events")
 	self._movementStateEvent = events:WaitForChild("MovementStateEvent") :: RemoteEvent
-	self._classUpdateEvent   = events:WaitForChild("ClassUpdateEvent") :: RemoteEvent
+	self._classUpdateEvent = events:WaitForChild("ClassUpdateEvent") :: RemoteEvent
 
-	-- 서버로부터 클래스 변경 수신
 	self._maid:GiveTask(self._classUpdateEvent.OnClientEvent:Connect(function(className: unknown)
 		if type(className) == "string" then
 			self:_onClassChanged(className)
 		end
 	end))
 
-	-- 매 프레임 이동 상태 감지
 	self._maid:GiveTask(RunService.Heartbeat:Connect(function()
 		self:_poll()
 	end))
@@ -91,8 +89,8 @@ end
 function BasicMovementClient:SetAnimator(animator: EntityAnimator.EntityAnimator?)
 	self._animator = animator
 	if animator then
-		self:_playAnim("Idle")
-		self:_playBreath()
+		self:_playAnim("Idle", true)
+		self:_playAnim("Breathing", true)
 	end
 end
 
@@ -127,17 +125,17 @@ function BasicMovementClient:_poll()
 		return
 	end
 
-	local isMoving    = humanoid.MoveDirection.Magnitude > 0
+	local isMoving = humanoid.MoveDirection.Magnitude > 0
 	local isShiftDown = UserInputService:IsKeyDown(KeybindConfig.Binds.Run)
-	local isRunning   = isMoving and isShiftDown
+	local isRunning = isMoving and isShiftDown
 
 	if self._isRunning == isRunning and self._isMoving == isMoving then
 		return
 	end
 
 	local prevShiftDown = self._isShiftDown
-	self._isRunning   = isRunning
-	self._isMoving    = isMoving
+	self._isRunning = isRunning
+	self._isMoving = isMoving
 	self._isShiftDown = isShiftDown
 
 	if prevShiftDown ~= isShiftDown then
@@ -145,61 +143,62 @@ function BasicMovementClient:_poll()
 	end
 
 	if not self._isMoving then
-		self:_playAnim("Idle")
-		self:_playCamAnim(false)
+		self:_playAnim("Idle", true)
+		self:_playCamAnim("RunFOV", false)
 	elseif self._isRunning then
-		self:_playAnim("Run")
-		self:_playCamAnim(true)
+		self:_playAnim("Run", true)
+		self:_playCamAnim("RunFOV", true)
 	else
-		self:_playAnim("Walk")
-		self:_playCamAnim(false)
+		self:_playAnim("Walk", true)
+		self:_playCamAnim("RunFOV", false)
 	end
 end
 
-function BasicMovementClient:_playAnim(animKey: string)
+function BasicMovementClient:_playAnim(animKey: string, play: boolean)
 	if not self._animator then
 		return
 	end
 	local config = MovementConfig.GetConfig(self._currentClass)
 	local animName = (config.animations :: any)[animKey] :: string
-	self._animator:PlayAnimation(animName)
-end
-
-function BasicMovementClient:_playBreath()
-	if not self._animator then
-		return
+	if play then
+		self._animator:PlayAnimation(animName)
+	else
+		self._animator:StopAnimation(animName)
 	end
-	local config = MovementConfig.GetConfig(self._currentClass)
-	self._animator:PlayAnimation(config.animations.Breathing)
 end
 
-function BasicMovementClient:_playCamAnim(isRunning: boolean)
+function BasicMovementClient:_playCamAnim(animName: string, play: boolean)
 	if not self._cameraAnimator then
 		return
 	end
-	if isRunning then
-		self._cameraAnimator:PlayAnimation("RunFOV")
+	if play then
+		self._cameraAnimator:PlayAnimation(animName)
 	else
-		self._cameraAnimator:Stop("RunFOV")
+		self._cameraAnimator:Stop(animName)
 	end
 end
 
 function BasicMovementClient:_onClassChanged(className: string)
-	self._currentClass = className
-
-	-- 이동 anim 교체
-	if not self._isMoving then
-		self:_playAnim("Idle")
-	elseif self._isRunning then
-		self:_playAnim("Run")
-	else
-		self:_playAnim("Walk")
+	-- 1. 이전 클래스 Breathing 정지
+	if self._animator then
+		self:_playAnim("Breathing", false)
 	end
 
-	-- 숨쉬기 modifier 교체 (기존 제거 → 새 클래스 등록)
+	-- 2. 클래스 교체
+	self._currentClass = className
+
+	-- 3. 새 클래스 이동 애니메이션 교체
+	if not self._isMoving then
+		self:_playAnim("Idle", true)
+	elseif self._isRunning then
+		self:_playAnim("Run", true)
+	else
+		self:_playAnim("Walk", true)
+	end
+
+	-- 4. 새 클래스 Breathing 시작
 	if self._animator then
-		self._animator:StopAnimation("modify")
-		self:_playBreath()
+		self:_playAnim("Breathing", true)
 	end
 end
 
