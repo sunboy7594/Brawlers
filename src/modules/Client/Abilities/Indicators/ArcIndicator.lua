@@ -22,9 +22,9 @@ local CYLINDER_HEIGHT = 0.15 -- Cylinder 높이
 
 export type ArcIndicatorConfig = {
 	maxRange: number, -- 최대 도달 거리 (studs)
-	speed: number,    -- 투사체 수평 속도 (studs/s)
-	gravity: number,  -- 중력 가속도 (studs/s²)
-	radius: number,   -- 착탄 지점 표시 반지름
+	speed: number, -- 투사체 수평 속도 (studs/s)
+	gravity: number, -- 중력 가속도 (studs/s²)
+	radius: number, -- 착탄 지점 표시 반지름
 }
 
 export type ArcIndicator = {
@@ -72,11 +72,7 @@ local function calcLandingPos(
 	end
 	dirH = dirH.Unit
 
-	return Vector3.new(
-		origin.X + dirH.X * horizontal,
-		PART_Y,
-		origin.Z + dirH.Z * horizontal
-	)
+	return Vector3.new(origin.X + dirH.X * horizontal, PART_Y, origin.Z + dirH.Z * horizontal)
 end
 
 -- ─── 공개 API ────────────────────────────────────────────────────────────────
@@ -97,10 +93,9 @@ function ArcIndicator.new(config: ArcIndicatorConfig): ArcIndicator
 	part.Shape = Enum.PartType.Cylinder
 	part.Material = Enum.Material.Neon
 	part.Color = COLOR
-	part.Transparency = TRANSPARENCY
+	part.Transparency = 1 -- 생성시 숨김
 	-- Cylinder: X축이 높이 방향, Y/Z가 반지름
 	part.Size = Vector3.new(CYLINDER_HEIGHT, config.radius * 2, config.radius * 2)
-	part.Visible = false
 	part.Parent = getIndicatorsFolder()
 
 	self._part = part
@@ -119,11 +114,15 @@ function ArcIndicator:update(origin: Vector3, direction: Vector3)
 end
 
 function ArcIndicator:show()
-	(self._part :: BasePart).Visible = true
+	for _, part in self._parts :: { BasePart } do
+		part.Transparency = TRANSPARENCY -- self._part → part
+	end
 end
 
 function ArcIndicator:hide()
-	(self._part :: BasePart).Visible = false
+	for _, part in self._parts :: { BasePart } do
+		part.Transparency = 1 -- self._part → part
+	end
 end
 
 function ArcIndicator:destroy()

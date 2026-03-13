@@ -63,7 +63,6 @@ function LineIndicator.new(config: LineIndicatorConfig): LineIndicator
 	part.Color = COLOR
 	part.Transparency = TRANSPARENCY
 	part.Size = Vector3.new(config.width, PART_HEIGHT, config.range)
-	part.Visible = false
 	part.Parent = getIndicatorsFolder()
 
 	self._part = part
@@ -83,21 +82,21 @@ function LineIndicator:update(origin: Vector3, direction: Vector3)
 	dirH = dirH.Unit
 
 	-- Part 중심: origin에서 range/2 만큼 앞
-	local centerPos = Vector3.new(
-		origin.X + dirH.X * config.range / 2,
-		PART_Y,
-		origin.Z + dirH.Z * config.range / 2
-	)
+	local centerPos = Vector3.new(origin.X + dirH.X * config.range / 2, PART_Y, origin.Z + dirH.Z * config.range / 2)
 
 	part.CFrame = CFrame.lookAt(centerPos, centerPos + dirH)
 end
 
 function LineIndicator:show()
-	(self._part :: BasePart).Visible = true
+	for _, part in self._parts :: { BasePart } do
+		part.Transparency = TRANSPARENCY -- self._part → part
+	end
 end
 
 function LineIndicator:hide()
-	(self._part :: BasePart).Visible = false
+	for _, part in self._parts :: { BasePart } do
+		part.Transparency = 1 -- self._part → part
+	end
 end
 
 function LineIndicator:destroy()

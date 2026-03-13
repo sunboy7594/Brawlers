@@ -47,11 +47,10 @@ function TestLoadoutClient.Start(self: TestLoadoutClient): ()
 		task.wait()
 
 		-- 1. 클래스 변경 요청
-		ClassRemoting.RequestClassChange:CallServer("TANK")
+		ClassRemoting.RequestClassChange:InvokeServer("TANK")
 
 		-- 2. 기본 공격 장착 요청
-		local success: unknown, _result: unknown =
-			LoadoutRemoting.RequestEquipBasicAttack:CallServer("Punch")
+		local success: unknown, _result: unknown = LoadoutRemoting.RequestEquipBasicAttack:InvokeServer("Punch")
 
 		-- 3. 성공 시 클라이언트 상태 갱신
 		if success == true then

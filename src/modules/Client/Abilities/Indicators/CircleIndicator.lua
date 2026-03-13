@@ -63,9 +63,8 @@ function CircleIndicator.new(config: CircleIndicatorConfig): CircleIndicator
 	part.Shape = Enum.PartType.Cylinder
 	part.Material = Enum.Material.Neon
 	part.Color = COLOR
-	part.Transparency = TRANSPARENCY
+	part.Transparency = 1
 	part.Size = Vector3.new(PART_HEIGHT, config.range * 2, config.range * 2)
-	part.Visible = false
 	part.Parent = getIndicatorsFolder()
 
 	self._part = part
@@ -78,16 +77,19 @@ function CircleIndicator:update(origin: Vector3, _direction: Vector3)
 	local config = self._config :: CircleIndicatorConfig
 	local part = self._part :: BasePart
 	-- Cylinder는 X축이 높이 방향이므로 눕히기 위해 Z축 90도 회전
-	part.CFrame = CFrame.new(Vector3.new(origin.X, PART_Y, origin.Z))
-		* CFrame.fromEulerAnglesXYZ(0, 0, math.pi / 2)
+	part.CFrame = CFrame.new(Vector3.new(origin.X, PART_Y, origin.Z)) * CFrame.fromEulerAnglesXYZ(0, 0, math.pi / 2)
 end
 
 function CircleIndicator:show()
-	(self._part :: BasePart).Visible = true
+	for _, part in self._parts :: { BasePart } do
+		part.Transparency = TRANSPARENCY -- self._part → part
+	end
 end
 
 function CircleIndicator:hide()
-	(self._part :: BasePart).Visible = false
+	for _, part in self._parts :: { BasePart } do
+		part.Transparency = 1 -- self._part → part
+	end
 end
 
 function CircleIndicator:destroy()

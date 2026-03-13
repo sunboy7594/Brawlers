@@ -70,7 +70,6 @@ local function createFanParts(folder: Folder, config: ConeIndicatorConfig): { Ba
 		local segHalfAngleDeg = halfAngle - (i - 1) * segAngle
 		local segWidth = config.range * 2 * math.tan(math.rad(segAngle / 2)) + 0.05 -- 약간 겹치게
 		part.Size = Vector3.new(segWidth, PART_HEIGHT, config.range)
-		part.Visible = false
 		part.Parent = folder
 		table.insert(parts, part)
 	end
@@ -112,18 +111,11 @@ function ConeIndicator:update(origin: Vector3, direction: Vector3)
 		-- 세그먼트 방향 (Y축 회전 적용)
 		local cos = math.cos(segCenterRad)
 		local sin = math.sin(segCenterRad)
-		local segDir = Vector3.new(
-			dirH.X * cos - dirH.Z * sin,
-			0,
-			dirH.X * sin + dirH.Z * cos
-		)
+		local segDir = Vector3.new(dirH.X * cos - dirH.Z * sin, 0, dirH.X * sin + dirH.Z * cos)
 
 		-- Part 중심: origin에서 range/2 만큼 세그먼트 방향으로
-		local centerPos = Vector3.new(
-			origin.X + segDir.X * config.range / 2,
-			PART_Y,
-			origin.Z + segDir.Z * config.range / 2
-		)
+		local centerPos =
+			Vector3.new(origin.X + segDir.X * config.range / 2, PART_Y, origin.Z + segDir.Z * config.range / 2)
 
 		part.CFrame = CFrame.lookAt(centerPos, centerPos + segDir)
 	end
@@ -131,13 +123,13 @@ end
 
 function ConeIndicator:show()
 	for _, part in self._parts :: { BasePart } do
-		part.Visible = true
+		part.Transparency = TRANSPARENCY -- self._part → part
 	end
 end
 
 function ConeIndicator:hide()
 	for _, part in self._parts :: { BasePart } do
-		part.Visible = false
+		part.Transparency = 1 -- self._part → part
 	end
 end
 
