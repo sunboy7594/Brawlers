@@ -53,78 +53,78 @@ local function makeIdle(_intensity: number): AnimDef
 		joints = {
 			Root = function(_joint, defaultC0, ac): OnUpdate
 				return function(j, dt)
-					ac:spring(j, defaultC0 * RootPose, 200, 1.6, dt)
+					ac:spring(j, defaultC0 * RootPose, 10, 0.3, dt)
 				end
 			end,
 			-- 숨쉬기(breathOffset) 제거 → Breathing modifier가 처리
 			Waist = function(_joint, defaultC0, ac): OnUpdate
 				return function(j, dt)
-					ac:spring(j, defaultC0 * WaistPose, 200, 1.6, dt)
+					ac:spring(j, defaultC0 * WaistPose, 10, 0.3, dt)
 				end
 			end,
 			Neck = function(_joint, defaultC0, ac): OnUpdate
 				return function(j, dt)
-					ac:spring(j, defaultC0 * NeckPose, 200, 1.6, dt)
+					ac:spring(j, defaultC0 * NeckPose, 10, 0.3, dt)
 				end
 			end,
 			LeftShoulder = function(_joint, defaultC0, ac): OnUpdate
 				return function(j, dt)
-					ac:spring(j, defaultC0 * LeftShoulderPose, 200, 1.6, dt)
+					ac:spring(j, defaultC0 * LeftShoulderPose, 10, 0.3, dt)
 				end
 			end,
 			RightShoulder = function(_joint, defaultC0, ac): OnUpdate
 				return function(j, dt)
-					ac:spring(j, defaultC0 * RightShoulderPose, 200, 1.6, dt)
+					ac:spring(j, defaultC0 * RightShoulderPose, 10, 0.3, dt)
 				end
 			end,
 			LeftElbow = function(_joint, defaultC0, ac): OnUpdate
 				return function(j, dt)
-					ac:spring(j, defaultC0 * LeftElbowPose, 200, 1.6, dt)
+					ac:spring(j, defaultC0 * LeftElbowPose, 10, 0.3, dt)
 				end
 			end,
 			RightElbow = function(_joint, defaultC0, ac): OnUpdate
 				return function(j, dt)
-					ac:spring(j, defaultC0 * RightElbowPose, 200, 1.6, dt)
+					ac:spring(j, defaultC0 * RightElbowPose, 10, 0.3, dt)
 				end
 			end,
 			LeftWrist = function(_joint, defaultC0, ac): OnUpdate
 				return function(j, dt)
-					ac:spring(j, defaultC0 * LeftWristPose, 200, 1.6, dt)
+					ac:spring(j, defaultC0 * LeftWristPose, 10, 0.3, dt)
 				end
 			end,
 			RightWrist = function(_joint, defaultC0, ac): OnUpdate
 				return function(j, dt)
-					ac:spring(j, defaultC0 * RightWristPose, 200, 1.6, dt)
+					ac:spring(j, defaultC0 * RightWristPose, 10, 0.3, dt)
 				end
 			end,
 			LeftHip = function(_joint, defaultC0, ac): OnUpdate
 				return function(j, dt)
-					ac:spring(j, defaultC0 * LeftHipPose, 200, 1.6, dt)
+					ac:spring(j, defaultC0 * LeftHipPose, 10, 1, dt)
 				end
 			end,
 			RightHip = function(_joint, defaultC0, ac): OnUpdate
 				return function(j, dt)
-					ac:spring(j, defaultC0 * RightHipPose, 200, 1.6, dt)
+					ac:spring(j, defaultC0 * RightHipPose, 10, 1, dt)
 				end
 			end,
 			LeftKnee = function(_joint, defaultC0, ac): OnUpdate
 				return function(j, dt)
-					ac:spring(j, defaultC0 * LeftKneePose, 200, 1.6, dt)
+					ac:spring(j, defaultC0 * LeftKneePose, 10, 1, dt)
 				end
 			end,
 			RightKnee = function(_joint, defaultC0, ac): OnUpdate
 				return function(j, dt)
-					ac:spring(j, defaultC0 * RightKneePose, 200, 1.6, dt)
+					ac:spring(j, defaultC0 * RightKneePose, 10, 1, dt)
 				end
 			end,
 			LeftAnkle = function(_joint, defaultC0, ac): OnUpdate
 				return function(j, dt)
-					ac:spring(j, defaultC0 * LeftAnklePose, 200, 1.6, dt)
+					ac:spring(j, defaultC0 * LeftAnklePose, 10, 1, dt)
 				end
 			end,
 			RightAnkle = function(_joint, defaultC0, ac): OnUpdate
 				return function(j, dt)
-					ac:spring(j, defaultC0 * RightAnklePose, 200, 1.6, dt)
+					ac:spring(j, defaultC0 * RightAnklePose, 10, 1, dt)
 				end
 			end,
 		},
@@ -184,7 +184,7 @@ local function makeWalk(cycle: number, intensity: number, lean: number): AnimDef
 				return function(j, dt)
 					t = (t + dt) % period
 					local bob = math.abs(math.sin(t * freq)) * 0.12 * intensity
-					ac:spring(j, defaultC0 * CFrame.new(0, -bob, 0), 200, 0.8, dt)
+					ac:spring(j, defaultC0 * CFrame.new(0, -bob, 0), 10, 0.3, dt)
 				end
 			end,
 			Waist = function(_joint, defaultC0, ac): OnUpdate
@@ -192,7 +192,7 @@ local function makeWalk(cycle: number, intensity: number, lean: number): AnimDef
 				return function(j, dt)
 					t = (t + dt) % period
 					local sway = math.sin(t * freq) * 0.08 * intensity
-					ac:spring(j, defaultC0 * CFrame.Angles(lean, 0, sway), 200, 0.8, dt)
+					ac:spring(j, defaultC0 * CFrame.Angles(lean, 0, sway), 10, 0.3, dt)
 				end
 			end,
 			Neck = function(_joint, defaultC0, ac): OnUpdate
@@ -200,7 +200,7 @@ local function makeWalk(cycle: number, intensity: number, lean: number): AnimDef
 				return function(j, dt)
 					t = (t + dt) % period
 					local counter = math.sin(t * freq) * 0.04 * intensity
-					ac:spring(j, defaultC0 * CFrame.Angles(-lean * 0.5, 0, -counter), 200, 0.8, dt)
+					ac:spring(j, defaultC0 * CFrame.Angles(-lean * 0.5, 0, -counter), 10, 0.3, dt)
 				end
 			end,
 			LeftHip = function(_joint, defaultC0, ac): OnUpdate
@@ -220,7 +220,7 @@ local function makeWalk(cycle: number, intensity: number, lean: number): AnimDef
 							swing + backBias
 						)
 						else defaultC0
-					ac:spring(j, target, 200, 0.8, dt)
+					ac:spring(j, target, 10, 0.3, dt)
 				end
 			end,
 			RightHip = function(_joint, defaultC0, ac): OnUpdate
@@ -240,7 +240,7 @@ local function makeWalk(cycle: number, intensity: number, lean: number): AnimDef
 							swing + backBias
 						)
 						else defaultC0
-					ac:spring(j, target, 200, 0.8, dt)
+					ac:spring(j, target, 10, 0.3, dt)
 				end
 			end,
 			LeftKnee = function(_joint, defaultC0, ac): OnUpdate
@@ -250,7 +250,7 @@ local function makeWalk(cycle: number, intensity: number, lean: number): AnimDef
 					local dir = ac:GetMoveDir()
 					local fwdFactor = math.max(0.35, math.abs(dir.Z))
 					local bend = math.max(0, math.sin(t * freq + math.pi)) * 0.7 * intensity * fwdFactor
-					ac:spring(j, defaultC0 * CFrame.Angles(-bend, 0, 0), 200, 0.8, dt)
+					ac:spring(j, defaultC0 * CFrame.Angles(-bend, 0, 0), 10, 0.3, dt)
 				end
 			end,
 			RightKnee = function(_joint, defaultC0, ac): OnUpdate
@@ -260,7 +260,7 @@ local function makeWalk(cycle: number, intensity: number, lean: number): AnimDef
 					local dir = ac:GetMoveDir()
 					local fwdFactor = math.max(0.35, math.abs(dir.Z))
 					local bend = math.max(0, -math.sin(t * freq + math.pi)) * 0.7 * intensity * fwdFactor
-					ac:spring(j, defaultC0 * CFrame.Angles(-bend, 0, 0), 200, 0.8, dt)
+					ac:spring(j, defaultC0 * CFrame.Angles(-bend, 0, 0), 10, 0.3, dt)
 				end
 			end,
 			LeftAnkle = function(_joint, defaultC0, ac): OnUpdate
@@ -271,7 +271,7 @@ local function makeWalk(cycle: number, intensity: number, lean: number): AnimDef
 					local baseFwd = 0.05
 					local flex = math.sin(t * freq) * 0.25 * intensity * (if dir.Z > 0.3 then -1 else 1)
 					local sideFlex = -dir.X * 0.2
-					ac:spring(j, defaultC0 * CFrame.Angles(baseFwd + flex, 0, sideFlex), 200, 0.8, dt)
+					ac:spring(j, defaultC0 * CFrame.Angles(baseFwd + flex, 0, sideFlex), 10, 0.3, dt)
 				end
 			end,
 			RightAnkle = function(_joint, defaultC0, ac): OnUpdate
@@ -282,7 +282,7 @@ local function makeWalk(cycle: number, intensity: number, lean: number): AnimDef
 					local baseFwd = 0.05
 					local flex = -math.sin(t * freq) * 0.25 * intensity * (if dir.Z > 0.3 then -1 else 1)
 					local sideFlex = -dir.X * 0.2
-					ac:spring(j, defaultC0 * CFrame.Angles(baseFwd + flex, 0, sideFlex), 200, 0.8, dt)
+					ac:spring(j, defaultC0 * CFrame.Angles(baseFwd + flex, 0, sideFlex), 10, 0.3, dt)
 				end
 			end,
 			LeftShoulder = function(_joint, defaultC0, ac): OnUpdate
@@ -291,7 +291,7 @@ local function makeWalk(cycle: number, intensity: number, lean: number): AnimDef
 					t = (t + dt) % period
 					local swing = -math.sin(t * freq) * 0.4 * intensity
 					local splay = math.abs(math.sin(t * freq)) * 0.06 * intensity
-					ac:spring(j, defaultC0 * CFrame.Angles(swing, 0, -splay), 200, 0.8, dt)
+					ac:spring(j, defaultC0 * CFrame.Angles(swing, 0, -splay), 10, 0.3, dt)
 				end
 			end,
 			RightShoulder = function(_joint, defaultC0, ac): OnUpdate
@@ -300,7 +300,7 @@ local function makeWalk(cycle: number, intensity: number, lean: number): AnimDef
 					t = (t + dt) % period
 					local swing = math.sin(t * freq) * 0.4 * intensity
 					local splay = math.abs(math.sin(t * freq)) * 0.06 * intensity
-					ac:spring(j, defaultC0 * CFrame.Angles(swing, 0, splay), 200, 0.8, dt)
+					ac:spring(j, defaultC0 * CFrame.Angles(swing, 0, splay), 10, 0.3, dt)
 				end
 			end,
 			LeftElbow = function(_joint, defaultC0, ac): OnUpdate
@@ -308,7 +308,7 @@ local function makeWalk(cycle: number, intensity: number, lean: number): AnimDef
 				return function(j, dt)
 					t = (t + dt) % period
 					local bend = math.max(0, -math.sin(t * freq)) * 0.4 * intensity
-					ac:spring(j, defaultC0 * CFrame.Angles(bend, 0, 0), 200, 0.8, dt)
+					ac:spring(j, defaultC0 * CFrame.Angles(bend, 0, 0), 10, 0.3, dt)
 				end
 			end,
 			RightElbow = function(_joint, defaultC0, ac): OnUpdate
@@ -316,7 +316,7 @@ local function makeWalk(cycle: number, intensity: number, lean: number): AnimDef
 				return function(j, dt)
 					t = (t + dt) % period
 					local bend = math.max(0, math.sin(t * freq)) * 0.4 * intensity
-					ac:spring(j, defaultC0 * CFrame.Angles(bend, 0, 0), 200, 0.8, dt)
+					ac:spring(j, defaultC0 * CFrame.Angles(bend, 0, 0), 10, 0.3, dt)
 				end
 			end,
 			LeftWrist = function(_joint, defaultC0, ac): OnUpdate
@@ -324,7 +324,7 @@ local function makeWalk(cycle: number, intensity: number, lean: number): AnimDef
 				return function(j, dt)
 					t = (t + dt) % period
 					local flick = math.sin(t * freq + 0.3) * 0.08 * intensity
-					ac:spring(j, defaultC0 * CFrame.Angles(flick, 0, 0), 200, 0.8, dt)
+					ac:spring(j, defaultC0 * CFrame.Angles(flick, 0, 0), 10, 0.3, dt)
 				end
 			end,
 			RightWrist = function(_joint, defaultC0, ac): OnUpdate
@@ -332,7 +332,7 @@ local function makeWalk(cycle: number, intensity: number, lean: number): AnimDef
 				return function(j, dt)
 					t = (t + dt) % period
 					local flick = -math.sin(t * freq + 0.3) * 0.08 * intensity
-					ac:spring(j, defaultC0 * CFrame.Angles(flick, 0, 0), 200, 0.8, dt)
+					ac:spring(j, defaultC0 * CFrame.Angles(flick, 0, 0), 10, 0.3, dt)
 				end
 			end,
 		},
@@ -357,7 +357,7 @@ local function makeRun(cycle: number, intensity: number): AnimDef
 					local bob = math.abs(math.sin(t * freq)) * 0.22 * intensity
 					local rockFwd = math.sin(t * freq) * 0.06 * intensity
 					local crouchOffset = -0.18 * intensity
-					ac:spring(j, defaultC0 * CFrame.new(0, crouchOffset - bob, rockFwd), 200, 0.8, dt)
+					ac:spring(j, defaultC0 * CFrame.new(0, crouchOffset - bob, rockFwd), 10, 0.3, dt)
 				end
 			end,
 			Waist = function(_joint, defaultC0, ac): OnUpdate
@@ -368,7 +368,7 @@ local function makeRun(cycle: number, intensity: number): AnimDef
 					local sway = math.sin(t * freq) * 0.12 * intensity
 					local twist = math.sin(t * freq) * 0.1 * intensity
 					local fwdLean = -FORWARD_LEAN * -dir.Z
-					ac:spring(j, defaultC0 * CFrame.Angles(fwdLean, twist, sway), 200, 0.8, dt)
+					ac:spring(j, defaultC0 * CFrame.Angles(fwdLean, twist, sway), 10, 0.3, dt)
 				end
 			end,
 			Neck = function(_joint, defaultC0, ac): OnUpdate
@@ -378,7 +378,7 @@ local function makeRun(cycle: number, intensity: number): AnimDef
 					local dir = ac:GetMoveDir()
 					local counter = math.sin(t * freq) * 0.06 * intensity
 					local fwdLean = FORWARD_LEAN * 0.5 * -dir.Z
-					ac:spring(j, defaultC0 * CFrame.Angles(-fwdLean, 0, -counter), 200, 0.8, dt)
+					ac:spring(j, defaultC0 * CFrame.Angles(-fwdLean, 0, -counter), 10, 0.3, dt)
 				end
 			end,
 			LeftHip = function(_joint, defaultC0, ac): OnUpdate
@@ -398,7 +398,7 @@ local function makeRun(cycle: number, intensity: number): AnimDef
 							swing + backBias
 						)
 						else defaultC0
-					ac:spring(j, target, 200, 0.8, dt)
+					ac:spring(j, target, 10, 0.3, dt)
 				end
 			end,
 			RightHip = function(_joint, defaultC0, ac): OnUpdate
@@ -418,7 +418,7 @@ local function makeRun(cycle: number, intensity: number): AnimDef
 							swing + backBias
 						)
 						else defaultC0
-					ac:spring(j, target, 200, 0.8, dt)
+					ac:spring(j, target, 10, 0.3, dt)
 				end
 			end,
 			LeftKnee = function(_joint, defaultC0, ac): OnUpdate
@@ -429,7 +429,7 @@ local function makeRun(cycle: number, intensity: number): AnimDef
 					local fwdFactor = math.max(0.35, math.abs(dir.Z))
 					local baseBend = 0.4 * intensity * fwdFactor
 					local bend = math.max(0, math.sin(t * freq + math.pi)) * 0.8 * intensity * fwdFactor
-					ac:spring(j, defaultC0 * CFrame.Angles(-(baseBend + bend), 0, 0), 200, 0.8, dt)
+					ac:spring(j, defaultC0 * CFrame.Angles(-(baseBend + bend), 0, 0), 10, 0.3, dt)
 				end
 			end,
 			RightKnee = function(_joint, defaultC0, ac): OnUpdate
@@ -440,7 +440,7 @@ local function makeRun(cycle: number, intensity: number): AnimDef
 					local fwdFactor = math.max(0.35, math.abs(dir.Z))
 					local baseBend = 0.4 * intensity * fwdFactor
 					local bend = math.max(0, -math.sin(t * freq + math.pi)) * 0.8 * intensity * fwdFactor
-					ac:spring(j, defaultC0 * CFrame.Angles(-(baseBend + bend), 0, 0), 200, 0.8, dt)
+					ac:spring(j, defaultC0 * CFrame.Angles(-(baseBend + bend), 0, 0), 10, 0.3, dt)
 				end
 			end,
 			LeftAnkle = function(_joint, defaultC0, ac): OnUpdate
@@ -452,7 +452,7 @@ local function makeRun(cycle: number, intensity: number): AnimDef
 					local flex = math.sin(t * freq) * 0.5 * intensity * (if dir.Z > 0.3 then -1 else 1)
 					local push = math.max(0, -math.sin(t * freq)) * 0.3 * intensity
 					local sideFlex = -dir.X * 0.3
-					ac:spring(j, defaultC0 * CFrame.Angles(baseFwd + flex + push, 0, sideFlex), 200, 0.8, dt)
+					ac:spring(j, defaultC0 * CFrame.Angles(baseFwd + flex + push, 0, sideFlex), 10, 0.3, dt)
 				end
 			end,
 			RightAnkle = function(_joint, defaultC0, ac): OnUpdate
@@ -464,7 +464,7 @@ local function makeRun(cycle: number, intensity: number): AnimDef
 					local flex = -math.sin(t * freq) * 0.5 * intensity * (if dir.Z > 0.3 then -1 else 1)
 					local push = math.max(0, math.sin(t * freq)) * 0.3 * intensity
 					local sideFlex = -dir.X * 0.3
-					ac:spring(j, defaultC0 * CFrame.Angles(baseFwd + flex + push, 0, sideFlex), 200, 0.8, dt)
+					ac:spring(j, defaultC0 * CFrame.Angles(baseFwd + flex + push, 0, sideFlex), 10, 0.3, dt)
 				end
 			end,
 			LeftShoulder = function(_joint, defaultC0, ac): OnUpdate
@@ -473,7 +473,7 @@ local function makeRun(cycle: number, intensity: number): AnimDef
 					t = (t + dt) % period
 					local swing = -math.sin(t * freq) * 0.9 * intensity
 					local splay = math.abs(math.sin(t * freq)) * 0.05 * intensity
-					ac:spring(j, defaultC0 * CFrame.Angles(swing, 0, -splay), 200, 0.8, dt)
+					ac:spring(j, defaultC0 * CFrame.Angles(swing, 0, -splay), 10, 0.3, dt)
 				end
 			end,
 			RightShoulder = function(_joint, defaultC0, ac): OnUpdate
@@ -482,7 +482,7 @@ local function makeRun(cycle: number, intensity: number): AnimDef
 					t = (t + dt) % period
 					local swing = math.sin(t * freq) * 0.9 * intensity
 					local splay = math.abs(math.sin(t * freq)) * 0.06 * intensity
-					ac:spring(j, defaultC0 * CFrame.Angles(swing, 0, splay), 200, 0.8, dt)
+					ac:spring(j, defaultC0 * CFrame.Angles(swing, 0, splay), 10, 0.3, dt)
 				end
 			end,
 			LeftElbow = function(_joint, defaultC0, ac): OnUpdate
@@ -491,7 +491,7 @@ local function makeRun(cycle: number, intensity: number): AnimDef
 					t = (t + dt) % period
 					local baseBend = 1.2 * intensity
 					local wave = math.sin(t * freq) * 0.3 * intensity
-					ac:spring(j, defaultC0 * CFrame.Angles(baseBend + wave, 0, 0), 200, 0.8, dt)
+					ac:spring(j, defaultC0 * CFrame.Angles(baseBend + wave, 0, 0), 10, 0.3, dt)
 				end
 			end,
 			RightElbow = function(_joint, defaultC0, ac): OnUpdate
@@ -500,7 +500,7 @@ local function makeRun(cycle: number, intensity: number): AnimDef
 					t = (t + dt) % period
 					local baseBend = 1.2 * intensity
 					local wave = -math.sin(t * freq) * 0.3 * intensity
-					ac:spring(j, defaultC0 * CFrame.Angles(baseBend + wave, 0, 0), 200, 0.8, dt)
+					ac:spring(j, defaultC0 * CFrame.Angles(baseBend + wave, 0, 0), 10, 0.3, dt)
 				end
 			end,
 			LeftWrist = function(_joint, defaultC0, ac): OnUpdate
@@ -508,7 +508,7 @@ local function makeRun(cycle: number, intensity: number): AnimDef
 				return function(j, dt)
 					t = (t + dt) % period
 					local flick = math.sin(t * freq + 0.3) * 0.12 * intensity
-					ac:spring(j, defaultC0 * CFrame.Angles(flick, 0, 0), 200, 0.8, dt)
+					ac:spring(j, defaultC0 * CFrame.Angles(flick, 0, 0), 10, 0.3, dt)
 				end
 			end,
 			RightWrist = function(_joint, defaultC0, ac): OnUpdate
@@ -516,7 +516,7 @@ local function makeRun(cycle: number, intensity: number): AnimDef
 				return function(j, dt)
 					t = (t + dt) % period
 					local flick = -math.sin(t * freq + 0.3) * 0.12 * intensity
-					ac:spring(j, defaultC0 * CFrame.Angles(flick, 0, 0), 200, 0.8, dt)
+					ac:spring(j, defaultC0 * CFrame.Angles(flick, 0, 0), 10, 0.3, dt)
 				end
 			end,
 		},
@@ -525,35 +525,35 @@ end
 
 -- ─── 애니메이션 등록 ──────────────────────────────────────────────────────────
 
--- Default
-BasicMovementAnimDefs["Idle"] = makeIdle(1.0)
-BasicMovementAnimDefs["Walk"] = makeWalk(2.5, 1.0, 0.04)
-BasicMovementAnimDefs["Run"] = makeRun(2.8, 1.0)
-BasicMovementAnimDefs["Breathing"] = makeBreath(0.4, 1.0)
+-- Default (대미지딜러 수치 적용)
+BasicMovementAnimDefs["Idle"] = makeIdle(0.9)
+BasicMovementAnimDefs["Walk"] = makeWalk(2.5, 1.05, 0.05)
+BasicMovementAnimDefs["Run"] = makeRun(2.8, 1.05)
+BasicMovementAnimDefs["Breathing"] = makeBreath(0.4, 0.9)
 
--- 탱커
-BasicMovementAnimDefs["Idle_Tank"] = makeIdle(1.5)
-BasicMovementAnimDefs["Walk_Tank"] = makeWalk(1.8, 1.4, 0.07)
-BasicMovementAnimDefs["Run_Tank"] = makeRun(2.0, 1.3)
-BasicMovementAnimDefs["Breathing_Tank"] = makeBreath(0.28, 1.5)
+-- 탱커 (cycle 유지, intensity/lean → 딜러 수치)
+BasicMovementAnimDefs["Idle_Tank"] = makeIdle(0.9)
+BasicMovementAnimDefs["Walk_Tank"] = makeWalk(1.8, 1.05, 0.05)
+BasicMovementAnimDefs["Run_Tank"] = makeRun(2.0, 1.05)
+BasicMovementAnimDefs["Breathing_Tank"] = makeBreath(0.28, 0.9)
 
--- 어쌔신
-BasicMovementAnimDefs["Idle_Assassin"] = makeIdle(0.75)
-BasicMovementAnimDefs["Walk_Assassin"] = makeWalk(2.9, 0.95, 0.05)
-BasicMovementAnimDefs["Run_Assassin"] = makeRun(3.2, 1.1)
-BasicMovementAnimDefs["Breathing_Assassin"] = makeBreath(0.6, 0.75)
+-- 어쌔신 (cycle 유지, intensity/lean → 딜러 수치)
+BasicMovementAnimDefs["Idle_Assassin"] = makeIdle(0.9)
+BasicMovementAnimDefs["Walk_Assassin"] = makeWalk(2.9, 1.05, 0.05)
+BasicMovementAnimDefs["Run_Assassin"] = makeRun(3.2, 1.05)
+BasicMovementAnimDefs["Breathing_Assassin"] = makeBreath(0.6, 0.9)
 
--- 서포터
-BasicMovementAnimDefs["Idle_Support"] = makeIdle(0.85)
-BasicMovementAnimDefs["Walk_Support"] = makeWalk(2.4, 0.9, 0.03)
-BasicMovementAnimDefs["Run_Support"] = makeRun(2.6, 0.95)
-BasicMovementAnimDefs["Breathing_Support"] = makeBreath(0.45, 0.85)
+-- 서포터 (cycle 유지, intensity/lean → 딜러 수치)
+BasicMovementAnimDefs["Idle_Support"] = makeIdle(0.9)
+BasicMovementAnimDefs["Walk_Support"] = makeWalk(2.4, 1.05, 0.05)
+BasicMovementAnimDefs["Run_Support"] = makeRun(2.6, 1.05)
+BasicMovementAnimDefs["Breathing_Support"] = makeBreath(0.45, 0.9)
 
--- 컨트롤러
-BasicMovementAnimDefs["Idle_Controller"] = makeIdle(1.0)
-BasicMovementAnimDefs["Walk_Controller"] = makeWalk(2.3, 1.0, 0.04)
-BasicMovementAnimDefs["Run_Controller"] = makeRun(2.6, 1.0)
-BasicMovementAnimDefs["Breathing_Controller"] = makeBreath(0.38, 1.0)
+-- 컨트롤러 (cycle 유지, intensity/lean → 딜러 수치)
+BasicMovementAnimDefs["Idle_Controller"] = makeIdle(0.9)
+BasicMovementAnimDefs["Walk_Controller"] = makeWalk(2.3, 1.05, 0.05)
+BasicMovementAnimDefs["Run_Controller"] = makeRun(2.6, 1.05)
+BasicMovementAnimDefs["Breathing_Controller"] = makeBreath(0.38, 0.9)
 
 -- 대미지딜러
 BasicMovementAnimDefs["Idle_Dealer"] = makeIdle(0.9)
@@ -561,16 +561,16 @@ BasicMovementAnimDefs["Walk_Dealer"] = makeWalk(2.6, 1.05, 0.05)
 BasicMovementAnimDefs["Run_Dealer"] = makeRun(2.9, 1.05)
 BasicMovementAnimDefs["Breathing_Dealer"] = makeBreath(0.5, 0.9)
 
--- 저격수
-BasicMovementAnimDefs["Idle_Marksman"] = makeIdle(0.8)
-BasicMovementAnimDefs["Walk_Marksman"] = makeWalk(2.0, 0.85, 0.02)
-BasicMovementAnimDefs["Run_Marksman"] = makeRun(2.8, 1.0)
-BasicMovementAnimDefs["Breathing_Marksman"] = makeBreath(0.35, 0.8)
+-- 저격수 (cycle 유지, intensity/lean → 딜러 수치)
+BasicMovementAnimDefs["Idle_Marksman"] = makeIdle(0.9)
+BasicMovementAnimDefs["Walk_Marksman"] = makeWalk(2.0, 1.05, 0.05)
+BasicMovementAnimDefs["Run_Marksman"] = makeRun(2.8, 1.05)
+BasicMovementAnimDefs["Breathing_Marksman"] = makeBreath(0.35, 0.9)
 
--- 투척수
-BasicMovementAnimDefs["Idle_Artillery"] = makeIdle(1.6)
-BasicMovementAnimDefs["Walk_Artillery"] = makeWalk(1.6, 1.5, 0.08)
-BasicMovementAnimDefs["Run_Artillery"] = makeRun(1.9, 1.3)
-BasicMovementAnimDefs["Breathing_Artillery"] = makeBreath(0.25, 1.6)
+-- 투척수 (cycle 유지, intensity/lean → 딜러 수치)
+BasicMovementAnimDefs["Idle_Artillery"] = makeIdle(0.9)
+BasicMovementAnimDefs["Walk_Artillery"] = makeWalk(1.6, 1.05, 0.05)
+BasicMovementAnimDefs["Run_Artillery"] = makeRun(1.9, 1.05)
+BasicMovementAnimDefs["Breathing_Artillery"] = makeBreath(0.25, 0.9)
 
 return BasicMovementAnimDefs

@@ -25,7 +25,7 @@ local TankPunchClient = require("TankPunchClient")
 -- ─── 공격 모듈 레지스트리 ────────────────────────────────────────────────────
 -- attackId → 클라이언트 공격 모듈 (indicator, onAim, onHitConfirmed)
 local ATTACK_REGISTRY = {
-	Punch = TankPunchClient,
+	TankPunch = TankPunchClient,
 }
 
 -- ─── 타입 정의 ───────────────────────────────────────────────────────────────
@@ -59,21 +59,19 @@ function BasicAttackClient.Init(self: BasicAttackClient, serviceBag: ServiceBag.
 	self._reloadTime = 0
 
 	-- 서버 → 클라이언트: 탄약 변경 수신
-	self._maid:GiveTask(BasicAttackRemoting.AmmoChanged:Connect(function(
-		current: unknown,
-		max: unknown,
-		reloadTime: unknown
+	self._maid:GiveTask(
+		BasicAttackRemoting.AmmoChanged:Connect(function(current: unknown, max: unknown, reloadTime: unknown)
+			if type(current) == "number" then
+				self._currentAmmo = current
+			end
+			if type(max) == "number" then
+				self._maxAmmo = max
+			end
+			if type(reloadTime) == "number" then
+				self._reloadTime = reloadTime
+			end
+		end)
 	)
-		if type(current) == "number" then
-			self._currentAmmo = current
-		end
-		if type(max) == "number" then
-			self._maxAmmo = max
-		end
-		if type(reloadTime) == "number" then
-			self._reloadTime = reloadTime
-		end
-	end))
 end
 
 function BasicAttackClient.Start(self: BasicAttackClient): ()

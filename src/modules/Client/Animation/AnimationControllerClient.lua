@@ -23,7 +23,7 @@ local RunService = game:GetService("RunService")
 
 -- ─── Spring 변환 상수 ─────────────────────────────────────────────────────────
 -- stiffness=200 → Speed≈20, damping=1.6 → Damper≈1.0
-local SPRING_SPEED_SCALE  = 1.41
+local SPRING_SPEED_SCALE = 1.41
 local SPRING_DAMPER_SCALE = 0.625
 
 -- ─── 서비스 ──────────────────────────────────────────────────────────────────
@@ -72,10 +72,10 @@ function AnimationControllerClient.Init(self: AnimationControllerClient, service
 	self._maid = Maid.new()
 
 	local weakMeta = { __mode = "k" }
-	self._queue     = setmetatable({}, weakMeta)
-	self._current   = setmetatable({}, weakMeta)
+	self._queue = setmetatable({}, weakMeta)
+	self._current = setmetatable({}, weakMeta)
 	self._defaultC0 = setmetatable({}, weakMeta)
-	self._springs   = setmetatable({}, weakMeta)
+	self._springs = setmetatable({}, weakMeta)
 	self._modifiers = setmetatable({}, weakMeta)
 	self._cachedMoveDir = Vector3.new()
 end
@@ -98,11 +98,11 @@ function AnimationControllerClient:RegisterJoint(joint: Motor6D)
 		local rx0, ry0, rz0 = joint.C0:ToEulerAnglesXYZ()
 
 		local posSpring = Spring.new(joint.C0.Position)
-		posSpring.Speed  = 20
+		posSpring.Speed = 20
 		posSpring.Damper = 1
 
 		local rotSpring = Spring.new(Vector3.new(rx0, ry0, rz0))
-		rotSpring.Speed  = 20
+		rotSpring.Speed = 20
 		rotSpring.Damper = 1
 
 		self._springs[joint] = { pos = posSpring, rot = rotSpring }
@@ -303,29 +303,21 @@ end
 
 --[=[
 	Nevermore Spring을 이용해 joint.C0를 targetC0 방향으로 부드럽게 이동시킵니다.
-
-	stiffness/damping은 Brawlers_old와 동일한 값을 그대로 넣으면 됩니다.
-	내부에서 Speed/Damper로 변환합니다.
-	(튜닝: 모듈 상단의 SPRING_SPEED_SCALE / SPRING_DAMPER_SCALE 조정)
 ]=]
 function AnimationControllerClient:spring(
 	joint: Motor6D,
 	targetC0: CFrame,
-	stiffness: number,
-	damping: number,
+	speed: number,
+	damper: number,
 	_dt: number -- Nevermore Spring은 lazy evaluation으로 dt 불필요, 시그니처 호환용
 )
 	self:RegisterJoint(joint)
 
 	local springs = self._springs[joint]
 
-	-- stiffness/damping → Speed/Damper 변환
-	local speed  = math.sqrt(stiffness) * SPRING_SPEED_SCALE
-	local damper = math.clamp(damping * SPRING_DAMPER_SCALE, 0.4, 2.0)
-
-	springs.pos.Speed  = speed
+	springs.pos.Speed = speed
 	springs.pos.Damper = damper
-	springs.rot.Speed  = speed
+	springs.rot.Speed = speed
 	springs.rot.Damper = damper
 
 	-- targetC0 분해 → Spring 타겟 설정

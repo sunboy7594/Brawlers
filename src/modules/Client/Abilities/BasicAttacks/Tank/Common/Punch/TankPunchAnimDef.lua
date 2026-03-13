@@ -1,6 +1,6 @@
 --!strict
 --[=[
-	@class TankPunchAnimDef
+	@class PunchAnimDef
 
 	탱커 주먹 공격 절차적 애니메이션 정의.
 	BasicMovementAnimDefs와 동일한 패턴으로 작성합니다.

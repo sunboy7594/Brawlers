@@ -25,18 +25,18 @@ local UserInputService = game:GetService("UserInputService")
 local CameraControllerClient = {}
 CameraControllerClient.ServiceName = "CameraControllerClient"
 
-local CAMERA_MIN_ZOOM   = 10
-local CAMERA_MAX_ZOOM   = 15
-local CAMERA_INIT_ZOOM  = 12
+local CAMERA_MIN_ZOOM = 10
+local CAMERA_MAX_ZOOM = 15
+local CAMERA_INIT_ZOOM = 12
 
-local SHIFTLOCK_OFFSET  = Vector3.new(1.8, -0.2, 0)
-local DEFAULT_FOV       = 70
-local IMPULSE_SPEED     = 15 -- impulse spring 감쇠 속도
+local SHIFTLOCK_OFFSET = Vector3.new(1.8, -0.2, 0)
+local DEFAULT_FOV = 70
+local IMPULSE_SPEED = 15 -- impulse spring 감쇠 속도
 local RESTORE_STIFFNESS = 200
-local RESTORE_DAMPING   = 10
+local RESTORE_DAMPING = 10
 
 -- Spring 변환 상수 (AnimationControllerClient와 동일)
-local SPRING_SPEED_SCALE  = 1.41
+local SPRING_SPEED_SCALE = 1.41
 local SPRING_DAMPER_SCALE = 0.625
 
 type OffsetModifier = {
@@ -78,7 +78,7 @@ export type CameraControllerClient = typeof(setmetatable(
 ))
 
 function CameraControllerClient.Init(self: CameraControllerClient, serviceBag: any)
-	self._maid   = Maid.new()
+	self._maid = Maid.new()
 	self._camera = workspace.CurrentCamera
 	self._player = Players.LocalPlayer
 
@@ -89,13 +89,13 @@ function CameraControllerClient.Init(self: CameraControllerClient, serviceBag: a
 	self._isShiftLocked = false
 
 	self._offsetModifiers = {}
-	self._offsetSprings   = {}
+	self._offsetSprings = {}
 	self._pendingRemovals = {}
 	self._effectModifiers = {}
 
 	-- 충격 spring (Target 고정: Vector3.zero, Impulse로 속도를 부여)
 	local impulseSpring = Spring.new(Vector3.zero)
-	impulseSpring.Speed  = IMPULSE_SPEED
+	impulseSpring.Speed = IMPULSE_SPEED
 	impulseSpring.Damper = 1
 	self._impulseSpring = impulseSpring
 
@@ -151,6 +151,10 @@ function CameraControllerClient:ToggleShiftLock(enable: boolean)
 	end
 end
 
+function CameraControllerClient:IsShiftLocked(): boolean
+	return self._isShiftLocked
+end
+
 -- ============================================================
 -- [Public] Offset Modifier
 -- ============================================================
@@ -166,16 +170,16 @@ function CameraControllerClient:SetOffsetModifier(name: string, modifier: Offset
 		self._offsetSprings[name] = { pos = posSpring, fov = fovSpring }
 	end
 
-	local speed  = math.sqrt(modifier.stiffness) * SPRING_SPEED_SCALE
+	local speed = math.sqrt(modifier.stiffness) * SPRING_SPEED_SCALE
 	local damper = math.clamp(modifier.damping * SPRING_DAMPER_SCALE, 0.4, 2.0)
 	local springs = self._offsetSprings[name]
 
-	springs.pos.Speed  = speed
+	springs.pos.Speed = speed
 	springs.pos.Damper = damper
 	springs.pos.Target = modifier.offset
 
 	if modifier.fov then
-		springs.fov.Speed  = speed
+		springs.fov.Speed = speed
 		springs.fov.Damper = damper
 		springs.fov.Target = modifier.fov
 	end
@@ -188,16 +192,16 @@ function CameraControllerClient:RemoveOffsetModifier(name: string)
 	end
 
 	-- spring 타겟을 기본값으로 전환 (빠른 수렴)
-	local restoreSpeed  = math.sqrt(RESTORE_STIFFNESS) * SPRING_SPEED_SCALE
+	local restoreSpeed = math.sqrt(RESTORE_STIFFNESS) * SPRING_SPEED_SCALE
 	local restoreDamper = math.clamp(RESTORE_DAMPING * SPRING_DAMPER_SCALE, 0.4, 2.0)
 
-	springs.pos.Speed  = restoreSpeed
+	springs.pos.Speed = restoreSpeed
 	springs.pos.Damper = restoreDamper
 	springs.pos.Target = Vector3.zero
 
 	local modifier = self._offsetModifiers[name]
 	if modifier and modifier.fov then
-		springs.fov.Speed  = restoreSpeed
+		springs.fov.Speed = restoreSpeed
 		springs.fov.Damper = restoreDamper
 		springs.fov.Target = DEFAULT_FOV
 	end
@@ -241,7 +245,7 @@ end
 function CameraControllerClient:_update(dt: number)
 	local char = self._player.Character
 	local root = char and char:FindFirstChild("HumanoidRootPart") :: BasePart
-	local hum  = char and char:FindFirstChildWhichIsA("Humanoid") :: Humanoid
+	local hum = char and char:FindFirstChildWhichIsA("Humanoid") :: Humanoid
 
 	-- [레이어 3] Override
 	if self._currentOverride then
@@ -276,11 +280,12 @@ function CameraControllerClient:_update(dt: number)
 
 		-- pending: spring이 수렴했으면 완전 제거
 		if self._pendingRemovals[name] then
-			local posSettled = springs.pos.Position.Magnitude < 0.002
-				and (springs.pos :: any).Velocity.Magnitude < 0.01
+			local posSettled = springs.pos.Position.Magnitude < 0.002 and (springs.pos :: any).Velocity.Magnitude < 0.01
 			local fovSettled = not modifier.fov
-				or (math.abs(springs.fov.Position - DEFAULT_FOV) < 0.1
-					and math.abs((springs.fov :: any).Velocity) < 0.05)
+				or (
+					math.abs(springs.fov.Position - DEFAULT_FOV) < 0.1
+					and math.abs((springs.fov :: any).Velocity) < 0.05
+				)
 			if posSettled and fovSettled then
 				self._offsetModifiers[name] = nil
 				self._offsetSprings[name] = nil

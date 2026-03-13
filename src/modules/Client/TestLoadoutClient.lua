@@ -54,7 +54,7 @@ function TestLoadoutClient.Start(self: TestLoadoutClient): ()
 
 		-- 3. 성공 시 클라이언트 상태 갱신
 		if success == true then
-			self._basicAttackClient:SetEquippedAttack("Punch")
+			self._basicAttackClient:SetEquippedAttack("TankPunch")
 		end
 	end
 
