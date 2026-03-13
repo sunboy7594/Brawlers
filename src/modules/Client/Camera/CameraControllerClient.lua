@@ -64,6 +64,8 @@ export type CameraControllerClient = typeof(setmetatable(
 		_isShiftLocked: boolean,
 		_crosshair: ImageLabel?,
 
+		_rawLookVector: Vector3, -- Effect 적용 전 순수 카메라 LookVector
+
 		_offsetModifiers: { [string]: OffsetModifier },
 		_offsetSprings: { [string]: OffsetSprings },
 		_pendingRemovals: { [string]: boolean },
@@ -153,6 +155,11 @@ end
 
 function CameraControllerClient:IsShiftLocked(): boolean
 	return self._isShiftLocked
+end
+
+-- Effect·Offset이 섞이지 않은 순수 조준용 LookVector 반환
+function CameraControllerClient:GetAimLookVector(): Vector3
+	return self._rawLookVector or self._camera.CFrame.LookVector
 end
 
 -- ============================================================
@@ -260,6 +267,8 @@ function CameraControllerClient:_update(dt: number)
 	if self._isShiftLocked and root and hum then
 		UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
 	end
+
+	self._rawLookVector = self._camera.CFrame.LookVector
 
 	-- [레이어 1] Offset Modifier (Spring 기반)
 	local finalOffset = Vector3.zero

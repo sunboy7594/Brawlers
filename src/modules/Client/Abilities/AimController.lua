@@ -113,10 +113,16 @@ function AimController.Start(self: AimController): ()
 		end
 	end))
 
-	-- 매 프레임: 인디케이터 갱신 + onAim 호출 + (ShiftLock 시) 캐릭터 회전
-	self._maid:GiveTask(RunService.Heartbeat:Connect(function()
-		self:_onHeartbeat()
-	end))
+	RunService:BindToRenderStep(
+		"AimControllerUpdate",
+		Enum.RenderPriority.Camera.Value + 1, -- 201: 카메라 갱신 후 실행
+		function()
+			self:_onHeartbeat()
+		end
+	)
+	self._maid:GiveTask(function()
+		RunService:UnbindFromRenderStep("AimControllerUpdate")
+	end)
 end
 
 -- ─── 공개 API ────────────────────────────────────────────────────────────────
@@ -226,7 +232,7 @@ end
 	조준 방향을 계산합니다.
 
 	- ShiftLock 비활성: HRP LookVector 수평 성분을 그대로 사용합니다.
-	- ShiftLock 활성:   마우스 레이캐스트로 월드 타겟을 구한 뒤 HRP 기준 수평 방향으로 변환합니다.
+	- ShiftLock 활성:
 
 	@return (origin: Vector3?, direction: Vector3?)
 ]=]
@@ -242,7 +248,7 @@ function AimController:_getAimDirection(): (Vector3?, Vector3?)
 		return nil, nil
 	end
 
-	-- ShiftLock 비활성: 마우스 레이캐스트 없이 HRP LookVector 사용
+	-- ShiftLock 비활성: HRP LookVector 사용 (수평 평탄화)
 	if not self._cameraController:IsShiftLocked() then
 		local look = hrp.CFrame.LookVector
 		local flatLook = Vector3.new(look.X, 0, look.Z)
@@ -252,22 +258,12 @@ function AimController:_getAimDirection(): (Vector3?, Vector3?)
 		return hrp.Position, flatLook.Unit
 	end
 
-	-- ShiftLock 활성: 마우스 레이캐스트로 수평 방향 계산
-	local camera = workspace.CurrentCamera
-	local mousePos = UserInputService:GetMouseLocation()
-	local ray = camera:ViewportPointToRay(mousePos.X, mousePos.Y)
+	-- ShiftLock 활성: Effect가 섞이지 않은 순수 카메라 방향 사용
+	local lookVector = self._cameraController:GetAimLookVector()
+	local dirH = Vector3.new(lookVector.X, 0, lookVector.Z)
 
-	local rayParams = RaycastParams.new()
-	rayParams.FilterType = Enum.RaycastFilterType.Exclude
-	rayParams.FilterDescendantsInstances = { char }
-
-	local rayResult = workspace:Raycast(ray.Origin, ray.Direction * 500, rayParams)
-	local targetPos: Vector3 = if rayResult then rayResult.Position else (ray.Origin + ray.Direction * 100)
-
-	-- 수평 방향 정규화
-	local dirH = Vector3.new(targetPos.X - hrp.Position.X, 0, targetPos.Z - hrp.Position.Z)
 	if dirH.Magnitude < 0.001 then
-		-- 마우스가 캐릭터 바로 위인 경우 HRP LookVector 폴백
+		-- 카메라가 완전히 수직(바로 아래/위)을 향할 때 HRP 폴백
 		local look = hrp.CFrame.LookVector
 		dirH = Vector3.new(look.X, 0, look.Z)
 	end
@@ -285,11 +281,10 @@ function AimController:_updateCharacterRotation()
 		return
 	end
 
-	-- 카메라 수평 방향 → 목표 yaw 계산
-	local lookVector = workspace.CurrentCamera.CFrame.LookVector
+	-- Effect 없는 순수 카메라 방향으로 목표 yaw 계산
+	local lookVector = self._cameraController:GetAimLookVector()
 	local targetYaw = math.atan2(-lookVector.X, -lookVector.Z)
 
-	-- 각도 불연속 방지: 현재 Target 기준으로 최단 경로 delta 계산 (-π ~ π wrap)
 	local current = self._yawSpring.Target
 	local delta = targetYaw - current
 	if delta > math.pi then
@@ -300,7 +295,6 @@ function AimController:_updateCharacterRotation()
 	end
 	self._yawSpring.Target = current + delta
 
-	-- Spring.Position: lazy evaluation으로 현재 시각 기준 보간값 반환
 	hrp.CFrame = CFrame.new(hrp.Position) * CFrame.Angles(0, self._yawSpring.Position, 0)
 end
 
