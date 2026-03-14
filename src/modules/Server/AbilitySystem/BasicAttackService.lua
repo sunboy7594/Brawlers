@@ -1,20 +1,25 @@
 --!strict
 --[=[
-    @class BasicAttackService
+	@class BasicAttackService
 
-    기본 공격 서버 서비스.
+	기본 공격 서버 서비스.
 
-    담당:
-    - 플레이어별 탄약 상태 관리
-    - 탄약 1칸씩 독립 재생 (Heartbeat, lastRegenTime 기반)
-    - BasicAttackRemoting.Fire 수신 → 검증 → 공격 모듈 onFire 호출
-    - LoadoutRemoting.RequestEquipBasicAttack:Bind() → 유효성 검증 후 장착 처리
+	담당:
+	- 플레이어별 탄약 상태 관리
+	- 탄약 1칸씩 독립 재생 (Heartbeat)
+	- BasicAttackRemoting.Fire 수신 → 검증 → 서버 공격 모듈 onFire 배열 실행
+	- 히트 확정 후 HitConfirmed:FireAllClients() 발송
+	- LoadoutRemoting.RequestEquipBasicAttack → 유효성 검증 후 장착 처리
 
-    Anti-exploit:
-    - 레이트 리밋 (FIRE_RATE_LIMIT = 0.1초)
-    - direction 타입/크기 검증
-    - 탄약 0이면 무시
-    - postDelay 중 발사 무시
+	Anti-exploit:
+	- 레이트 리밋 (FIRE_RATE_LIMIT = 0.1초)
+	- direction 타입/크기 검증
+	- 탄약 0이면 무시
+	- postDelay 중 발사 무시
+
+	sctx (서버 컨텍스트):
+	- PlayerState 안에 보관, 발사마다 필드 업데이트
+	- 클라이언트 전송값 일절 사용 안 함 (direction 검증 제외)
 ]=]
 
 local require = require(script.Parent.loader).load(script)
@@ -32,12 +37,23 @@ local ServiceBag = require("ServiceBag")
 
 local FIRE_RATE_LIMIT = 0.1
 local MAX_DIRECTION_MAGNITUDE_DELTA = 0.1
+local COMBO_RESET_TIME = 2.0 -- 이 시간 내 발사 없으면 콤보 초기화
 
--- ─── 레지스트리 자동 구성 ─────────────────────────────────────────────────────
--- BasicAttackDefs의 모든 항목에서 id .. "Server" 모듈을 자동 require
+-- ─── 레지스트리 ──────────────────────────────────────────────────────────────
+
+type ServerContext = {
+	attacker: Model?,
+	origin: Vector3,
+	direction: Vector3,
+	comboCount: number,
+	aimTime: number, -- 서버 측정 (lastFireTime 기준)
+	idleTime: number, -- 마지막 발사 후 경과 시간
+	victims: { Model }?,
+}
 
 type AttackModule = {
-	onFire: (attacker: Model, origin: Vector3, direction: Vector3, aimTime: number) -> { Model },
+	onFire: { (sctx: ServerContext) -> () }?,
+	onHitConfirmed: { (sctx: ServerContext) -> () }?,
 }
 
 type AttackEntry = {
@@ -53,19 +69,34 @@ for id, def in BasicAttackDefs do
 	}
 end
 
--- ─── 타입 정의 ───────────────────────────────────────────────────────────────
+-- ─── 타입 ────────────────────────────────────────────────────────────────────
 
 type PlayerState = {
+	-- 장착 정보
 	equippedAttackId: string?,
+
+	-- 탄약
 	currentAmmo: number,
 	maxAmmo: number,
 	reloadTime: number,
 	postDelay: number,
+
+	-- 타이밍
 	lastFireTime: number, -- 마지막 발사 시각 (os.clock)
-	postDelayUntil: number, -- postDelay 해제 시각 (os.clock)
+	postDelayUntil: number,
 	lastRegenTime: number,
+	lastHitTime: number, -- 마지막 발사 성공 시각
+	aimStartTime: number, -- AimStarted 수신 시각 (aimTime 계산 기준)
+
+	-- 콤보
+	comboCount: number,
+
+	-- 캐릭터
 	humanoid: Humanoid?,
 	rootPart: BasePart?,
+
+	-- 서버 컨텍스트 (발사마다 필드 업데이트)
+	sctx: ServerContext,
 }
 
 export type BasicAttackService = typeof(setmetatable(
@@ -91,8 +122,14 @@ function BasicAttackService.Init(self: BasicAttackService, serviceBag: ServiceBa
 	self._playerStates = {}
 	self._playerMaids = {}
 
-	self._maid:GiveTask(BasicAttackRemoting.Fire:Connect(function(player: Player, direction: unknown, aimTime: unknown)
-		self:_onFire(player, direction, aimTime)
+	-- AimStarted 수신 → aimStartTime 기록
+	self._maid:GiveTask(BasicAttackRemoting.AimStarted:Connect(function(player: Player)
+		self:_onAimStarted(player)
+	end))
+
+	-- direction만 수신 (aimTime 제거)
+	self._maid:GiveTask(BasicAttackRemoting.Fire:Connect(function(player: Player, direction: unknown)
+		self:_onFire(player, direction)
 	end))
 
 	self._maid:GiveTask(LoadoutRemoting.RequestEquipBasicAttack:Bind(function(player: Player, attackId: unknown)
@@ -124,6 +161,18 @@ end
 
 -- ─── 플레이어 라이프사이클 ────────────────────────────────────────────────────
 
+local function makeEmptySctx(): ServerContext
+	return {
+		attacker = nil,
+		origin = Vector3.zero,
+		direction = Vector3.new(0, 0, -1),
+		comboCount = 0,
+		aimTime = 0,
+		idleTime = 0,
+		victims = nil,
+	}
+end
+
 function BasicAttackService:_onPlayerAdded(player: Player)
 	local pMaid = Maid.new()
 	self._playerMaids[player.UserId] = pMaid
@@ -134,6 +183,7 @@ function BasicAttackService:_onPlayerAdded(player: Player)
 
 		local existing = self._playerStates[player.UserId]
 		local equippedId = if existing then existing.equippedAttackId else nil
+		local now = os.clock()
 
 		self._playerStates[player.UserId] = {
 			equippedAttackId = equippedId,
@@ -143,9 +193,13 @@ function BasicAttackService:_onPlayerAdded(player: Player)
 			postDelay = 0,
 			lastFireTime = 0,
 			postDelayUntil = 0,
-			lastRegenTime = os.clock(),
+			lastRegenTime = now,
+			lastHitTime = 0,
+			aimStartTime = 0,
+			comboCount = 0,
 			humanoid = humanoid,
 			rootPart = rootPart,
+			sctx = makeEmptySctx(),
 		}
 
 		if equippedId and ATTACK_REGISTRY[equippedId] then
@@ -182,9 +236,35 @@ function BasicAttackService:_onPlayerRemoving(player: Player)
 	end
 end
 
--- ─── 발사 처리 & Anti-exploit ────────────────────────────────────────────────
+-- ─── 조준 시작 처리 ──────────────────────────────────────────────────────────
 
-function BasicAttackService:_onFire(player: Player, direction: unknown, aimTime: unknown)
+function BasicAttackService:_onAimStarted(player: Player)
+	local state = self._playerStates[player.UserId]
+	if not state then
+		return
+	end
+
+	local now = os.clock()
+
+	-- postDelay 중이면 무시 (스팸으로 aimStartTime 리셋 방지)
+	if now < state.postDelayUntil then
+		return
+	end
+
+	-- 탄약/장착 없으면 무시
+	if state.currentAmmo <= 0 then
+		return
+	end
+	if not state.equippedAttackId then
+		return
+	end
+
+	state.aimStartTime = now
+end
+
+-- ─── 발사 처리 ───────────────────────────────────────────────────────────────
+
+function BasicAttackService:_onFire(player: Player, direction: unknown)
 	local state = self._playerStates[player.UserId]
 	if not state or not state.humanoid or not state.rootPart then
 		return
@@ -202,7 +282,7 @@ function BasicAttackService:_onFire(player: Player, direction: unknown, aimTime:
 		return
 	end
 
-	-- [3] direction 타입/크기 검증
+	-- [3] direction 검증
 	if typeof(direction) ~= "Vector3" then
 		return
 	end
@@ -211,17 +291,12 @@ function BasicAttackService:_onFire(player: Player, direction: unknown, aimTime:
 		return
 	end
 
-	-- [4] aimTime 타입 검증
-	if type(aimTime) ~= "number" then
-		return
-	end
-
-	-- [5] 탄약 확인
+	-- [4] 탄약 확인
 	if state.currentAmmo <= 0 then
 		return
 	end
 
-	-- [6] 장착 확인
+	-- [5] 장착 확인
 	local attackId = state.equippedAttackId
 	if not attackId then
 		return
@@ -231,16 +306,64 @@ function BasicAttackService:_onFire(player: Player, direction: unknown, aimTime:
 		return
 	end
 
-	-- [7] 발사 처리
+	-- [6] 콤보 계산
+	if state.lastHitTime > 0 and now - state.lastHitTime <= COMBO_RESET_TIME then
+		state.comboCount += 1
+	else
+		state.comboCount = 1
+	end
+
+	-- [7] sctx 업데이트 (lastFireTime 갱신 전에 aimTime 계산)
+	local sctx = state.sctx
+	sctx.attacker = state.humanoid and state.humanoid.Parent :: Model? or nil
+	sctx.origin = state.rootPart.Position
+	sctx.direction = dir
+	sctx.comboCount = state.comboCount
+	sctx.aimTime = if state.aimStartTime > 0 then now - state.aimStartTime else 0
+	sctx.idleTime = if state.lastHitTime > 0 then now - state.lastHitTime else 0
+	sctx.victims = nil
+
+	-- [8] 발사 처리 (sctx 계산 후 갱신)
 	state.lastFireTime = now
+	state.aimStartTime = 0 -- 발사 후 초기화
 	state.postDelayUntil = now + state.postDelay
 	state.currentAmmo -= 1
 	self:_fireAmmoChanged(player, state)
 
-	local char = state.humanoid.Parent :: Model?
-	if char then
-		entry.module.onFire(char, state.rootPart.Position, dir, aimTime :: number)
+	-- [9] onFire 배열 실행 (판정 포함)
+	local allVictims: { Model } = {}
+	if entry.module.onFire then
+		for _, fn in entry.module.onFire do
+			local result = fn(sctx)
+			-- onFire가 { Model } 반환 시 합산
+			if type(result) == "table" then
+				for _, v in result :: { Model } do
+					table.insert(allVictims, v)
+				end
+			end
+		end
 	end
+
+	-- [10] 히트 확정
+	state.lastHitTime = now
+	sctx.victims = allVictims
+
+	if #allVictims > 0 and entry.module.onHitConfirmed then
+		for _, fn in entry.module.onHitConfirmed do
+			fn(sctx)
+		end
+	end
+
+	-- [11] 클라이언트에 히트 알림
+	local victimUserIds: { number } = {}
+	for _, victimModel in allVictims do
+		local victimPlayer = Players:GetPlayerFromCharacter(victimModel)
+		if victimPlayer then
+			table.insert(victimUserIds, victimPlayer.UserId)
+		end
+	end
+
+	BasicAttackRemoting.HitConfirmed:FireAllClients(player.UserId, victimUserIds, state.comboCount)
 end
 
 -- ─── 탄약 재생 ───────────────────────────────────────────────────────────────
@@ -265,7 +388,7 @@ function BasicAttackService:_updateAmmoRegen()
 	end
 end
 
--- ─── 내부 헬퍼 ───────────────────────────────────────────────────────────────
+-- ─── 헬퍼 ────────────────────────────────────────────────────────────────────
 
 function BasicAttackService:_fireAmmoChanged(player: Player, state: PlayerState)
 	BasicAttackRemoting.AmmoChanged:FireClient(
@@ -294,6 +417,8 @@ function BasicAttackService:_setPlayerAttack(player: Player, attackId: string)
 	state.currentAmmo = entry.def.maxAmmo
 	state.postDelayUntil = 0
 	state.lastRegenTime = os.clock()
+	state.comboCount = 0
+	state.lastHitTime = 0
 
 	self:_fireAmmoChanged(player, state)
 end

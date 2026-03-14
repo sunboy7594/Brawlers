@@ -10,16 +10,21 @@
 	- Ultimate:    궁극기
 
 	동작:
-	- 새 조준 요청 시 기존 조준 취소 후 전환 (나중에 누른 것이 우선)
+	- 새 조준 요청 시 기존 조준 취소 후 전환
 	- 우클릭(MouseButton2) → 현재 조준 취소
 	- 좌클릭(MouseButton1) 해제 → confirm (발사)
-	- 매 프레임 indicator:update 및 onAim 호출
+	- 매 프레임 onAim 배열 실행 → IndicatorUpdateParams 병합 → indicator:update()
 
 	ShiftLock 연동:
-	- ShiftLock 비활성: HRP LookVector를 조준 방향으로 사용 (마우스 레이캐스트 없음)
-	- ShiftLock 활성:   AutoRotate를 끄고 카메라 방향으로 캐릭터를 매 프레임 회전,
-	                    마우스 레이캐스트로 수평 조준 방향 계산
-	- 조준 종료(발사/취소) 시 AutoRotate 복원
+	- ShiftLock 비활성: HRP LookVector 수평 성분 사용
+	- ShiftLock 활성: AutoRotate 끄고 카메라 방향으로 캐릭터 회전
+	- 조준 종료 시 AutoRotate 복원
+
+	클라이언트 공격 모듈 훅:
+	- onAimStart: { (ctx) -> () }?   조준 시작 1회
+	- onAim:      { (ctx) -> params? } 매 프레임, IndicatorUpdateParams 반환 시 인디케이터에 반영
+	- onFire:     { (ctx) -> () }?   발사 확정 후
+	취소 시: indicator hide만 (onCancel 없음)
 ]=]
 
 local require = require(script.Parent.loader).load(script)
@@ -33,28 +38,15 @@ local Maid = require("Maid")
 local ServiceBag = require("ServiceBag")
 local Spring = require("Spring")
 
--- ─── 타입 정의 ───────────────────────────────────────────────────────────────
-
--- 인디케이터 공통 인터페이스 (duck typing)
-type Indicator = {
-	update: (self: any, origin: Vector3, direction: Vector3) -> (),
-	show: (self: any) -> (),
-	hide: (self: any) -> (),
-	destroy: (self: any) -> (),
-}
-
-type OnFireCallback = (direction: Vector3, aimTime: number) -> ()
-type OnCancelCallback = () -> ()
-type OnAimCallback = (aimTime: number) -> ()
+-- ─── 타입 ────────────────────────────────────────────────────────────────────
 
 type AimState = {
 	abilityType: string,
-	indicator: Indicator,
-	onFire: OnFireCallback,
-	onCancel: OnCancelCallback,
-	onAim: OnAimCallback?,
+	clientModule: any, -- 공격 클라이언트 모듈
+	ctx: any, -- ClientContext (BasicAttackClient가 소유)
+	onFireServer: (direction: Vector3) -> (),
 	startTime: number,
-	maid: any, -- Maid
+	maid: any,
 }
 
 export type AimController = typeof(setmetatable(
@@ -62,8 +54,8 @@ export type AimController = typeof(setmetatable(
 		_serviceBag: ServiceBag.ServiceBag,
 		_maid: any,
 		_aimState: AimState?,
-		_cameraController: any, -- CameraControllerClient
-		_yawSpring: any, -- Spring<number> : 캐릭터 Y축 회전 보간
+		_cameraController: any,
+		_yawSpring: any,
 	},
 	{} :: typeof({ __index = {} })
 ))
@@ -88,10 +80,9 @@ function AimController.Init(self: AimController, serviceBag: ServiceBag.ServiceB
 	self._aimState = nil
 	self._cameraController = serviceBag:GetService(CameraControllerClient)
 
-	-- 캐릭터 Y축 회전 보간 스프링 (단위: 라디안)
 	local yawSpring = Spring.new(0)
-	yawSpring.Speed = 10 -- 높을수록 빠르게 추적
-	yawSpring.Damper = 0.3 -- 임계 감쇠 (오버슈트 없음)
+	yawSpring.Speed = 10
+	yawSpring.Damper = 0.3
 	self._yawSpring = yawSpring
 end
 
@@ -106,20 +97,16 @@ function AimController.Start(self: AimController): ()
 		end
 	end))
 
-	-- 좌클릭 해제: confirm (발사)
+	-- 좌클릭 해제: 발사
 	self._maid:GiveTask(UserInputService.InputEnded:Connect(function(input: InputObject, _processed: boolean)
 		if input.UserInputType == Enum.UserInputType.MouseButton1 then
 			self:_confirm()
 		end
 	end))
 
-	RunService:BindToRenderStep(
-		"AimControllerUpdate",
-		Enum.RenderPriority.Camera.Value + 1, -- 201: 카메라 갱신 후 실행
-		function()
-			self:_onRenderStep()
-		end
-	)
+	RunService:BindToRenderStep("AimControllerUpdate", Enum.RenderPriority.Camera.Value + 1, function()
+		self:_onRenderStep()
+	end)
 	self._maid:GiveTask(function()
 		RunService:UnbindFromRenderStep("AimControllerUpdate")
 	end)
@@ -130,22 +117,16 @@ end
 --[=[
 	새 조준을 시작합니다.
 
-	- 이미 같은 abilityType으로 조준 중이면 무시합니다.
-	- 다른 abilityType이 조준 중이면 기존 onCancel()을 호출 후 교체합니다.
-	- ShiftLock 활성 시 Humanoid.AutoRotate를 비활성화하고 yawSpring을 초기화합니다.
-
-	@param abilityType string   AimController.AbilityType 중 하나
-	@param indicator Indicator  인디케이터 객체
-	@param onFire function      발사 콜백 (direction: Vector3, aimTime: number)
-	@param onCancel function    취소 콜백
-	@param onAim function?      매 프레임 콜백 (aimTime: number)
+	@param abilityType  string                       AimController.AbilityType 중 하나
+	@param clientModule table                        공격 클라이언트 모듈 (shapes, onAimStart, onAim, onFire)
+	@param ctx          table                        BasicAttackClient가 소유하는 ClientContext
+	@param onFireServer (direction: Vector3) -> ()   서버 전송 콜백
 ]=]
 function AimController:startAim(
 	abilityType: string,
-	indicator: Indicator,
-	onFire: OnFireCallback,
-	onCancel: OnCancelCallback,
-	onAim: OnAimCallback?
+	clientModule: any,
+	ctx: any,
+	onFireServer: (direction: Vector3) -> ()
 )
 	local state = self._aimState
 
@@ -154,19 +135,17 @@ function AimController:startAim(
 		return
 	end
 
-	-- 다른 타입이 조준 중이면 기존 취소
+	-- 다른 타입이 조준 중이면 취소
 	if state then
 		self:_cancelInternal()
 	end
 
-	-- ShiftLock 활성 시 AutoRotate 비활성화 + yawSpring 현재 HRP 방향으로 초기화
+	-- ShiftLock 활성 시 AutoRotate 비활성 + yawSpring 초기화
 	if self._cameraController:IsShiftLocked() then
 		local humanoid = self:_getHumanoid()
 		if humanoid then
 			humanoid.AutoRotate = false
 		end
-
-		-- 조준 시작 순간 HRP yaw로 스프링을 초기화해 순간이동 방지
 		local hrp = self:_getHRP()
 		if hrp then
 			local look = hrp.CFrame.LookVector
@@ -176,23 +155,28 @@ function AimController:startAim(
 		end
 	end
 
-	-- 새 조준 상태 설정
-	local aimMaid = Maid.new()
 	self._aimState = {
 		abilityType = abilityType,
-		indicator = indicator,
-		onFire = onFire,
-		onCancel = onCancel,
-		onAim = onAim,
+		clientModule = clientModule,
+		ctx = ctx,
+		onFireServer = onFireServer,
 		startTime = os.clock(),
-		maid = aimMaid,
+		maid = Maid.new(),
 	}
 
-	indicator:show()
+	-- 인디케이터 표시
+	ctx.indicator:show()
+
+	-- onAimStart 배열 실행
+	if clientModule.onAimStart then
+		for _, fn in clientModule.onAimStart do
+			fn(ctx)
+		end
+	end
 end
 
 --[=[
-	현재 조준을 취소합니다. onCancel 콜백을 호출합니다.
+	현재 조준을 취소합니다.
 ]=]
 function AimController:cancel()
 	if not self._aimState then
@@ -210,78 +194,50 @@ end
 
 -- ─── 내부 ────────────────────────────────────────────────────────────────────
 
--- 로컬 플레이어의 HumanoidRootPart를 반환
 function AimController:_getHRP(): BasePart?
 	local char = Players.LocalPlayer.Character
-	if not char then
-		return nil
-	end
-	return char:FindFirstChild("HumanoidRootPart") :: BasePart?
+	return char and char:FindFirstChild("HumanoidRootPart") :: BasePart? or nil
 end
 
--- 로컬 플레이어의 Humanoid를 반환
 function AimController:_getHumanoid(): Humanoid?
 	local char = Players.LocalPlayer.Character
-	if not char then
-		return nil
-	end
-	return char:FindFirstChildOfClass("Humanoid") :: Humanoid?
+	return char and char:FindFirstChildOfClass("Humanoid") :: Humanoid? or nil
 end
 
---[=[
-	조준 방향을 계산합니다.
-
-	- ShiftLock 비활성: HRP LookVector 수평 성분을 그대로 사용합니다.
-	- ShiftLock 활성:
-
-	@return (origin: Vector3?, direction: Vector3?)
-]=]
 function AimController:_getAimDirection(): (Vector3?, Vector3?)
-	local player = Players.LocalPlayer
-	local char = player.Character
+	local char = Players.LocalPlayer.Character
 	if not char then
 		return nil, nil
 	end
-
 	local hrp = char:FindFirstChild("HumanoidRootPart") :: BasePart?
 	if not hrp then
 		return nil, nil
 	end
 
-	-- ShiftLock 비활성: HRP LookVector 사용 (수평 평탄화)
 	if not self._cameraController:IsShiftLocked() then
 		local look = hrp.CFrame.LookVector
-		local flatLook = Vector3.new(look.X, 0, look.Z)
-		if flatLook.Magnitude < 0.001 then
-			flatLook = Vector3.new(0, 0, -1)
+		local flat = Vector3.new(look.X, 0, look.Z)
+		if flat.Magnitude < 0.001 then
+			flat = Vector3.new(0, 0, -1)
 		end
-		return hrp.Position, flatLook.Unit
+		return hrp.Position, flat.Unit
 	end
 
-	-- ShiftLock 활성: Effect가 섞이지 않은 순수 카메라 방향 사용
 	local lookVector = self._cameraController:GetAimLookVector()
 	local dirH = Vector3.new(lookVector.X, 0, lookVector.Z)
-
 	if dirH.Magnitude < 0.001 then
-		-- 카메라가 완전히 수직(바로 아래/위)을 향할 때 HRP 폴백
 		local look = hrp.CFrame.LookVector
 		dirH = Vector3.new(look.X, 0, look.Z)
 	end
-
 	return hrp.Position, dirH.Unit
 end
 
---[=[
-	ShiftLock 활성 시 카메라 수평 방향으로 캐릭터를 부드럽게 회전합니다.
-	yawSpring을 통해 보간하여 순간이동 없이 자연스럽게 회전합니다.
-]=]
 function AimController:_updateCharacterRotation()
 	local hrp = self:_getHRP()
 	if not hrp then
 		return
 	end
 
-	-- Effect 없는 순수 카메라 방향으로 목표 yaw 계산
 	local lookVector = self._cameraController:GetAimLookVector()
 	local targetYaw = math.atan2(-lookVector.X, -lookVector.Z)
 
@@ -298,24 +254,31 @@ function AimController:_updateCharacterRotation()
 	hrp.CFrame = CFrame.new(hrp.Position) * CFrame.Angles(0, self._yawSpring.Position, 0)
 end
 
--- 좌클릭 해제 시 발사 처리
+-- 좌클릭 해제 시 발사
 function AimController:_confirm()
 	local state = self._aimState
 	if not state then
 		return
 	end
 
-	local aimTime = os.clock() - state.startTime
-	local _, direction = self:_getAimDirection()
+	local origin, direction = self:_getAimDirection()
 	if not direction then
-		-- 방향 계산 실패 시 취소로 처리
 		self:_cancelInternal()
 		return
 	end
 
-	-- 인디케이터 숨기기 후 발사
-	state.indicator:hide()
-	local onFire = state.onFire
+	-- ctx 갱신
+	local ctx = state.ctx
+	ctx.aimTime = os.clock() - state.startTime
+	ctx.direction = direction
+	ctx.origin = origin or Vector3.zero
+
+	-- 인디케이터 숨기기
+	ctx.indicator:hide()
+
+	local clientModule = state.clientModule
+	local onFireServer = state.onFireServer
+
 	state.maid:Destroy()
 	self._aimState = nil
 
@@ -325,38 +288,41 @@ function AimController:_confirm()
 		humanoid.AutoRotate = true
 	end
 
-	onFire(direction, aimTime)
+	-- onFire 배열 실행 (클라이언트 측 애니메이션/이펙트)
+	if clientModule.onFire then
+		for _, fn in clientModule.onFire do
+			fn(ctx)
+		end
+	end
+
+	-- 서버 전송
+	onFireServer(direction)
 end
 
--- 내부 취소: onCancel 호출 + 상태 정리
+-- 취소: indicator hide만
 function AimController:_cancelInternal()
 	local state = self._aimState
 	if not state then
 		return
 	end
 
-	state.indicator:hide()
-	local onCancel = state.onCancel
+	state.ctx.indicator:hide()
 	state.maid:Destroy()
 	self._aimState = nil
 
-	-- AutoRotate 복원
 	local humanoid = self:_getHumanoid()
 	if humanoid then
 		humanoid.AutoRotate = true
 	end
-
-	onCancel()
 end
 
--- 매 프레임: (ShiftLock 시) 캐릭터 회전 + 인디케이터 갱신 + onAim 호출
+-- 매 프레임
 function AimController:_onRenderStep()
 	local state = self._aimState
 	if not state then
 		return
 	end
 
-	-- ShiftLock 활성 시 카메라 방향으로 캐릭터 부드럽게 회전
 	if self._cameraController:IsShiftLocked() then
 		self:_updateCharacterRotation()
 	end
@@ -366,11 +332,20 @@ function AimController:_onRenderStep()
 		return
 	end
 
-	state.indicator:update(origin, direction)
+	-- ctx 갱신
+	local ctx = state.ctx
+	ctx.aimTime = os.clock() - state.startTime
+	ctx.direction = direction
+	ctx.origin = origin
 
-	local aimTime = os.clock() - state.startTime
-	if state.onAim then
-		state.onAim(aimTime)
+	-- 매 프레임 기본 위치/방향 업데이트
+	ctx.indicator:update({ origin = origin, direction = direction })
+
+	-- onAim 배열 실행 (인디케이터 추가 업데이트 등 모듈이 자유롭게 처리)
+	if state.clientModule.onAim then
+		for _, fn in state.clientModule.onAim do
+			fn(ctx)
+		end
 	end
 end
 

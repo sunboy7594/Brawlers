@@ -7,24 +7,26 @@
 	담당:
 	- Motor6D 조인트 수집
 	- EntityAnimator / CameraAnimator 생성 및 BasicMovementClient에 주입
+	- BasicAttackClient에 joints 전달 (SetJoints)
 	- Humanoid 참조를 BasicMovementClient에 전달
 	- 매 프레임 MoveDirection을 로컬 좌표로 변환하여 AnimationControllerClient:SetMoveDir() 호출
-	- 소멸 시 정리 (maid)
 ]=]
 
 local require = require(script.Parent.loader).load(script)
 
 local AnimationControllerClient = require("AnimationControllerClient")
-local BasicCameraAnimDefs       = require("BasicCameraAnimDefs")
-local BasicMovementAnimDefs     = require("BasicMovementAnimDefs")
-local BasicMovementClient       = require("BasicMovementClient")
-local CameraAnimator            = require("CameraAnimator")
-local CameraControllerClient    = require("CameraControllerClient")
-local EntityAnimator            = require("EntityAnimator")
-local Maid                      = require("Maid")
-local RunService                = game:GetService("RunService")
+local BasicAttackClient = require("BasicAttackClient")
+local BasicCameraAnimDefs = require("BasicCameraAnimDefs")
+local BasicMovementAnimDefs = require("BasicMovementAnimDefs")
+local BasicMovementClient = require("BasicMovementClient")
+local CameraAnimator = require("CameraAnimator")
+local CameraControllerClient = require("CameraControllerClient")
+local EntityAnimator = require("EntityAnimator")
+local Maid = require("Maid")
+local RunService = game:GetService("RunService")
 
--- ─── R15 조인트 이름 목록 (R15Utils에 bulk getter 없으므로 직접 정의) ─────────
+-- ─── R15 조인트 이름 목록 ────────────────────────────────────────────────────
+
 local JOINT_NAMES = {
 	"Root",
 	"Waist",
@@ -46,19 +48,17 @@ local JOINT_NAMES = {
 local HumanoidAnimatorClient = {}
 HumanoidAnimatorClient.__index = HumanoidAnimatorClient
 
--- ─── 생성자 ──────────────────────────────────────────────────────────────────
-
 function HumanoidAnimatorClient.new(model: Model, serviceBag: any)
 	local self = setmetatable({}, HumanoidAnimatorClient)
 	self._maid = Maid.new()
 	self.Instance = model
 
-	-- 서비스 획득
-	local animController   = serviceBag:GetService(AnimationControllerClient)
-	local movementClient   = serviceBag:GetService(BasicMovementClient)
+	local animController = serviceBag:GetService(AnimationControllerClient)
+	local movementClient = serviceBag:GetService(BasicMovementClient)
 	local cameraController = serviceBag:GetService(CameraControllerClient)
+	local attackClient = serviceBag:GetService(BasicAttackClient)
 
-	-- Motor6D 수집 (재귀 검색)
+	-- Motor6D 수집
 	local joints: { [string]: Motor6D } = {}
 	for _, name in JOINT_NAMES do
 		local joint = model:FindFirstChild(name, true)
@@ -67,7 +67,7 @@ function HumanoidAnimatorClient.new(model: Model, serviceBag: any)
 		end
 	end
 
-	-- EntityAnimator 생성 + 주입
+	-- 이동 EntityAnimator 생성 + 주입
 	local animator = EntityAnimator.new("BasicMovement", joints, BasicMovementAnimDefs, animController)
 	self._maid:GiveTask(function()
 		animator:Destroy()
@@ -90,7 +90,13 @@ function HumanoidAnimatorClient.new(model: Model, serviceBag: any)
 		movementClient:SetHumanoid(nil)
 	end)
 
-	-- RenderStepped: MoveDirection을 HumanoidRootPart 로컬 좌표로 변환 후 전달
+	-- BasicAttackClient에 joints 전달
+	attackClient:SetJoints(joints)
+	self._maid:GiveTask(function()
+		attackClient:SetJoints(nil)
+	end)
+
+	-- RenderStepped: MoveDirection 로컬 좌표 변환
 	local root = model:FindFirstChild("HumanoidRootPart") :: BasePart?
 	self._maid:GiveTask(RunService.RenderStepped:Connect(function()
 		if not humanoid or not root then
@@ -107,8 +113,6 @@ function HumanoidAnimatorClient.new(model: Model, serviceBag: any)
 
 	return self
 end
-
--- ─── 정리 ────────────────────────────────────────────────────────────────────
 
 function HumanoidAnimatorClient:Destroy()
 	self._maid:Destroy()
