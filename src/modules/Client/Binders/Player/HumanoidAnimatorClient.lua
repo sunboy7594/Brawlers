@@ -14,6 +14,9 @@
 
 local require = require(script.Parent.loader).load(script)
 
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+
 local AnimationControllerClient = require("AnimationControllerClient")
 local BasicAttackClient = require("BasicAttackClient")
 local BasicCameraAnimDefs = require("BasicCameraAnimDefs")
@@ -23,7 +26,6 @@ local CameraAnimator = require("CameraAnimator")
 local CameraControllerClient = require("CameraControllerClient")
 local EntityAnimator = require("EntityAnimator")
 local Maid = require("Maid")
-local RunService = game:GetService("RunService")
 
 -- ─── R15 조인트 이름 목록 ────────────────────────────────────────────────────
 
@@ -52,6 +54,12 @@ function HumanoidAnimatorClient.new(model: Model, serviceBag: any)
 	local self = setmetatable({}, HumanoidAnimatorClient)
 	self._maid = Maid.new()
 	self.Instance = model
+
+	-- 로컬 플레이어 캐릭터가 아니면 아무것도 하지 않음
+	-- 다른 플레이어 joint.C0는 서버에서 변경 → Roblox 자동 복제로 표시됨
+	if model ~= Players.LocalPlayer.Character then
+		return self
+	end
 
 	local animController = serviceBag:GetService(AnimationControllerClient)
 	local movementClient = serviceBag:GetService(BasicMovementClient)

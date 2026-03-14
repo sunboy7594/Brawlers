@@ -39,19 +39,18 @@ type JointEntry = {
 type AnimEntry = {
 	joints: { [string]: JointEntry },
 	layer: number,
+	duration: number, -- math.huge면 무한
+	elapsed: number,
 }
 
 type PlayerAnimState = {
-	-- animKey → AnimEntry  (animKey = animDefModuleName .. "_" .. animName)
 	anims: { [string]: AnimEntry },
-	-- joint 레퍼런스 캐시 (jointName → Motor6D)
 	joints: { [string]: Motor6D },
-	-- defaultC0 캐시 (전송받은 값)
 	defaultC0s: { [string]: CFrame },
-	-- humanoid / rootPart (MoveDir 계산용)
+	-- joint별 Spring (anim 제거 후에도 유지되어 default 복귀에 사용)
+	jointSprings: { [Motor6D]: { pos: any, rot: any } },
 	humanoid: Humanoid?,
 	rootPart: BasePart?,
-	-- 플레이어별 Maid
 	maid: any,
 }
 
@@ -84,9 +83,10 @@ function AnimReplicationService.Init(self: AnimReplicationService, serviceBag: S
 				animName: unknown,
 				animType: unknown,
 				layer: unknown,
+				duration: unknown,
 				defaultC0Map: unknown
 			)
-				self:_onAnimChanged(player, animDefModuleName, animName, animType, layer, defaultC0Map)
+				self:_onAnimChanged(player, animDefModuleName, animName, animType, layer, duration, defaultC0Map)
 			end
 		)
 	)
@@ -124,6 +124,7 @@ function AnimReplicationService:_onPlayerAdded(player: Player)
 		anims = {},
 		joints = {},
 		defaultC0s = {},
+		jointSprings = {},
 		humanoid = nil,
 		rootPart = nil,
 		maid = pMaid,
@@ -131,15 +132,12 @@ function AnimReplicationService:_onPlayerAdded(player: Player)
 	self._playerStates[player.UserId] = state
 
 	local function onCharacterAdded(char: Model)
-		-- 기존 애니메이션 전부 클리어
 		state.anims = {}
 		state.joints = {}
 		state.defaultC0s = {}
-
+		state.jointSprings = {}
 		state.humanoid = char:WaitForChild("Humanoid") :: Humanoid
 		state.rootPart = char:WaitForChild("HumanoidRootPart") :: BasePart
-
-		-- joint 캐시 구성
 		for _, desc in char:GetDescendants() do
 			if desc:IsA("Motor6D") then
 				state.joints[desc.Name] = desc
@@ -171,6 +169,7 @@ function AnimReplicationService:_onAnimChanged(
 	animName: unknown,
 	animType: unknown,
 	layer: unknown,
+	duration: unknown,
 	defaultC0Map: unknown
 )
 	if type(animDefModuleName) ~= "string" then
@@ -235,26 +234,35 @@ function AnimReplicationService:_onAnimChanged(
 
 			local defaultC0 = state.defaultC0s[jointName] or joint.C0
 
-			local rx0, ry0, rz0 = defaultC0:ToEulerAnglesXYZ()
-			local posSpring = Spring.new(joint.C0.Position)
-			posSpring.Speed = 20
-			posSpring.Damper = 1
-			local rotSpring = Spring.new(Vector3.new(rx0, ry0, rz0))
-			rotSpring.Speed = 20
-			rotSpring.Damper = 1
+			-- Spring이 없으면 새로 생성, 있으면 재사용
+			if not state.jointSprings[joint] then
+				local rx0, ry0, rz0 = defaultC0:ToEulerAnglesXYZ()
+				local posSpring = Spring.new(joint.C0.Position)
+				posSpring.Speed = 20
+				posSpring.Damper = 1
+				local rotSpring = Spring.new(Vector3.new(rx0, ry0, rz0))
+				rotSpring.Speed = 20
+				rotSpring.Damper = 1
+				state.jointSprings[joint] = { pos = posSpring, rot = rotSpring }
+			end
 
-			serverAC._springs[joint] = { pos = posSpring, rot = rotSpring }
+			serverAC._springs[joint] = state.jointSprings[joint]
 			serverAC._defaultC0s[joint] = defaultC0
 
 			local onUpdate = factory(joint, defaultC0, serverAC)
 			jointEntries[jointName] = {
 				onUpdate = onUpdate,
-				posSpring = posSpring,
-				rotSpring = rotSpring,
+				posSpring = state.jointSprings[joint].pos,
+				rotSpring = state.jointSprings[joint].rot,
 			}
 		end
 
-		state.anims[animKey] = { joints = jointEntries, layer = layer :: number }
+		state.anims[animKey] = {
+			joints = jointEntries,
+			layer = layer :: number,
+			duration = type(duration) == "number" and duration or math.huge,
+			elapsed = 0,
+		}
 	elseif animType == "modify" then
 		-- modifier: onUpdate로 매 프레임 current CFrame에 적용
 		local jointEntries: { [string]: JointEntry } = {}
@@ -266,33 +274,40 @@ function AnimReplicationService:_onAnimChanged(
 
 			local defaultC0 = state.defaultC0s[jointName] or joint.C0
 
-			local rx0, ry0, rz0 = defaultC0:ToEulerAnglesXYZ()
-			local posSpring = Spring.new(joint.C0.Position)
-			posSpring.Speed = 20
-			posSpring.Damper = 1
-			local rotSpring = Spring.new(Vector3.new(rx0, ry0, rz0))
-			rotSpring.Speed = 20
-			rotSpring.Damper = 1
+			if not state.jointSprings[joint] then
+				local rx0, ry0, rz0 = defaultC0:ToEulerAnglesXYZ()
+				local posSpring = Spring.new(joint.C0.Position)
+				posSpring.Speed = 20
+				posSpring.Damper = 1
+				local rotSpring = Spring.new(Vector3.new(rx0, ry0, rz0))
+				rotSpring.Speed = 20
+				rotSpring.Damper = 1
+				state.jointSprings[joint] = { pos = posSpring, rot = rotSpring }
+			end
 
-			serverAC._springs[joint] = { pos = posSpring, rot = rotSpring }
+			serverAC._springs[joint] = state.jointSprings[joint]
 			serverAC._defaultC0s[joint] = defaultC0
 
 			local modCallback = factory(joint, defaultC0, serverAC)
 
-			-- modifier는 매 프레임 current C0에 적용
 			local function onUpdate(j: Motor6D, _dt: number)
 				j.C0 = modCallback(j.C0, _dt)
 			end
 
 			jointEntries[jointName] = {
 				onUpdate = onUpdate,
-				posSpring = posSpring,
-				rotSpring = rotSpring,
+				posSpring = state.jointSprings[joint].pos,
+				rotSpring = state.jointSprings[joint].rot,
 			}
 		end
 
 		-- modifier는 layer 없이 별도 키로 저장 (layer = -1 관례)
-		state.anims[animKey] = { joints = jointEntries, layer = -1 }
+		state.anims[animKey] = {
+			joints = jointEntries,
+			layer = -1,
+			duration = math.huge, -- modifier는 명시적 Stop 전까지 유지
+			elapsed = 0,
+		}
 	end
 end
 
@@ -317,14 +332,56 @@ end
 
 function AnimReplicationService:_update(dt: number)
 	for _, state in self._playerStates do
-		for _, animEntry in state.anims do
+		-- 현재 프레임에서 활성화된 joint 목록 수집
+		local activeJoints: { [Motor6D]: boolean } = {}
+
+		local toRemove: { string } = {}
+		for animKey, animEntry in state.anims do
+			animEntry.elapsed += dt
+
+			-- duration 만료 시 제거
+			if animEntry.elapsed >= animEntry.duration then
+				table.insert(toRemove, animKey)
+				continue
+			end
+
 			for jointName, jointEntry in animEntry.joints do
 				local joint = state.joints[jointName]
 				if not joint then
 					continue
 				end
+				activeJoints[joint] = true
 				jointEntry.onUpdate(joint, dt)
 			end
+		end
+
+		for _, animKey in toRemove do
+			state.anims[animKey] = nil
+		end
+
+		-- 비활성 joint → defaultC0로 spring 복귀
+		for jointName, joint in state.joints do
+			if activeJoints[joint] then
+				continue
+			end
+			local springs = state.jointSprings[joint]
+			if not springs then
+				continue
+			end
+			local defaultC0 = state.defaultC0s[jointName] or joint.C0
+
+			springs.pos.Speed = 20
+			springs.pos.Damper = 0.8
+			springs.rot.Speed = 20
+			springs.rot.Damper = 0.8
+
+			local tx, ty, tz = defaultC0:ToEulerAnglesXYZ()
+			springs.pos.Target = defaultC0.Position
+			springs.rot.Target = Vector3.new(tx, ty, tz)
+
+			local p = springs.pos.Position
+			local r = springs.rot.Position
+			joint.C0 = CFrame.new(p) * CFrame.fromEulerAnglesXYZ(r.X, r.Y, r.Z)
 		end
 	end
 end

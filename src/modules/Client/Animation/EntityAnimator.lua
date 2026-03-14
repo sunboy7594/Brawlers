@@ -179,6 +179,7 @@ function EntityAnimator:PlayAnimation(name: string, duration: number?, onFinish:
 				name,
 				"anim",
 				def.layer,
+				duration or math.huge,
 				defaultC0Map
 			)
 		end
