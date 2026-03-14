@@ -1,6 +1,6 @@
 --!strict
 --[=[
-	@class PunchClient
+	@class TankPunchClient
 
 	탱크 주먹 공격 클라이언트 모듈.
 	BasicAttackClient의 ATTACK_REGISTRY에 등록됩니다.

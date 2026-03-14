@@ -18,6 +18,7 @@ serviceBag:GetService(require("TagService"))
 serviceBag:GetService(require("BasicMovementService"))
 -- 어빌리티 서비스 (LoadoutRemoting을 Init에서 선언하므로 MovementService 이후에 등록)
 serviceBag:GetService(require("BasicAttackService"))
+serviceBag:GetService(require("PassiveService"))
 serviceBag:GetService(require("SkillService"))
 serviceBag:GetService(require("UltimateService"))
 

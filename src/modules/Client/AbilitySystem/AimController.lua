@@ -117,7 +117,7 @@ function AimController.Start(self: AimController): ()
 		"AimControllerUpdate",
 		Enum.RenderPriority.Camera.Value + 1, -- 201: 카메라 갱신 후 실행
 		function()
-			self:_onHeartbeat()
+			self:_onRenderStep()
 		end
 	)
 	self._maid:GiveTask(function()
@@ -350,7 +350,7 @@ function AimController:_cancelInternal()
 end
 
 -- 매 프레임: (ShiftLock 시) 캐릭터 회전 + 인디케이터 갱신 + onAim 호출
-function AimController:_onHeartbeat()
+function AimController:_onRenderStep()
 	local state = self._aimState
 	if not state then
 		return

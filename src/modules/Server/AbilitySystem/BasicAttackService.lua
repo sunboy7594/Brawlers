@@ -21,11 +21,11 @@ local require = require(script.Parent.loader).load(script)
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 
+local BasicAttackDefs = require("BasicAttackDefs")
 local BasicAttackRemoting = require("BasicAttackRemoting")
 local LoadoutRemoting = require("LoadoutRemoting")
 local Maid = require("Maid")
 local ServiceBag = require("ServiceBag")
-local TankBasicAttackDefs = require("TankBasicAttackDefs")
 local TankPunch = require("TankPunch")
 
 -- ─── 상수 ────────────────────────────────────────────────────────────────────
@@ -54,7 +54,7 @@ type AttackEntry = {
 
 local ATTACK_REGISTRY: { [string]: AttackEntry } = {
 	Punch = {
-		def = TankBasicAttackDefs.Punch,
+		def = BasicAttackDefs.Punch,
 		module = TankPunch,
 	},
 }
@@ -66,8 +66,8 @@ type PlayerState = {
 	currentAmmo: number,
 	maxAmmo: number,
 	reloadTime: number,
-	lastFireTime: number,   -- 마지막 발사 시각 (os.clock)
-	lastRegenTime: number,  -- 마지막 탄약 재생 시각 (os.clock)
+	lastFireTime: number, -- 마지막 발사 시각 (os.clock)
+	lastRegenTime: number, -- 마지막 탄약 재생 시각 (os.clock)
 	humanoid: Humanoid?,
 	rootPart: BasePart?,
 }
