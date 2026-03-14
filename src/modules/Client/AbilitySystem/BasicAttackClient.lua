@@ -1,15 +1,13 @@
 --!strict
 --[=[
-	@class BasicAttackClient
+    @class BasicAttackClient
 
-	기본 공격 클라이언트 서비스.
+    기본 공격 클라이언트 서비스.
 
-	담당:
-	- 좌클릭 홀드 감지 → AimController:startAim() 호출
-	- onFire: BasicAttackRemoting.Fire:FireServer(direction, aimTime)
-	- AmmoChanged 수신 → 탄약 상태 보관
-	- 탄약 0이면 조준 시작 불가
-	- SetEquippedAttack(): 외부(TestLoadoutClient 등)에서 장착 공격 ID 갱신 시 호출
+    담당:
+    - 좌클릭 홀드 감지 → AimController:startAim() 호출
+    - AmmoChanged 수신 → 탄약/postDelay 상태 보관
+    - 탄약 0 또는 postDelay 중이면 조준 시작 불가
 ]=]
 
 local require = require(script.Parent.loader).load(script)
@@ -17,16 +15,21 @@ local require = require(script.Parent.loader).load(script)
 local UserInputService = game:GetService("UserInputService")
 
 local AimController = require("AimController")
+local BasicAttackDefs = require("BasicAttackDefs")
 local BasicAttackRemoting = require("BasicAttackRemoting")
 local Maid = require("Maid")
 local ServiceBag = require("ServiceBag")
-local TankPunchClient = require("TankPunchClient")
 
--- ─── 공격 모듈 레지스트리 ────────────────────────────────────────────────────
--- attackId → 클라이언트 공격 모듈 (indicator, onAim, onHitConfirmed)
-local ATTACK_REGISTRY = {
-	TankPunch = TankPunchClient,
-}
+-- ─── 레지스트리 자동 구성 ─────────────────────────────────────────────────────
+
+local ATTACK_REGISTRY = {}
+for id, def in BasicAttackDefs do
+	ATTACK_REGISTRY[id] = {
+		def = def,
+		module = require(id .. "Client"),
+		animDef = require(id .. "AnimDef"),
+	}
+end
 
 -- ─── 타입 정의 ───────────────────────────────────────────────────────────────
 
@@ -39,6 +42,8 @@ export type BasicAttackClient = typeof(setmetatable(
 		_currentAmmo: number,
 		_maxAmmo: number,
 		_reloadTime: number,
+		_postDelay: number,
+		_postDelayUntil: number, -- os.clock() 기준 postDelay 해제 시각
 	},
 	{} :: typeof({ __index = {} })
 ))
@@ -57,25 +62,30 @@ function BasicAttackClient.Init(self: BasicAttackClient, serviceBag: ServiceBag.
 	self._currentAmmo = 0
 	self._maxAmmo = 0
 	self._reloadTime = 0
+	self._postDelay = 0
+	self._postDelayUntil = 0
 
-	-- 서버 → 클라이언트: 탄약 변경 수신
 	self._maid:GiveTask(
-		BasicAttackRemoting.AmmoChanged:Connect(function(current: unknown, max: unknown, reloadTime: unknown)
-			if type(current) == "number" then
-				self._currentAmmo = current
+		BasicAttackRemoting.AmmoChanged:Connect(
+			function(current: unknown, max: unknown, reloadTime: unknown, postDelay: unknown)
+				if type(current) == "number" then
+					self._currentAmmo = current
+				end
+				if type(max) == "number" then
+					self._maxAmmo = max
+				end
+				if type(reloadTime) == "number" then
+					self._reloadTime = reloadTime
+				end
+				if type(postDelay) == "number" then
+					self._postDelay = postDelay
+				end
 			end
-			if type(max) == "number" then
-				self._maxAmmo = max
-			end
-			if type(reloadTime) == "number" then
-				self._reloadTime = reloadTime
-			end
-		end)
+		)
 	)
 end
 
 function BasicAttackClient.Start(self: BasicAttackClient): ()
-	-- 좌클릭 홀드 감지 → 조준 시작
 	self._maid:GiveTask(UserInputService.InputBegan:Connect(function(input: InputObject, processed: boolean)
 		if processed then
 			return
@@ -89,13 +99,9 @@ end
 
 -- ─── 공개 API ────────────────────────────────────────────────────────────────
 
---[=[
-	장착 공격 ID를 갱신합니다.
-	TestLoadoutClient 또는 슬롯 UI에서 성공 응답 수신 후 호출합니다.
-	@param attackId string
-]=]
 function BasicAttackClient:SetEquippedAttack(attackId: string)
 	self._equippedAttackId = attackId
+	self._postDelayUntil = 0 -- 장착 변경 시 postDelay 초기화
 end
 
 -- ─── 내부 ────────────────────────────────────────────────────────────────────
@@ -106,27 +112,33 @@ function BasicAttackClient:_tryStartAim()
 		return
 	end
 
+	-- postDelay 중이면 조준 불가
+	if os.clock() < self._postDelayUntil then
+		return
+	end
+
 	local attackId = self._equippedAttackId
 	if not attackId then
 		return
 	end
 
-	local attackModule = ATTACK_REGISTRY[attackId]
-	if not attackModule then
+	local entry = ATTACK_REGISTRY[attackId]
+	if not entry then
 		return
 	end
 
+	local clientModule = entry.module
+
 	self._aimController:startAim(
 		AimController.AbilityType.BasicAttack,
-		attackModule.indicator,
-		-- onFire: 좌클릭 해제 시 서버로 발사 신호 전송
+		clientModule.indicator,
 		function(direction: Vector3, aimTime: number)
+			-- postDelay 시작 (클라이언트 측 즉시 잠금)
+			self._postDelayUntil = os.clock() + entry.def.postDelay
 			BasicAttackRemoting.Fire:FireServer(direction, aimTime)
 		end,
-		-- onCancel: AimController가 인디케이터를 숨기므로 추가 처리 불필요
 		function() end,
-		-- onAim: 공격 모듈의 프레임별 콜백 (옵션)
-		attackModule.onAim
+		clientModule.onAim
 	)
 end
 
