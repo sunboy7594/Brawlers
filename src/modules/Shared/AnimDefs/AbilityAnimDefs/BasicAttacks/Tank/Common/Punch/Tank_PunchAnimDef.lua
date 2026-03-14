@@ -38,13 +38,13 @@ Tank_PunchAnimDef["Punch1"] = {
 		RightShoulder = function(_joint: Motor6D, defaultC0: CFrame, ac: any): OnUpdate
 			return function(joint: Motor6D, dt: number)
 				-- 오른팔 앞으로 뻗기 (간단한 예시)
-				local target = defaultC0 * CFrame.Angles(math.rad(-80), 0, 0)
+				local target = defaultC0 * CFrame.Angles(math.rad(80), 0, 0)
 				ac:spring(joint, target, 20, 1.0, dt)
 			end
 		end,
 		RightElbow = function(_joint: Motor6D, defaultC0: CFrame, ac: any): OnUpdate
 			return function(joint: Motor6D, dt: number)
-				local target = defaultC0 * CFrame.Angles(math.rad(-30), 0, 0)
+				local target = defaultC0 * CFrame.Angles(math.rad(30), 0, 0)
 				ac:spring(joint, target, 20, 1.0, dt)
 			end
 		end,
@@ -59,13 +59,13 @@ Tank_PunchAnimDef["Punch2"] = {
 	joints = {
 		LeftShoulder = function(_joint: Motor6D, defaultC0: CFrame, ac: any): OnUpdate
 			return function(joint: Motor6D, dt: number)
-				local target = defaultC0 * CFrame.Angles(math.rad(-80), 0, 0)
+				local target = defaultC0 * CFrame.Angles(math.rad(80), 0, 0)
 				ac:spring(joint, target, 20, 1.0, dt)
 			end
 		end,
 		LeftElbow = function(_joint: Motor6D, defaultC0: CFrame, ac: any): OnUpdate
 			return function(joint: Motor6D, dt: number)
-				local target = defaultC0 * CFrame.Angles(math.rad(-30), 0, 0)
+				local target = defaultC0 * CFrame.Angles(math.rad(30), 0, 0)
 				ac:spring(joint, target, 20, 1.0, dt)
 			end
 		end,
@@ -80,19 +80,19 @@ Tank_PunchAnimDef["Punch3"] = {
 	joints = {
 		RightShoulder = function(_joint: Motor6D, defaultC0: CFrame, ac: any): OnUpdate
 			return function(joint: Motor6D, dt: number)
-				local target = defaultC0 * CFrame.Angles(math.rad(-90), 0, math.rad(-10))
+				local target = defaultC0 * CFrame.Angles(math.rad(90), 0, math.rad(-10))
 				ac:spring(joint, target, 25, 1.0, dt)
 			end
 		end,
 		LeftShoulder = function(_joint: Motor6D, defaultC0: CFrame, ac: any): OnUpdate
 			return function(joint: Motor6D, dt: number)
-				local target = defaultC0 * CFrame.Angles(math.rad(-90), 0, math.rad(10))
+				local target = defaultC0 * CFrame.Angles(math.rad(90), 0, math.rad(10))
 				ac:spring(joint, target, 25, 1.0, dt)
 			end
 		end,
 		Waist = function(_joint: Motor6D, defaultC0: CFrame, ac: any): OnUpdate
 			return function(joint: Motor6D, dt: number)
-				local target = defaultC0 * CFrame.Angles(math.rad(-10), 0, 0)
+				local target = defaultC0 * CFrame.Angles(math.rad(10), 0, 0)
 				ac:spring(joint, target, 15, 1.0, dt)
 			end
 		end,

@@ -20,6 +20,11 @@
 	- ShiftLock 활성: AutoRotate 끄고 카메라 방향으로 캐릭터 회전
 	- 조준 종료 시 AutoRotate 복원
 
+	postFire 회전 잠금:
+	- 발사 확정 시 HRP를 조준방향으로 스냅
+	- postFireDuration 동안 AutoRotate = false 유지
+	- cancellableDelay로 복원 → 새 조준 시작 시 취소 가능
+
 	클라이언트 공격 모듈 훅 (AbilityExecutor가 실행):
 	- onAimStart: { (ctx) -> () }?  조준 시작 1회
 	- onAim:      { (ctx) -> () }?  매 프레임, ctx.indicator 직접 업데이트
@@ -38,16 +43,18 @@ local CameraControllerClient = require("CameraControllerClient")
 local Maid = require("Maid")
 local ServiceBag = require("ServiceBag")
 local Spring = require("Spring")
+local cancellableDelay = require("cancellableDelay")
 
 -- ─── 타입 ────────────────────────────────────────────────────────────────────
 
 type AimState = {
 	abilityType: string,
-	clientModule: any, -- 공격 클라이언트 모듈
-	ctx: any, -- ClientContext (BasicAttackClient가 소유)
+	clientModule: any,
+	ctx: any,
 	onFireServer: (direction: Vector3) -> (),
 	startTime: number,
 	maid: any,
+	postFireDuration: number, -- 발사 후 AutoRotate 잠금 시간 (초)
 }
 
 export type AimController = typeof(setmetatable(
@@ -57,6 +64,8 @@ export type AimController = typeof(setmetatable(
 		_aimState: AimState?,
 		_cameraController: any,
 		_yawSpring: any,
+		_postFireCancel: (() -> ())?, -- cancellableDelay 취소 함수
+		_postFireYaw: number?, -- postFire spring이 향할 목표 yaw
 	},
 	{} :: typeof({ __index = {} })
 ))
@@ -80,6 +89,8 @@ function AimController.Init(self: AimController, serviceBag: ServiceBag.ServiceB
 	self._maid = Maid.new()
 	self._aimState = nil
 	self._cameraController = serviceBag:GetService(CameraControllerClient)
+	self._postFireCancel = nil
+	self._postFireYaw = nil
 
 	local yawSpring = Spring.new(0)
 	yawSpring.Speed = 10
@@ -118,16 +129,18 @@ end
 --[=[
 	새 조준을 시작합니다.
 
-	@param abilityType  string                       AimController.AbilityType 중 하나
-	@param clientModule table                        공격 클라이언트 모듈 (shapes, onAimStart, onAim, onFire)
-	@param ctx          table                        BasicAttackClient가 소유하는 ClientContext
-	@param onFireServer (direction: Vector3) -> ()   서버 전송 콜백
+	@param abilityType      string                       AimController.AbilityType 중 하나
+	@param clientModule     table                        공격 클라이언트 모듈
+	@param ctx              table                        BasicAttackClient가 소유하는 ClientContext
+	@param onFireServer     (direction: Vector3) -> ()   서버 전송 콜백
+	@param postFireDuration number?                      발사 후 AutoRotate 잠금 시간 (기본 0)
 ]=]
 function AimController:startAim(
 	abilityType: string,
 	clientModule: any,
 	ctx: any,
-	onFireServer: (direction: Vector3) -> ()
+	onFireServer: (direction: Vector3) -> (),
+	postFireDuration: number?
 )
 	local state = self._aimState
 
@@ -139,6 +152,13 @@ function AimController:startAim(
 	-- 다른 타입이 조준 중이면 취소
 	if state then
 		self:_cancelInternal()
+	end
+
+	-- postFire 잠금 타이머가 남아있으면 취소
+	-- (새 조준이 시작됐으므로 AutoRotate 복원 필요 없음 — 아래에서 직접 관리)
+	if self._postFireCancel then
+		self._postFireCancel()
+		self._postFireCancel = nil
 	end
 
 	-- ShiftLock 활성 시 AutoRotate 비활성 + yawSpring 초기화
@@ -163,6 +183,7 @@ function AimController:startAim(
 		onFireServer = onFireServer,
 		startTime = os.clock(),
 		maid = Maid.new(),
+		postFireDuration = postFireDuration or 0,
 	}
 
 	-- 인디케이터 표시
@@ -275,15 +296,45 @@ function AimController:_confirm()
 
 	local clientModule = state.clientModule
 	local onFireServer = state.onFireServer
+	local postFireDuration = state.postFireDuration
 
 	state.maid:Destroy()
 	self._aimState = nil
 
-	-- AutoRotate 복원
+	-- ── postFire 회전 고정 ────────────────────────────────────────────────────
+	-- AutoRotate를 끄고 HRP를 조준방향으로 즉시 스냅한 뒤,
+	-- postFireDuration 후 cancellableDelay로 복원.
+	-- 새 조준이 시작되면 startAim에서 _postFireCancel()을 호출해 타이머를 취소.
 	local humanoid = self:_getHumanoid()
-	if humanoid then
-		humanoid.AutoRotate = true
+	local hrp = self:_getHRP()
+
+	if humanoid and hrp then
+		humanoid.AutoRotate = false
+
+		-- 발사 방향 yaw 계산
+		local yaw = math.atan2(-direction.X, -direction.Z)
+
+		-- spring 현재 위치를 HRP 실제 yaw로 초기화 (단타 시 spring이 미초기화 상태일 수 있음)
+		local currentLook = hrp.CFrame.LookVector
+		local currentYaw = math.atan2(-currentLook.X, -currentLook.Z)
+		self._yawSpring.Position = currentYaw
+		self._yawSpring.Target = yaw -- 즉시 스냅 대신 spring이 부드럽게 이동
+		self._postFireYaw = yaw
+
+		if postFireDuration > 0 then
+			self._postFireCancel = cancellableDelay(postFireDuration, function()
+				self._postFireCancel = nil
+				self._postFireYaw = nil
+				if humanoid and humanoid.Parent then
+					humanoid.AutoRotate = true
+				end
+			end)
+		else
+			self._postFireYaw = nil
+			humanoid.AutoRotate = true
+		end
 	end
+	-- ─────────────────────────────────────────────────────────────────────────
 
 	-- onFire 배열 실행 (클라이언트 측 애니메이션/이펙트)
 	AbilityExecutor.onFire(clientModule, ctx)
@@ -292,7 +343,7 @@ function AimController:_confirm()
 	onFireServer(direction)
 end
 
--- 취소: indicator hide만
+-- 취소: indicator hide만, postFire 타이머는 건드리지 않음
 function AimController:_cancelInternal()
 	local state = self._aimState
 	if not state then
@@ -303,6 +354,7 @@ function AimController:_cancelInternal()
 	state.maid:Destroy()
 	self._aimState = nil
 
+	-- ShiftLock 조준 중에 취소된 경우 AutoRotate 즉시 복원
 	local humanoid = self:_getHumanoid()
 	if humanoid then
 		humanoid.AutoRotate = true
@@ -313,6 +365,13 @@ end
 function AimController:_onRenderStep()
 	local state = self._aimState
 	if not state then
+		-- postFire 중이면 spring이 목표 방향까지 부드럽게 회전 계속 구동
+		if self._postFireCancel and self._postFireYaw then
+			local hrp = self:_getHRP()
+			if hrp then
+				hrp.CFrame = CFrame.new(hrp.Position) * CFrame.Angles(0, self._yawSpring.Position, 0)
+			end
+		end
 		return
 	end
 
@@ -334,11 +393,15 @@ function AimController:_onRenderStep()
 	-- 매 프레임 기본 위치/방향 업데이트
 	ctx.indicator:update({ origin = origin, direction = direction })
 
-	-- onAim 배열 실행 (인디케이터 추가 업데이트 등 모듈이 자유롭게 처리)
+	-- onAim 배열 실행
 	AbilityExecutor.onAim(state.clientModule, ctx)
 end
 
 function AimController.Destroy(self: AimController)
+	if self._postFireCancel then
+		self._postFireCancel()
+		self._postFireCancel = nil
+	end
 	if self._aimState then
 		self:_cancelInternal()
 	end
