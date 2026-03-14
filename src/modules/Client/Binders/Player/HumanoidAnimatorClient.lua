@@ -68,7 +68,8 @@ function HumanoidAnimatorClient.new(model: Model, serviceBag: any)
 	end
 
 	-- 이동 EntityAnimator 생성 + 주입
-	local animator = EntityAnimator.new("BasicMovement", joints, BasicMovementAnimDefs, animController)
+	local animator =
+		EntityAnimator.new("BasicMovement", "BasicMovementAnimDefs", joints, BasicMovementAnimDefs, animController)
 	self._maid:GiveTask(function()
 		animator:Destroy()
 		movementClient:SetAnimator(nil)

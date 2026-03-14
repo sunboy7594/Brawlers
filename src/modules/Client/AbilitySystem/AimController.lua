@@ -20,10 +20,10 @@
 	- ShiftLock 활성: AutoRotate 끄고 카메라 방향으로 캐릭터 회전
 	- 조준 종료 시 AutoRotate 복원
 
-	클라이언트 공격 모듈 훅:
-	- onAimStart: { (ctx) -> () }?   조준 시작 1회
-	- onAim:      { (ctx) -> params? } 매 프레임, IndicatorUpdateParams 반환 시 인디케이터에 반영
-	- onFire:     { (ctx) -> () }?   발사 확정 후
+	클라이언트 공격 모듈 훅 (AbilityExecutor가 실행):
+	- onAimStart: { (ctx) -> () }?  조준 시작 1회
+	- onAim:      { (ctx) -> () }?  매 프레임, ctx.indicator 직접 업데이트
+	- onFire:     { (ctx) -> () }?  발사 확정 후
 	취소 시: indicator hide만 (onCancel 없음)
 ]=]
 
@@ -33,6 +33,7 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 
+local AbilityExecutor = require("AbilityExecutor")
 local CameraControllerClient = require("CameraControllerClient")
 local Maid = require("Maid")
 local ServiceBag = require("ServiceBag")
@@ -168,11 +169,7 @@ function AimController:startAim(
 	ctx.indicator:show()
 
 	-- onAimStart 배열 실행
-	if clientModule.onAimStart then
-		for _, fn in clientModule.onAimStart do
-			fn(ctx)
-		end
-	end
+	AbilityExecutor.onAimStart(clientModule, ctx)
 end
 
 --[=[
@@ -289,11 +286,7 @@ function AimController:_confirm()
 	end
 
 	-- onFire 배열 실행 (클라이언트 측 애니메이션/이펙트)
-	if clientModule.onFire then
-		for _, fn in clientModule.onFire do
-			fn(ctx)
-		end
-	end
+	AbilityExecutor.onFire(clientModule, ctx)
 
 	-- 서버 전송
 	onFireServer(direction)
@@ -342,11 +335,7 @@ function AimController:_onRenderStep()
 	ctx.indicator:update({ origin = origin, direction = direction })
 
 	-- onAim 배열 실행 (인디케이터 추가 업데이트 등 모듈이 자유롭게 처리)
-	if state.clientModule.onAim then
-		for _, fn in state.clientModule.onAim do
-			fn(ctx)
-		end
-	end
+	AbilityExecutor.onAim(state.clientModule, ctx)
 end
 
 function AimController.Destroy(self: AimController)

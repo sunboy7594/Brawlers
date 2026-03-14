@@ -17,6 +17,7 @@ local require = require(script.Parent.loader).load(script)
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 
+local AbilityExecutor = require("AbilityExecutor")
 local AimController = require("AimController")
 local AnimationControllerClient = require("AnimationControllerClient")
 local BasicAttackDefs = require("BasicAttackDefs")
@@ -210,7 +211,13 @@ function BasicAttackClient:_rebuildAnimator()
 		return
 	end
 
-	local animator = EntityAnimator.new("BasicAttack_" .. attackId, joints, entry.animDef, self._animController)
+	local animator = EntityAnimator.new(
+		"BasicAttack_" .. attackId,
+		attackId .. "AnimDef",
+		joints,
+		entry.animDef,
+		self._animController
+	)
 	self._attackAnimator = animator
 
 	if self._ctx then
@@ -297,11 +304,7 @@ function BasicAttackClient:_onHitConfirmed(attackerUserId: unknown, victimUserId
 		return
 	end
 
-	if entry.module.onHitConfirmed then
-		for _, fn in entry.module.onHitConfirmed do
-			fn(ctx)
-		end
-	end
+	AbilityExecutor.onHitConfirmed(entry.module, ctx)
 
 	-- victims 초기화
 	ctx.victims = nil
