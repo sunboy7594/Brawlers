@@ -37,7 +37,7 @@ local ServiceBag = require("ServiceBag")
 
 local FIRE_RATE_LIMIT = 0.1
 local MAX_DIRECTION_MAGNITUDE_DELTA = 0.1
-local COMBO_RESET_TIME = 2.0 -- 이 시간 내 발사 없으면 콤보 초기화
+local COMBO_RESET_TIME = 4.0 -- 이 시간 내 발사 없으면 콤보 초기화
 
 -- ─── 레지스트리 ──────────────────────────────────────────────────────────────
 
@@ -306,21 +306,14 @@ function BasicAttackService:_onFire(player: Player, direction: unknown)
 		return
 	end
 
-	-- [6] 콤보 계산
-	if state.lastHitTime > 0 and now - state.lastHitTime <= COMBO_RESET_TIME then
-		state.comboCount += 1
-	else
-		state.comboCount = 1
-	end
-
 	-- [7] sctx 업데이트 (lastFireTime 갱신 전에 aimTime 계산)
 	local sctx = state.sctx
 	sctx.attacker = state.humanoid and state.humanoid.Parent :: Model? or nil
 	sctx.origin = state.rootPart.Position
 	sctx.direction = dir
-	sctx.comboCount = state.comboCount
 	sctx.aimTime = if state.aimStartTime > 0 then now - state.aimStartTime else 0
-	sctx.idleTime = if state.lastHitTime > 0 then now - state.lastHitTime else 0
+	sctx.idleTime = if state.lastFireTime > 0 then now - state.lastFireTime else 0
+	sctx.comboCount = if sctx.idleTime >= COMBO_RESET_TIME then 0 else state.comboCount -- 초기화or초기화X
 	sctx.victims = nil
 
 	-- [8] 발사 처리 (sctx 계산 후 갱신)
@@ -345,16 +338,22 @@ function BasicAttackService:_onFire(player: Player, direction: unknown)
 	end
 
 	-- [10] 히트 확정
-	state.lastHitTime = now
 	sctx.victims = allVictims
 
-	if #allVictims > 0 and entry.module.onHitConfirmed then
-		for _, fn in entry.module.onHitConfirmed do
+	if #allVictims > 0 then
+		state.lastHitTime = now -- 실제 히트했을 때만 갱신
+		state.comboCount += 1
+	else
+		state.comboCount = 0 -- 허공 펀치 → 콤보 리셋
+	end
+
+	if entry.module.onHitChecked then
+		for _, fn in entry.module.onHitChecked do
 			fn(sctx)
 		end
 	end
 
-	-- [11] 클라이언트에 히트 알림
+	-- [11] 히트 체크 완료 (항상 전송)
 	local victimUserIds: { number } = {}
 	for _, victimModel in allVictims do
 		local victimPlayer = Players:GetPlayerFromCharacter(victimModel)
@@ -362,8 +361,7 @@ function BasicAttackService:_onFire(player: Player, direction: unknown)
 			table.insert(victimUserIds, victimPlayer.UserId)
 		end
 	end
-
-	BasicAttackRemoting.HitConfirmed:FireAllClients(player.UserId, victimUserIds, state.comboCount)
+	BasicAttackRemoting.HitChecked:FireAllClients(player.UserId, victimUserIds, state.comboCount)
 end
 
 -- ─── 탄약 재생 ───────────────────────────────────────────────────────────────

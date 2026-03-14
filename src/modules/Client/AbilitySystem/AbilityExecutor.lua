@@ -7,9 +7,9 @@
 
 	사용처:
 	- AimController     : OnAimStart, OnAim, OnFire
-	- BasicAttackClient : OnHitConfirmed
-	- SkillClient       : OnHitConfirmed
-	- UltimateClient    : OnHitConfirmed
+	- BasicAttackClient : OnHitChecked
+	- SkillClient       : OnHitChecked
+	- UltimateClient    : OnHitChecked
 ]=]
 
 local AbilityExecutor = {}
@@ -39,8 +39,8 @@ function AbilityExecutor.OnFire(clientModule: any, ctx: any)
 	AbilityExecutor.Run(clientModule.onFire, ctx)
 end
 
-function AbilityExecutor.OnHitConfirmed(clientModule: any, ctx: any)
-	AbilityExecutor.Run(clientModule.onHitConfirmed, ctx)
+function AbilityExecutor.OnHitChecked(clientModule: any, ctx: any)
+	AbilityExecutor.Run(clientModule.onHitChecked, ctx)
 end
 
 return AbilityExecutor

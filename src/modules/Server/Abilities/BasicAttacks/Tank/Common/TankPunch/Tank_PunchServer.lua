@@ -53,7 +53,7 @@ return {
 		end,
 	},
 
-	onHitConfirmed = {
+	onHitChecked = {
 		function(_sctx: ServerContext)
 			-- TODO: 서버 측 히트 후처리 (버프, 스턴 적용 등)
 		end,

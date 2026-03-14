@@ -7,7 +7,7 @@
 	담당:
 	- 좌클릭 감지 → AimController:StartAim() 호출
 	- AmmoChanged 수신 → 탄약/postDelay 상태 보관
-	- HitConfirmed 수신 → ctx.comboCount 갱신 → onHitConfirmed 배열 실행
+	- HitChecked 수신 → ctx.comboCount 갱신 → onHitChecked 배열 실행
 	- SetJoints(joints) 수신 → SetEquippedAttack 시 EntityAnimator 생성
 	- ctx 소유 및 관리
 ]=]
@@ -123,9 +123,9 @@ function BasicAttackClient.Init(self: BasicAttackClient, serviceBag: ServiceBag.
 	)
 
 	self._maid:GiveTask(
-		BasicAttackRemoting.HitConfirmed:Connect(
+		BasicAttackRemoting.HitChecked:Connect(
 			function(attackerUserId: unknown, victimUserIds: unknown, serverComboCount: unknown)
-				self:_onHitConfirmed(attackerUserId, victimUserIds, serverComboCount)
+				self:_onHitChecked(attackerUserId, victimUserIds, serverComboCount)
 			end
 		)
 	)
@@ -135,7 +135,7 @@ end
 local COLOR_NORMAL = Color3.fromRGB(160, 160, 160)
 local COLOR_NO_AMMO = Color3.fromRGB(220, 50, 50)
 local ALPHA_NORMAL = 0
-local ALPHA_POST_DELAY = 0.75
+local ALPHA_POST_DELAY = 0.8
 
 function BasicAttackClient.Start(self: BasicAttackClient): ()
 	-- 매 프레임: ctx 상태 갱신 + indicator 기본 색상 관리
@@ -155,11 +155,15 @@ function BasicAttackClient.Start(self: BasicAttackClient): ()
 		-- (onAim 훅이 없거나, 커스텀하지 않을 경우의 기본 시각 상태)
 		if self._aimController:IsAiming() then
 			if not hasAmmo then
-				ctx.indicator:update({ color = COLOR_NO_AMMO, transparency = ALPHA_NORMAL })
-			elseif isPostDelay then
-				ctx.indicator:update({ color = COLOR_NORMAL, transparency = ALPHA_POST_DELAY })
+				ctx.indicator:update({ color = COLOR_NO_AMMO })
 			else
-				ctx.indicator:update({ color = COLOR_NORMAL, transparency = ALPHA_NORMAL })
+				ctx.indicator:update({ color = COLOR_NORMAL })
+			end
+
+			if isPostDelay then
+				ctx.indicator:update({ transparency = ALPHA_POST_DELAY })
+			else
+				ctx.indicator:update({ transparency = ALPHA_NORMAL })
 			end
 		end
 	end))
@@ -280,12 +284,13 @@ function BasicAttackClient:_tryStartAim()
 		self._postDelayUntil = os.clock() + entry.def.postDelay
 		self._lastFireTime = os.clock()
 		BasicAttackRemoting.Fire:FireServer(direction)
+		AbilityExecutor.OnFire(entry.module, ctx)
 	end, entry.def.postDelay)
 
 	BasicAttackRemoting.AimStarted:FireServer()
 end
 
-function BasicAttackClient:_onHitConfirmed(_attackerUserId: unknown, victimUserIds: unknown, serverComboCount: unknown)
+function BasicAttackClient:_onHitChecked(_attackerUserId: unknown, victimUserIds: unknown, serverComboCount: unknown)
 	local ctx = self._ctx
 	if not ctx then
 		return
@@ -312,7 +317,7 @@ function BasicAttackClient:_onHitConfirmed(_attackerUserId: unknown, victimUserI
 		return
 	end
 
-	AbilityExecutor.OnHitConfirmed(entry.module, ctx)
+	AbilityExecutor.OnHitChecked(entry.module, ctx)
 end
 
 function BasicAttackClient.Destroy(self: BasicAttackClient)

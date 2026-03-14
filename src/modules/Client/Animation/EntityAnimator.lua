@@ -133,7 +133,7 @@ end
 
 -- ─── 공개 API ────────────────────────────────────────────────────────────────
 
-function EntityAnimator:PlayAnimation(name: string, duration: number?, onFinish: (() -> ())?)
+function EntityAnimator:PlayAnimation(name: string, duration: number?, onFinish: (() -> ())?, force: boolean?)
 	local def = self._animDefs[name]
 	if not def then
 		warn(string.format("[EntityAnimator] '%s' 에 애니메이션 정의 '%s' 없음", self._owner, name))
@@ -141,8 +141,12 @@ function EntityAnimator:PlayAnimation(name: string, duration: number?, onFinish:
 	end
 
 	if def.type == "anim" then
+		-- force=true면 같은 이름이라도 재시작
 		if self._activeAnims[name] then
-			return
+			if not force then
+				return
+			end
+			self:_stopAnim(name) -- 기존 것 먼저 정지
 		end
 
 		-- 같은 layer의 기존 anim 교체

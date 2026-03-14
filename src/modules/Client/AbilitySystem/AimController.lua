@@ -336,9 +336,6 @@ function AimController:_confirm()
 	end
 	-- ─────────────────────────────────────────────────────────────────────────
 
-	-- onFire 배열 실행 (클라이언트 측 애니메이션/이펙트)
-	AbilityExecutor.OnFire(clientModule, ctx)
-
 	-- 서버 전송
 	onFireServer(direction)
 end

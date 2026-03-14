@@ -289,8 +289,11 @@ local function makeWalk(cycle: number, intensity: number, lean: number): AnimDef
 				local t = 0
 				return function(j, dt)
 					t = (t + dt) % period
-					local swing = -math.sin(t * freq) * 0.4 * intensity
-					local splay = math.abs(math.sin(t * freq)) * 0.06 * intensity
+					local dir = ac:GetMoveDir()
+					local absZ = math.abs(dir.Z)
+					local fwdFactor = if absZ > 0.3 then absZ else 0.3
+					local swing = -math.sin(t * freq) * 0.4 * intensity * fwdFactor
+					local splay = math.abs(math.sin(t * freq)) * 0.06 * intensity * fwdFactor
 					ac:spring(j, defaultC0 * CFrame.Angles(swing, 0, -splay), 10, 0.3, dt)
 				end
 			end,
@@ -298,8 +301,11 @@ local function makeWalk(cycle: number, intensity: number, lean: number): AnimDef
 				local t = 0
 				return function(j, dt)
 					t = (t + dt) % period
-					local swing = math.sin(t * freq) * 0.4 * intensity
-					local splay = math.abs(math.sin(t * freq)) * 0.06 * intensity
+					local dir = ac:GetMoveDir()
+					local absZ = math.abs(dir.Z)
+					local fwdFactor = if absZ > 0.3 then absZ else 0.3
+					local swing = math.sin(t * freq) * 0.4 * intensity * fwdFactor
+					local splay = math.abs(math.sin(t * freq)) * 0.06 * intensity * fwdFactor
 					ac:spring(j, defaultC0 * CFrame.Angles(swing, 0, splay), 10, 0.3, dt)
 				end
 			end,
@@ -307,7 +313,10 @@ local function makeWalk(cycle: number, intensity: number, lean: number): AnimDef
 				local t = 0
 				return function(j, dt)
 					t = (t + dt) % period
-					local bend = math.max(0, -math.sin(t * freq)) * 0.4 * intensity
+					local dir = ac:GetMoveDir()
+					local absZ = math.abs(dir.Z)
+					local fwdFactor = if absZ > 0.3 then absZ else 0.3
+					local bend = math.max(0, -math.sin(t * freq)) * 0.4 * intensity * fwdFactor
 					ac:spring(j, defaultC0 * CFrame.Angles(bend, 0, 0), 10, 0.3, dt)
 				end
 			end,
@@ -315,7 +324,10 @@ local function makeWalk(cycle: number, intensity: number, lean: number): AnimDef
 				local t = 0
 				return function(j, dt)
 					t = (t + dt) % period
-					local bend = math.max(0, math.sin(t * freq)) * 0.4 * intensity
+					local dir = ac:GetMoveDir()
+					local absZ = math.abs(dir.Z)
+					local fwdFactor = if absZ > 0.3 then absZ else 0.3
+					local bend = math.max(0, math.sin(t * freq)) * 0.4 * intensity * fwdFactor
 					ac:spring(j, defaultC0 * CFrame.Angles(bend, 0, 0), 10, 0.3, dt)
 				end
 			end,
@@ -323,7 +335,10 @@ local function makeWalk(cycle: number, intensity: number, lean: number): AnimDef
 				local t = 0
 				return function(j, dt)
 					t = (t + dt) % period
-					local flick = math.sin(t * freq + 0.3) * 0.08 * intensity
+					local dir = ac:GetMoveDir()
+					local absZ = math.abs(dir.Z)
+					local fwdFactor = if absZ > 0.3 then absZ else 0.3
+					local flick = math.sin(t * freq + 0.3) * 0.08 * intensity * fwdFactor
 					ac:spring(j, defaultC0 * CFrame.Angles(flick, 0, 0), 10, 0.3, dt)
 				end
 			end,
@@ -331,7 +346,10 @@ local function makeWalk(cycle: number, intensity: number, lean: number): AnimDef
 				local t = 0
 				return function(j, dt)
 					t = (t + dt) % period
-					local flick = -math.sin(t * freq + 0.3) * 0.08 * intensity
+					local dir = ac:GetMoveDir()
+					local absZ = math.abs(dir.Z)
+					local fwdFactor = if absZ > 0.3 then absZ else 0.3
+					local flick = -math.sin(t * freq + 0.3) * 0.08 * intensity * fwdFactor
 					ac:spring(j, defaultC0 * CFrame.Angles(flick, 0, 0), 10, 0.3, dt)
 				end
 			end,
@@ -471,8 +489,11 @@ local function makeRun(cycle: number, intensity: number): AnimDef
 				local t = 0
 				return function(j, dt)
 					t = (t + dt) % period
-					local swing = -math.sin(t * freq) * 0.9 * intensity
-					local splay = math.abs(math.sin(t * freq)) * 0.05 * intensity
+					local dir = ac:GetMoveDir()
+					local absZ = math.abs(dir.Z)
+					local fwdFactor = if absZ > 0.3 then absZ else 0.3
+					local swing = -math.sin(t * freq) * 0.9 * intensity * fwdFactor
+					local splay = math.abs(math.sin(t * freq)) * 0.05 * intensity * fwdFactor
 					ac:spring(j, defaultC0 * CFrame.Angles(swing, 0, -splay), 10, 0.3, dt)
 				end
 			end,
@@ -480,8 +501,11 @@ local function makeRun(cycle: number, intensity: number): AnimDef
 				local t = 0
 				return function(j, dt)
 					t = (t + dt) % period
-					local swing = math.sin(t * freq) * 0.9 * intensity
-					local splay = math.abs(math.sin(t * freq)) * 0.06 * intensity
+					local dir = ac:GetMoveDir()
+					local absZ = math.abs(dir.Z)
+					local fwdFactor = if absZ > 0.3 then absZ else 0.3
+					local swing = math.sin(t * freq) * 0.9 * intensity * fwdFactor
+					local splay = math.abs(math.sin(t * freq)) * 0.06 * intensity * fwdFactor
 					ac:spring(j, defaultC0 * CFrame.Angles(swing, 0, splay), 10, 0.3, dt)
 				end
 			end,
@@ -489,8 +513,11 @@ local function makeRun(cycle: number, intensity: number): AnimDef
 				local t = 0
 				return function(j, dt)
 					t = (t + dt) % period
-					local baseBend = 1.2 * intensity
-					local wave = math.sin(t * freq) * 0.3 * intensity
+					local dir = ac:GetMoveDir()
+					local absZ = math.abs(dir.Z)
+					local fwdFactor = if absZ > 0.3 then absZ else 0.3
+					local baseBend = 1.2 * intensity * fwdFactor
+					local wave = math.sin(t * freq) * 0.3 * intensity * fwdFactor
 					ac:spring(j, defaultC0 * CFrame.Angles(baseBend + wave, 0, 0), 10, 0.3, dt)
 				end
 			end,
@@ -498,8 +525,11 @@ local function makeRun(cycle: number, intensity: number): AnimDef
 				local t = 0
 				return function(j, dt)
 					t = (t + dt) % period
-					local baseBend = 1.2 * intensity
-					local wave = -math.sin(t * freq) * 0.3 * intensity
+					local dir = ac:GetMoveDir()
+					local absZ = math.abs(dir.Z)
+					local fwdFactor = if absZ > 0.3 then absZ else 0.3
+					local baseBend = 1.2 * intensity * fwdFactor
+					local wave = -math.sin(t * freq) * 0.3 * intensity * fwdFactor
 					ac:spring(j, defaultC0 * CFrame.Angles(baseBend + wave, 0, 0), 10, 0.3, dt)
 				end
 			end,
@@ -507,7 +537,10 @@ local function makeRun(cycle: number, intensity: number): AnimDef
 				local t = 0
 				return function(j, dt)
 					t = (t + dt) % period
-					local flick = math.sin(t * freq + 0.3) * 0.12 * intensity
+					local dir = ac:GetMoveDir()
+					local absZ = math.abs(dir.Z)
+					local fwdFactor = if absZ > 0.3 then absZ else 0.3
+					local flick = math.sin(t * freq + 0.3) * 0.12 * intensity * fwdFactor
 					ac:spring(j, defaultC0 * CFrame.Angles(flick, 0, 0), 10, 0.3, dt)
 				end
 			end,
@@ -515,7 +548,10 @@ local function makeRun(cycle: number, intensity: number): AnimDef
 				local t = 0
 				return function(j, dt)
 					t = (t + dt) % period
-					local flick = -math.sin(t * freq + 0.3) * 0.12 * intensity
+					local dir = ac:GetMoveDir()
+					local absZ = math.abs(dir.Z)
+					local fwdFactor = if absZ > 0.3 then absZ else 0.3
+					local flick = -math.sin(t * freq + 0.3) * 0.12 * intensity * fwdFactor
 					ac:spring(j, defaultC0 * CFrame.Angles(flick, 0, 0), 10, 0.3, dt)
 				end
 			end,

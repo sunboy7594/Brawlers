@@ -26,7 +26,7 @@ if RunService:IsServer() then
 	BasicAttackRemoting.AimStarted:DeclareEvent()
 	BasicAttackRemoting.Fire:DeclareEvent()
 	BasicAttackRemoting.AmmoChanged:DeclareEvent()
-	BasicAttackRemoting.HitConfirmed:DeclareEvent()
+	BasicAttackRemoting.HitChecked:DeclareEvent() -- HitConfirmed → HitChecked
 else
 	BasicAttackRemoting = Remoting.Client.new(ReplicatedStorage, "BasicAttack")
 end
