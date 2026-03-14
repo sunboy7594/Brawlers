@@ -26,8 +26,8 @@ local BasicAttackDefs: { [string]: BasicAttackDef } = {
 		rarity = "COMMON",
 		class = "TANK",
 		maxAmmo = 3,
-		reloadTime = 1.5,
-		postDelay = 0.6,
+		reloadTime = 2,
+		postDelay = 1,
 	},
 }
 

@@ -6,10 +6,10 @@
 	ctx를 저장하지 않으며, 실행 시점에 인자로만 받음.
 
 	사용처:
-	- AimController     : onAimStart, onAim, onFire
-	- BasicAttackClient : onHitConfirmed
-	- SkillClient       : onHitConfirmed
-	- UltimateClient    : onHitConfirmed
+	- AimController     : OnAimStart, OnAim, OnFire
+	- BasicAttackClient : OnHitConfirmed
+	- SkillClient       : OnHitConfirmed
+	- UltimateClient    : OnHitConfirmed
 ]=]
 
 local AbilityExecutor = {}
@@ -18,7 +18,7 @@ local AbilityExecutor = {}
 	훅 배열을 순회하며 ctx를 인자로 실행합니다.
 	hookList가 nil이면 아무것도 하지 않습니다.
 ]=]
-function AbilityExecutor.run(hookList: { (ctx: any) -> () }?, ctx: any)
+function AbilityExecutor.Run(hookList: { (ctx: any) -> () }?, ctx: any)
 	if not hookList then
 		return
 	end
@@ -27,20 +27,20 @@ function AbilityExecutor.run(hookList: { (ctx: any) -> () }?, ctx: any)
 	end
 end
 
-function AbilityExecutor.onAimStart(clientModule: any, ctx: any)
-	AbilityExecutor.run(clientModule.onAimStart, ctx)
+function AbilityExecutor.OnAimStart(clientModule: any, ctx: any)
+	AbilityExecutor.Run(clientModule.onAimStart, ctx)
 end
 
-function AbilityExecutor.onAim(clientModule: any, ctx: any)
-	AbilityExecutor.run(clientModule.onAim, ctx)
+function AbilityExecutor.OnAim(clientModule: any, ctx: any)
+	AbilityExecutor.Run(clientModule.onAim, ctx)
 end
 
-function AbilityExecutor.onFire(clientModule: any, ctx: any)
-	AbilityExecutor.run(clientModule.onFire, ctx)
+function AbilityExecutor.OnFire(clientModule: any, ctx: any)
+	AbilityExecutor.Run(clientModule.onFire, ctx)
 end
 
-function AbilityExecutor.onHitConfirmed(clientModule: any, ctx: any)
-	AbilityExecutor.run(clientModule.onHitConfirmed, ctx)
+function AbilityExecutor.OnHitConfirmed(clientModule: any, ctx: any)
+	AbilityExecutor.Run(clientModule.onHitConfirmed, ctx)
 end
 
 return AbilityExecutor

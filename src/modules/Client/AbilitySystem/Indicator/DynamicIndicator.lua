@@ -24,18 +24,20 @@ local PART_Y = 0.06
 local PART_HEIGHT = 0.15
 local CONE_SEGMENTS = 5
 
--- shape별 기본 config
+local DEFAULT_COLOR = Color3.fromRGB(160, 160, 160) -- ← 추가
+local DEFAULT_TRANSPARENCY = 0.45 -- ← 추가
+
 local DEFAULTS = {
-	cone = { range = 8, angle = 90, color = Color3.fromRGB(255, 220, 0), transparency = 0.45 },
-	circle = { radius = 5, color = Color3.fromRGB(255, 140, 0), transparency = 0.45 },
-	line = { range = 10, width = 3, color = Color3.fromRGB(0, 200, 255), transparency = 0.45 },
+	cone = { range = 8, angle = 90, color = DEFAULT_COLOR, transparency = DEFAULT_TRANSPARENCY },
+	circle = { radius = 5, color = DEFAULT_COLOR, transparency = DEFAULT_TRANSPARENCY },
+	line = { range = 10, width = 3, color = DEFAULT_COLOR, transparency = DEFAULT_TRANSPARENCY },
 	arc = {
 		maxRange = 20,
 		speed = 30,
 		gravity = 196,
 		arcRadius = 2,
-		color = Color3.fromRGB(220, 50, 50),
-		transparency = 0.40,
+		color = DEFAULT_COLOR,
+		transparency = DEFAULT_TRANSPARENCY,
 	},
 }
 

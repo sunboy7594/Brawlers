@@ -5,7 +5,7 @@
 	기본 공격 클라이언트 서비스.
 
 	담당:
-	- 좌클릭 감지 → AimController:startAim() 호출
+	- 좌클릭 감지 → AimController:StartAim() 호출
 	- AmmoChanged 수신 → 탄약/postDelay 상태 보관
 	- HitConfirmed 수신 → ctx.comboCount 갱신 → onHitConfirmed 배열 실행
 	- SetJoints(joints) 수신 → SetEquippedAttack 시 EntityAnimator 생성
@@ -15,6 +15,7 @@
 local require = require(script.Parent.loader).load(script)
 
 local Players = game:GetService("Players")
+local RunService = game:GetService("RunService") -- ← 추가
 local UserInputService = game:GetService("UserInputService")
 
 local AbilityExecutor = require("AbilityExecutor")
@@ -49,6 +50,8 @@ type ClientContext = {
 	indicator: any,
 	animator: any?,
 	victims: { Player }?,
+	isPostDelay: boolean, -- ← 추가
+	hasAmmo: boolean, -- ← 추가
 }
 
 -- ─── 타입 ────────────────────────────────────────────────────────────────────
@@ -128,7 +131,39 @@ function BasicAttackClient.Init(self: BasicAttackClient, serviceBag: ServiceBag.
 	)
 end
 
+-- indicator 상태별 색상 상수
+local COLOR_NORMAL = Color3.fromRGB(160, 160, 160)
+local COLOR_NO_AMMO = Color3.fromRGB(220, 50, 50)
+local ALPHA_NORMAL = 0
+local ALPHA_POST_DELAY = 0.75
+
 function BasicAttackClient.Start(self: BasicAttackClient): ()
+	-- 매 프레임: ctx 상태 갱신 + indicator 기본 색상 관리
+	self._maid:GiveTask(RunService.Heartbeat:Connect(function()
+		local ctx = self._ctx
+		if not ctx then
+			return
+		end
+
+		local isPostDelay = os.clock() < self._postDelayUntil
+		local hasAmmo = self._currentAmmo > 0
+
+		ctx.isPostDelay = isPostDelay
+		ctx.hasAmmo = hasAmmo
+
+		-- 조준 중일 때만 indicator에 반영
+		-- (onAim 훅이 없거나, 커스텀하지 않을 경우의 기본 시각 상태)
+		if self._aimController:IsAiming() then
+			if not hasAmmo then
+				ctx.indicator:update({ color = COLOR_NO_AMMO, transparency = ALPHA_NORMAL })
+			elseif isPostDelay then
+				ctx.indicator:update({ color = COLOR_NORMAL, transparency = ALPHA_POST_DELAY })
+			else
+				ctx.indicator:update({ color = COLOR_NORMAL, transparency = ALPHA_NORMAL })
+			end
+		end
+	end))
+
 	-- 좌클릭 → 조준 시작
 	self._maid:GiveTask(UserInputService.InputBegan:Connect(function(input: InputObject, processed: boolean)
 		if processed then
@@ -171,6 +206,8 @@ function BasicAttackClient:SetEquippedAttack(attackId: string)
 		indicator = indicator,
 		animator = nil,
 		victims = nil,
+		isPostDelay = false, -- ← 추가
+		hasAmmo = true, -- ← 추가
 	}
 
 	self:_rebuildAnimator()
@@ -213,13 +250,7 @@ function BasicAttackClient:_rebuildAnimator()
 end
 
 function BasicAttackClient:_tryStartAim()
-	if self._currentAmmo <= 0 then
-		return
-	end
-	if os.clock() < self._postDelayUntil then
-		return
-	end
-
+	-- ammo/postDelay 조건 제거 → 조준은 항상 가능
 	local attackId = self._equippedAttackId
 	if not attackId then
 		return
@@ -237,18 +268,19 @@ function BasicAttackClient:_tryStartAim()
 
 	ctx.idleTime = if self._lastFireTime > 0 then os.clock() - self._lastFireTime else 0
 
-	self._aimController:startAim(
-		AimController.AbilityType.BasicAttack,
-		entry.module,
-		ctx,
-		function(direction: Vector3)
-			-- 클라이언트 측 발사 후처리
-			self._postDelayUntil = os.clock() + entry.def.postDelay
-			self._lastFireTime = os.clock()
-			BasicAttackRemoting.Fire:FireServer(direction)
-		end,
-		entry.def.postDelay -- ✅ postDelay를 postFireDuration으로 전달
-	)
+	self._aimController:StartAim(AimController.AbilityType.BasicAttack, entry.module, ctx, function(direction: Vector3)
+		-- 실제 발사 시점에만 조건 검증
+		if self._currentAmmo <= 0 then
+			return
+		end
+		if os.clock() < self._postDelayUntil then
+			return
+		end
+
+		self._postDelayUntil = os.clock() + entry.def.postDelay
+		self._lastFireTime = os.clock()
+		BasicAttackRemoting.Fire:FireServer(direction)
+	end, entry.def.postDelay)
 
 	BasicAttackRemoting.AimStarted:FireServer()
 end
@@ -280,7 +312,7 @@ function BasicAttackClient:_onHitConfirmed(_attackerUserId: unknown, victimUserI
 		return
 	end
 
-	AbilityExecutor.onHitConfirmed(entry.module, ctx)
+	AbilityExecutor.OnHitConfirmed(entry.module, ctx)
 end
 
 function BasicAttackClient.Destroy(self: BasicAttackClient)

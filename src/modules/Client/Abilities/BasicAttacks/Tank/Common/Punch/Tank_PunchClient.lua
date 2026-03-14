@@ -40,14 +40,19 @@ return {
 
 	-- ─── 매 프레임 ──────────────────────────────────────────────────────
 	onAim = {
-		function(ctx: ClientContext)
-			-- 조준 시간에 따라 인디케이터 색상 변화 (0초 = 노랑, 1초 이상 = 빨강)
-			local t = math.clamp(ctx.aimTime / 1.0, 0, 1)
-			ctx.indicator:update({
-				color = Color3.new(1, 1 - t * 0.8, 0),
-				transparency = 0.45 - t * 0.1,
-			})
-		end,
+		-- function(ctx: ClientContext)
+		-- 	-- ammo 없음 / postDelay 중은 BasicAttackClient Heartbeat에서 처리
+		-- 	-- 정상 조준 가능할 때만 커스텀 색상 연출
+		-- 	if not ctx.hasAmmo or ctx.isPostDelay then
+		-- 		return
+		-- 	end
+
+		-- 	local t = math.clamp(ctx.aimTime / 1.0, 0, 1)
+		-- 	ctx.indicator:update({
+		-- 		color = Color3.new(1, 1 - t * 0.8, 0),
+		-- 		transparency = 0.45 - t * 0.1,
+		-- 	})
+		-- end,
 	},
 
 	-- ─── 발사 확정 ──────────────────────────────────────────────────────

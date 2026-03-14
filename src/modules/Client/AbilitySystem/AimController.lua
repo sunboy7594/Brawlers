@@ -26,9 +26,9 @@
 	- cancellableDelay로 복원 → 새 조준 시작 시 취소 가능
 
 	클라이언트 공격 모듈 훅 (AbilityExecutor가 실행):
-	- onAimStart: { (ctx) -> () }?  조준 시작 1회
-	- onAim:      { (ctx) -> () }?  매 프레임, ctx.indicator 직접 업데이트
-	- onFire:     { (ctx) -> () }?  발사 확정 후
+	- OnAimStart: { (ctx) -> () }?  조준 시작 1회
+	- OnAim:      { (ctx) -> () }?  매 프레임, ctx.indicator 직접 업데이트
+	- OnFire:     { (ctx) -> () }?  발사 확정 후
 	취소 시: indicator hide만 (onCancel 없음)
 ]=]
 
@@ -105,7 +105,7 @@ function AimController.Start(self: AimController): ()
 			return
 		end
 		if input.UserInputType == Enum.UserInputType.MouseButton2 then
-			self:cancel()
+			self:Cancel()
 		end
 	end))
 
@@ -135,7 +135,7 @@ end
 	@param onFireServer     (direction: Vector3) -> ()   서버 전송 콜백
 	@param postFireDuration number?                      발사 후 AutoRotate 잠금 시간 (기본 0)
 ]=]
-function AimController:startAim(
+function AimController:StartAim(
 	abilityType: string,
 	clientModule: any,
 	ctx: any,
@@ -190,13 +190,13 @@ function AimController:startAim(
 	ctx.indicator:show()
 
 	-- onAimStart 배열 실행
-	AbilityExecutor.onAimStart(clientModule, ctx)
+	AbilityExecutor.OnAimStart(clientModule, ctx)
 end
 
 --[=[
 	현재 조준을 취소합니다.
 ]=]
-function AimController:cancel()
+function AimController:Cancel()
 	if not self._aimState then
 		return
 	end
@@ -206,7 +206,7 @@ end
 --[=[
 	현재 조준 중 여부를 반환합니다.
 ]=]
-function AimController:isAiming(): boolean
+function AimController:IsAiming(): boolean
 	return self._aimState ~= nil
 end
 
@@ -337,7 +337,7 @@ function AimController:_confirm()
 	-- ─────────────────────────────────────────────────────────────────────────
 
 	-- onFire 배열 실행 (클라이언트 측 애니메이션/이펙트)
-	AbilityExecutor.onFire(clientModule, ctx)
+	AbilityExecutor.OnFire(clientModule, ctx)
 
 	-- 서버 전송
 	onFireServer(direction)
@@ -394,7 +394,7 @@ function AimController:_onRenderStep()
 	ctx.indicator:update({ origin = origin, direction = direction })
 
 	-- onAim 배열 실행
-	AbilityExecutor.onAim(state.clientModule, ctx)
+	AbilityExecutor.OnAim(state.clientModule, ctx)
 end
 
 function AimController.Destroy(self: AimController)
