@@ -5,10 +5,10 @@
 	기본 공격 클라이언트 서비스.
 
 	담당:
-	- 좌클릭 감지 → AimController:StartAim() 호출
+	- 좌클릭 감지 → AimControllerClient:StartAim() 호출
 	- AmmoChanged 수신 → state 탄약 필드 갱신
 	- HitChecked 수신 → state.victims 갱신 → onHitChecked 배열 실행
-	- SetJoints(joints) 수신 → SetEquippedAttack 시 EntityAnimator 생성
+	- PlayerBinderClient.JointsChanged 구독 → joints 자가 갱신 → EntityAnimator 재생성
 	- state 소유 및 관리
 	- fireComboCount/hitComboCount 증감은 각 공격 모듈이 담당
 ]=]
@@ -20,13 +20,14 @@ local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 
 local AbilityExecutor = require("AbilityExecutor")
-local AimController = require("AimController")
+local AimControllerClient = require("AimControllerClient")
 local AnimationControllerClient = require("AnimationControllerClient")
 local BasicAttackDefs = require("BasicAttackDefs")
 local BasicAttackRemoting = require("BasicAttackRemoting")
 local DynamicIndicator = require("DynamicIndicator")
 local EntityAnimator = require("EntityAnimator")
 local Maid = require("Maid")
+local PlayerBinderClient = require("PlayerBinderClient")
 local ServiceBag = require("ServiceBag")
 
 -- ─── 레지스트리 ──────────────────────────────────────────────────────────────
@@ -76,7 +77,7 @@ export type BasicAttackClient = typeof(setmetatable(
 	{} :: {
 		_serviceBag: ServiceBag.ServiceBag,
 		_maid: any,
-		_aimController: AimController.AimController,
+		_aimController: AimControllerClient.AimControllerClient,
 		_animController: AnimationControllerClient.AnimationControllerClient,
 
 		_equippedAttackId: string?,
@@ -103,13 +104,22 @@ local ALPHA_POST_DELAY = 0.8
 function BasicAttackClient.Init(self: BasicAttackClient, serviceBag: ServiceBag.ServiceBag): ()
 	self._serviceBag = serviceBag
 	self._maid = Maid.new()
-	self._aimController = serviceBag:GetService(AimController)
+	self._aimController = serviceBag:GetService(AimControllerClient)
 	self._animController = serviceBag:GetService(AnimationControllerClient)
 
 	self._equippedAttackId = nil
 	self._joints = nil
 	self._attackAnimator = nil
 	self._state = nil
+
+	-- PlayerBinderClient.JointsChanged 구독 → joints 갱신 → animator 재생성
+	local playerBinder = serviceBag:GetService(PlayerBinderClient)
+	self._maid:GiveTask(playerBinder.JointsChanged:Connect(function(joints)
+		self._joints = joints
+		if self._equippedAttackId then
+			self:_rebuildAnimator()
+		end
+	end))
 
 	self._maid:GiveTask(
 		BasicAttackRemoting.AmmoChanged:Connect(
@@ -178,13 +188,6 @@ function BasicAttackClient.Start(self: BasicAttackClient): ()
 end
 
 -- ─── 공개 API ────────────────────────────────────────────────────────────────
-
-function BasicAttackClient:SetJoints(joints: { [string]: Motor6D }?)
-	self._joints = joints
-	if self._equippedAttackId then
-		self:_rebuildAnimator()
-	end
-end
 
 function BasicAttackClient:SetEquippedAttack(attackId: string)
 	self._equippedAttackId = attackId
@@ -273,7 +276,7 @@ function BasicAttackClient:_tryStartAim()
 	state.idleTime = if state.lastFireTime > 0 then os.clock() - state.lastFireTime else 0
 
 	self._aimController:StartAim(
-		AimController.AbilityType.BasicAttack,
+		AimControllerClient.AbilityType.BasicAttack,
 		entry.module,
 		state,
 		function(direction: Vector3)

@@ -1,6 +1,6 @@
 --!strict
 --[=[
-	@class BasicCameraAnimDefs
+	@class BasicCameraAnimDef
 
 	CameraAnimator에 주입하는 카메라 애니메이션 정의 모음.
 
@@ -10,7 +10,7 @@
 	  "override" → 카메라 완전 점령. 컷신·스킬 연출 등.
 
 	추가 방법:
-	  BasicCameraAnimDefs["MyAnim"] = {
+	  BasicCameraAnimDef["MyAnim"] = {
 	      layer = "effect",
 	      factory = function(cc)
 	          local t = 0
@@ -33,13 +33,13 @@ type CameraAnimDef = {
 
 -- ─── 정의 테이블 ──────────────────────────────────────────────────────────────
 
-local BasicCameraAnimDefs: { [string]: CameraAnimDef } = {}
+local BasicCameraAnimDef: { [string]: CameraAnimDef } = {}
 
 -- ============================================================
 -- [effect] 걷기 카메라 보빙
 -- 좌우로 약하게 흔들립니다.
 -- ============================================================
-BasicCameraAnimDefs["WalkBob"] = {
+BasicCameraAnimDef["WalkBob"] = {
 	layer = "effect",
 	factory = function(_cc)
 		local t = 0
@@ -60,7 +60,7 @@ BasicCameraAnimDefs["WalkBob"] = {
 -- [effect] 달리기 카메라 보빙
 -- WalkBob보다 진폭이 크고 빠릅니다.
 -- ============================================================
-BasicCameraAnimDefs["RunBob"] = {
+BasicCameraAnimDef["RunBob"] = {
 	layer = "effect",
 	factory = function(_cc)
 		local t = 0
@@ -81,7 +81,7 @@ BasicCameraAnimDefs["RunBob"] = {
 -- [offset] 달리기 FOV 확장
 -- 달릴 때 FOV를 75로 늘려 속도감을 줍니다.
 -- ============================================================
-BasicCameraAnimDefs["RunFOV"] = {
+BasicCameraAnimDef["RunFOV"] = {
 	layer = "offset",
 	factory = function(_cc)
 		return {
@@ -97,7 +97,7 @@ BasicCameraAnimDefs["RunFOV"] = {
 -- [offset] 에임(ShiftLock) FOV 축소
 -- 에임 시 FOV를 60으로 줄여 집중감을 줍니다.
 -- ============================================================
-BasicCameraAnimDefs["AimFOV"] = {
+BasicCameraAnimDef["AimFOV"] = {
 	layer = "offset",
 	factory = function(_cc)
 		return {
@@ -113,7 +113,7 @@ BasicCameraAnimDefs["AimFOV"] = {
 -- [offset] 전투 시 카메라 약간 당기기
 -- 전투 진입 시 오프셋으로 시야를 약간 올립니다.
 -- ============================================================
-BasicCameraAnimDefs["CombatOffset"] = {
+BasicCameraAnimDef["CombatOffset"] = {
 	layer = "offset",
 	factory = function(_cc)
 		return {
@@ -129,7 +129,7 @@ BasicCameraAnimDefs["CombatOffset"] = {
 -- [effect] 피격 카메라 흔들림 (duration과 함께 사용)
 -- Play("HitShake", 0.35) 형태로 사용합니다.
 -- ============================================================
-BasicCameraAnimDefs["HitShake"] = {
+BasicCameraAnimDef["HitShake"] = {
 	layer = "effect",
 	factory = function(_cc)
 		local t = 0
@@ -151,7 +151,7 @@ BasicCameraAnimDefs["HitShake"] = {
 -- [effect] 스킬 시전 카메라 롤 (duration과 함께 사용)
 -- Play("SkillRoll", 0.5) 형태로 사용합니다.
 -- ============================================================
-BasicCameraAnimDefs["SkillRoll"] = {
+BasicCameraAnimDef["SkillRoll"] = {
 	layer = "effect",
 	factory = function(_cc)
 		local t = 0
@@ -171,7 +171,7 @@ BasicCameraAnimDefs["SkillRoll"] = {
 -- [effect] 궁극기 슬로우모션 연출용 줌인 (override 아님 — 연속 effect)
 -- Play("UltZoom", 1.5) 형태로 사용합니다.
 -- ============================================================
-BasicCameraAnimDefs["UltZoom"] = {
+BasicCameraAnimDef["UltZoom"] = {
 	layer = "effect",
 	factory = function(_cc)
 		local t = 0
@@ -189,7 +189,7 @@ BasicCameraAnimDefs["UltZoom"] = {
 -- Play("CutsceneFixed") → 특정 CFrame에서 카메라 고정.
 -- Stop() 하면 일반 카메라로 복귀.
 -- ============================================================
-BasicCameraAnimDefs["CutsceneFixed"] = {
+BasicCameraAnimDef["CutsceneFixed"] = {
 	layer = "override",
 	factory = function(_cc)
 		local targetCF = CFrame.new(0, 10, 20) * CFrame.Angles(math.rad(-15), 0, 0)
@@ -200,4 +200,4 @@ BasicCameraAnimDefs["CutsceneFixed"] = {
 	end,
 }
 
-return BasicCameraAnimDefs
+return BasicCameraAnimDef

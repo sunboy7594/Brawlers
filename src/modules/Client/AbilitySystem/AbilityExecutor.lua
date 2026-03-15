@@ -6,10 +6,10 @@
 	ctx를 저장하지 않으며, 실행 시점에 인자로만 받음.
 
 	사용처:
-	- AimController     : OnAimStart, OnAim, OnFire
-	- BasicAttackClient : OnHitChecked
-	- SkillClient       : OnHitChecked
-	- UltimateClient    : OnHitChecked
+	- AimControllerClient : OnAimStart, OnAim, OnFire
+	- BasicAttackClient   : OnHitChecked
+	- SkillClient         : OnHitChecked
+	- UltimateClient      : OnHitChecked
 ]=]
 
 local AbilityExecutor = {}

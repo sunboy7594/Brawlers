@@ -12,15 +12,16 @@ serviceBag:GetService(require("BrawlersServiceClient"))
 
 -- 카메라/애니메이션/이동 시스템
 -- MouseShiftLockService는 CameraControllerClient.Init 내에서 의존하므로 먼저 등록
+-- PlayerBinderClient는 AnimationControllerClient.Init에서 GetService로 참조하므로 먼저 등록
 serviceBag:GetService(require("MouseShiftLockService"))
+serviceBag:GetService(require("PlayerBinderClient"))
 serviceBag:GetService(require("AnimationControllerClient"))
 serviceBag:GetService(require("CameraControllerClient"))
 serviceBag:GetService(require("BasicMovementClient"))
-serviceBag:GetService(require("HumanoidBinderClient"))
 
 -- 어빌리티 시스템
--- AimController는 BasicAttackClient보다 먼저 등록해야 Init에서 GetService 가능
-serviceBag:GetService(require("AimController"))
+-- AimControllerClient는 BasicAttackClient보다 먼저 등록해야 Init에서 GetService 가능
+serviceBag:GetService(require("AimControllerClient"))
 serviceBag:GetService(require("BasicAttackClient"))
 serviceBag:GetService(require("PassiveClient"))
 serviceBag:GetService(require("SkillClient"))

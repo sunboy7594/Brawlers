@@ -1,6 +1,6 @@
 --!strict
 --[=[
-	@class BasicMovementAnimDefs
+	@class BasicMovementAnimDef
 ]=]
 
 local Layer = {
@@ -9,7 +9,7 @@ local Layer = {
 	OVERRIDE = 2,
 }
 
-local BasicMovementAnimDefs = {}
+local BasicMovementAnimDef = {}
 
 type OnUpdate = (joint: Motor6D, dt: number) -> ()
 type OnModify = (current: CFrame, dt: number) -> CFrame
@@ -562,51 +562,51 @@ end
 -- ─── 애니메이션 등록 ──────────────────────────────────────────────────────────
 
 -- Default (대미지딜러 수치 적용)
-BasicMovementAnimDefs["Idle"] = makeIdle(0.9)
-BasicMovementAnimDefs["Walk"] = makeWalk(2.5, 1.05, 0.05)
-BasicMovementAnimDefs["Run"] = makeRun(2.8, 1.05)
-BasicMovementAnimDefs["Breathing"] = makeBreath(0.4, 0.9)
+BasicMovementAnimDef["Idle"] = makeIdle(0.9)
+BasicMovementAnimDef["Walk"] = makeWalk(2.5, 1.05, 0.05)
+BasicMovementAnimDef["Run"] = makeRun(2.8, 1.05)
+BasicMovementAnimDef["Breathing"] = makeBreath(0.4, 0.9)
 
 -- 탱커 (cycle 유지, intensity/lean → 딜러 수치)
-BasicMovementAnimDefs["Idle_Tank"] = makeIdle(0.9)
-BasicMovementAnimDefs["Walk_Tank"] = makeWalk(1.8, 1.05, 0.05)
-BasicMovementAnimDefs["Run_Tank"] = makeRun(2.0, 1.05)
-BasicMovementAnimDefs["Breathing_Tank"] = makeBreath(0.28, 0.9)
+BasicMovementAnimDef["Idle_Tank"] = makeIdle(0.9)
+BasicMovementAnimDef["Walk_Tank"] = makeWalk(1.8, 1.05, 0.05)
+BasicMovementAnimDef["Run_Tank"] = makeRun(2.0, 1.05)
+BasicMovementAnimDef["Breathing_Tank"] = makeBreath(0.28, 0.9)
 
 -- 어쌔신 (cycle 유지, intensity/lean → 딜러 수치)
-BasicMovementAnimDefs["Idle_Assassin"] = makeIdle(0.9)
-BasicMovementAnimDefs["Walk_Assassin"] = makeWalk(2.9, 1.05, 0.05)
-BasicMovementAnimDefs["Run_Assassin"] = makeRun(3.2, 1.05)
-BasicMovementAnimDefs["Breathing_Assassin"] = makeBreath(0.6, 0.9)
+BasicMovementAnimDef["Idle_Assassin"] = makeIdle(0.9)
+BasicMovementAnimDef["Walk_Assassin"] = makeWalk(2.9, 1.05, 0.05)
+BasicMovementAnimDef["Run_Assassin"] = makeRun(3.2, 1.05)
+BasicMovementAnimDef["Breathing_Assassin"] = makeBreath(0.6, 0.9)
 
 -- 서포터 (cycle 유지, intensity/lean → 딜러 수치)
-BasicMovementAnimDefs["Idle_Support"] = makeIdle(0.9)
-BasicMovementAnimDefs["Walk_Support"] = makeWalk(2.4, 1.05, 0.05)
-BasicMovementAnimDefs["Run_Support"] = makeRun(2.6, 1.05)
-BasicMovementAnimDefs["Breathing_Support"] = makeBreath(0.45, 0.9)
+BasicMovementAnimDef["Idle_Support"] = makeIdle(0.9)
+BasicMovementAnimDef["Walk_Support"] = makeWalk(2.4, 1.05, 0.05)
+BasicMovementAnimDef["Run_Support"] = makeRun(2.6, 1.05)
+BasicMovementAnimDef["Breathing_Support"] = makeBreath(0.45, 0.9)
 
 -- 컨트롤러 (cycle 유지, intensity/lean → 딜러 수치)
-BasicMovementAnimDefs["Idle_Controller"] = makeIdle(0.9)
-BasicMovementAnimDefs["Walk_Controller"] = makeWalk(2.3, 1.05, 0.05)
-BasicMovementAnimDefs["Run_Controller"] = makeRun(2.6, 1.05)
-BasicMovementAnimDefs["Breathing_Controller"] = makeBreath(0.38, 0.9)
+BasicMovementAnimDef["Idle_Controller"] = makeIdle(0.9)
+BasicMovementAnimDef["Walk_Controller"] = makeWalk(2.3, 1.05, 0.05)
+BasicMovementAnimDef["Run_Controller"] = makeRun(2.6, 1.05)
+BasicMovementAnimDef["Breathing_Controller"] = makeBreath(0.38, 0.9)
 
 -- 대미지딜러
-BasicMovementAnimDefs["Idle_Dealer"] = makeIdle(0.9)
-BasicMovementAnimDefs["Walk_Dealer"] = makeWalk(2.6, 1.05, 0.05)
-BasicMovementAnimDefs["Run_Dealer"] = makeRun(2.9, 1.05)
-BasicMovementAnimDefs["Breathing_Dealer"] = makeBreath(0.5, 0.9)
+BasicMovementAnimDef["Idle_Dealer"] = makeIdle(0.9)
+BasicMovementAnimDef["Walk_Dealer"] = makeWalk(2.6, 1.05, 0.05)
+BasicMovementAnimDef["Run_Dealer"] = makeRun(2.9, 1.05)
+BasicMovementAnimDef["Breathing_Dealer"] = makeBreath(0.5, 0.9)
 
 -- 저격수 (cycle 유지, intensity/lean → 딜러 수치)
-BasicMovementAnimDefs["Idle_Marksman"] = makeIdle(0.9)
-BasicMovementAnimDefs["Walk_Marksman"] = makeWalk(2.0, 1.05, 0.05)
-BasicMovementAnimDefs["Run_Marksman"] = makeRun(2.8, 1.05)
-BasicMovementAnimDefs["Breathing_Marksman"] = makeBreath(0.35, 0.9)
+BasicMovementAnimDef["Idle_Marksman"] = makeIdle(0.9)
+BasicMovementAnimDef["Walk_Marksman"] = makeWalk(2.0, 1.05, 0.05)
+BasicMovementAnimDef["Run_Marksman"] = makeRun(2.8, 1.05)
+BasicMovementAnimDef["Breathing_Marksman"] = makeBreath(0.35, 0.9)
 
 -- 투척수 (cycle 유지, intensity/lean → 딜러 수치)
-BasicMovementAnimDefs["Idle_Artillery"] = makeIdle(0.9)
-BasicMovementAnimDefs["Walk_Artillery"] = makeWalk(1.6, 1.05, 0.05)
-BasicMovementAnimDefs["Run_Artillery"] = makeRun(1.9, 1.05)
-BasicMovementAnimDefs["Breathing_Artillery"] = makeBreath(0.25, 0.9)
+BasicMovementAnimDef["Idle_Artillery"] = makeIdle(0.9)
+BasicMovementAnimDef["Walk_Artillery"] = makeWalk(1.6, 1.05, 0.05)
+BasicMovementAnimDef["Run_Artillery"] = makeRun(1.9, 1.05)
+BasicMovementAnimDef["Breathing_Artillery"] = makeBreath(0.25, 0.9)
 
-return BasicMovementAnimDefs
+return BasicMovementAnimDef

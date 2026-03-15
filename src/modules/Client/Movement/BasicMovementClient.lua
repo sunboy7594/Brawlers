@@ -6,11 +6,10 @@
 	- Shift 입력 감지 → 달리기/걷기 판단
 	- 상태 변경 시 서버에 전송 (MovementRemoting.IsRunning)
 	- 서버로부터 클래스 변경 수신 → 애니메이션 전환 (ClassRemoting.ClassChanged)
-	- SetAnimator()로 주입받은 애니메이터 사용
-	- SetCameraAnimator()로 주입받은 카메라 애니메이터 사용
-	- SetHumanoid()로 주입받은 Humanoid 사용
+	- PlayerBinderClient.JointsChanged 구독 → EntityAnimator 생성/파괴 자가 처리
+	- CameraAnimator 직접 생성 및 관리
 
-	애니메이터 생성/파괴와 Humanoid 추적은 HumanoidAnimatorClient가 담당합니다.
+	애니메이터 생성/파괴와 MoveDir 계산은 PlayerAnimatorClient가 담당합니다.
 ]=]
 
 local require = require(script.Parent.loader).load(script)
@@ -19,13 +18,17 @@ local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 
 local AnimationControllerClient = require("AnimationControllerClient")
+local BasicCameraAnimDef = require("BasicCameraAnimDef")
+local BasicMovementAnimDef = require("BasicMovementAnimDef")
 local CameraAnimator = require("CameraAnimator")
+local CameraControllerClient = require("CameraControllerClient")
 local ClassRemoting = require("ClassRemoting")
 local EntityAnimator = require("EntityAnimator")
 local KeybindConfig = require("KeybindConfig")
 local Maid = require("Maid")
 local MovementConfig = require("MovementConfig")
 local MovementRemoting = require("MovementRemoting")
+local PlayerBinderClient = require("PlayerBinderClient")
 local ServiceBag = require("ServiceBag")
 
 local BasicMovementClient = {}
@@ -36,9 +39,8 @@ export type BasicMovementClient = typeof(setmetatable(
 		_serviceBag: ServiceBag.ServiceBag,
 		_maid: any,
 		_animController: AnimationControllerClient.AnimationControllerClient,
+		_cameraAnimator: CameraAnimator.CameraAnimator,
 		_animator: EntityAnimator.EntityAnimator?,
-		_cameraAnimator: CameraAnimator.CameraAnimator?,
-		_humanoid: Humanoid?,
 		_currentClass: string,
 		_isRunning: boolean,
 		_isMoving: boolean,
@@ -54,15 +56,50 @@ function BasicMovementClient.Init(self: BasicMovementClient, serviceBag: Service
 	self._maid = Maid.new()
 	self._animController = self._serviceBag:GetService(AnimationControllerClient)
 	self._animator = nil
-	self._cameraAnimator = nil
-	self._humanoid = nil
 	self._currentClass = "Default"
 	self._isRunning = false
 	self._isMoving = false
 	self._isShiftDown = false
 
+	-- CameraAnimator 직접 생성 (캐릭터 생명주기와 무관하게 항상 존재)
+	local cameraController = serviceBag:GetService(CameraControllerClient)
+	local camAnimator = CameraAnimator.new("BasicMovement", BasicCameraAnimDef, cameraController)
+	self._cameraAnimator = camAnimator
+	self._maid:GiveTask(function()
+		camAnimator:Destroy()
+	end)
+
+	-- PlayerBinderClient.JointsChanged 구독 → EntityAnimator 생성/파괴
+	local playerBinder = serviceBag:GetService(PlayerBinderClient)
+	self._maid:GiveTask(playerBinder.JointsChanged:Connect(function(joints)
+		-- 기존 animator 정리
+		if self._animator then
+			self._animator:Destroy()
+			self._animator = nil
+		end
+
+		if not joints then
+			-- 캐릭터 제거됨 → 이동 상태 초기화
+			self._isRunning = false
+			self._isMoving = false
+			self._isShiftDown = false
+			return
+		end
+
+		-- 새 EntityAnimator 생성
+		local animator = EntityAnimator.new(
+			"BasicMovement",
+			"BasicMovementAnimDef",
+			joints,
+			BasicMovementAnimDef,
+			self._animController
+		)
+		self._animator = animator
+		self:_playAnim("Idle", true)
+		self:_playAnim("Breathing", true)
+	end))
+
 	-- 서버 → 클라이언트: 클래스 변경 수신
-	-- Remoting이 자동으로 ClassRemotes 폴더가 생길 때까지 대기 후 연결
 	self._maid:GiveTask(ClassRemoting.ClassChanged:Connect(function(className: unknown)
 		if type(className) == "string" then
 			self:_onClassChanged(className)
@@ -77,53 +114,16 @@ function BasicMovementClient.Start(self: BasicMovementClient): ()
 	end))
 end
 
--- ─── 공개 API ─────────────────────────────────────────────────────────────────
-
---[=[
-	HumanoidAnimatorClient가 캐릭터 스폰/리스폰 시 호출합니다.
-	nil을 넘기면 애니메이터를 해제합니다.
-	@param animator EntityAnimator?
-]=]
-function BasicMovementClient:SetAnimator(animator: EntityAnimator.EntityAnimator?)
-	self._animator = animator
-	if animator then
-		self:_playAnim("Idle", true)
-		self:_playAnim("Breathing", true)
-	end
-end
-
---[=[
-	HumanoidAnimatorClient가 캐릭터 스폰/리스폰 시 호출합니다.
-	nil을 넘기면 카메라 애니메이터를 해제합니다.
-	@param cameraAnimator CameraAnimator?
-]=]
-function BasicMovementClient:SetCameraAnimator(cameraAnimator: CameraAnimator.CameraAnimator?)
-	self._cameraAnimator = cameraAnimator
-end
-
---[=[
-	HumanoidAnimatorClient가 캐릭터 스폰/리스폰 시 호출합니다.
-	nil을 넘기면 Humanoid 참조를 해제합니다.
-	@param humanoid Humanoid?
-]=]
-function BasicMovementClient:SetHumanoid(humanoid: Humanoid?)
-	self._humanoid = humanoid
-	if humanoid then
-		self._isRunning = false
-		self._isMoving = false
-		self._isShiftDown = false
-	end
-end
-
 -- ─── 내부 ────────────────────────────────────────────────────────────────────
 
 function BasicMovementClient:_poll()
-	local humanoid = self._humanoid
-	if not humanoid then
+	if not self._animator then
 		return
 	end
 
-	local isMoving = humanoid.MoveDirection.Magnitude > 0
+	-- MoveDir은 AnimationControllerClient가 PlayerBinderClient로부터 매 프레임 폴링하여 캐싱
+	local moveDir = self._animController:GetMoveDir()
+	local isMoving = moveDir.Magnitude > 0.01
 	local isShiftDown = UserInputService:IsKeyDown(KeybindConfig.Binds.Run)
 	local isRunning = isMoving and isShiftDown
 
@@ -168,9 +168,6 @@ function BasicMovementClient:_playAnim(animKey: string, play: boolean)
 end
 
 function BasicMovementClient:_playCamAnim(animName: string, play: boolean)
-	if not self._cameraAnimator then
-		return
-	end
 	if play then
 		self._cameraAnimator:PlayAnimation(animName)
 	else

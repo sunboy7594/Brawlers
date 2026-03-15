@@ -1,6 +1,6 @@
 --!strict
 --[=[
-	@class AimController
+	@class AimControllerClient
 
 	조준 상태를 중앙에서 관리하는 서비스.
 
@@ -57,7 +57,7 @@ type AimState = {
 	postFireDuration: number, -- 발사 후 AutoRotate 잠금 시간 (초)
 }
 
-export type AimController = typeof(setmetatable(
+export type AimControllerClient = typeof(setmetatable(
 	{} :: {
 		_serviceBag: ServiceBag.ServiceBag,
 		_maid: any,
@@ -72,11 +72,11 @@ export type AimController = typeof(setmetatable(
 
 -- ─── 조준 타입 상수 ──────────────────────────────────────────────────────────
 
-local AimController = {}
-AimController.ServiceName = "AimController"
-AimController.__index = AimController
+local AimControllerClient = {}
+AimControllerClient.ServiceName = "AimControllerClient"
+AimControllerClient.__index = AimControllerClient
 
-AimController.AbilityType = {
+AimControllerClient.AbilityType = {
 	BasicAttack = "BasicAttack",
 	Skill = "Skill",
 	Ultimate = "Ultimate",
@@ -84,7 +84,7 @@ AimController.AbilityType = {
 
 -- ─── 초기화 ──────────────────────────────────────────────────────────────────
 
-function AimController.Init(self: AimController, serviceBag: ServiceBag.ServiceBag): ()
+function AimControllerClient.Init(self: AimControllerClient, serviceBag: ServiceBag.ServiceBag): ()
 	self._serviceBag = serviceBag
 	self._maid = Maid.new()
 	self._aimState = nil
@@ -98,7 +98,7 @@ function AimController.Init(self: AimController, serviceBag: ServiceBag.ServiceB
 	self._yawSpring = yawSpring
 end
 
-function AimController.Start(self: AimController): ()
+function AimControllerClient.Start(self: AimControllerClient): ()
 	-- 우클릭: 조준 취소
 	self._maid:GiveTask(UserInputService.InputBegan:Connect(function(input: InputObject, processed: boolean)
 		if processed then
@@ -116,11 +116,11 @@ function AimController.Start(self: AimController): ()
 		end
 	end))
 
-	RunService:BindToRenderStep("AimControllerUpdate", Enum.RenderPriority.Camera.Value + 1, function()
+	RunService:BindToRenderStep("AimControllerClientUpdate", Enum.RenderPriority.Camera.Value + 1, function()
 		self:_onRenderStep()
 	end)
 	self._maid:GiveTask(function()
-		RunService:UnbindFromRenderStep("AimControllerUpdate")
+		RunService:UnbindFromRenderStep("AimControllerClientUpdate")
 	end)
 end
 
@@ -128,14 +128,13 @@ end
 
 --[=[
 	새 조준을 시작합니다.
-
-	@param abilityType      string                       AimController.AbilityType 중 하나
+	@param abilityType      string                       AimControllerClient.AbilityType 중 하나
 	@param clientModule     table                        공격 클라이언트 모듈
 	@param ctx              table                        BasicAttackClient가 소유하는 ClientContext
 	@param onFireServer     (direction: Vector3) -> ()   서버 전송 콜백
 	@param postFireDuration number?                      발사 후 AutoRotate 잠금 시간 (기본 0)
 ]=]
-function AimController:StartAim(
+function AimControllerClient:StartAim(
 	abilityType: string,
 	clientModule: any,
 	ctx: any,
@@ -196,7 +195,7 @@ end
 --[=[
 	현재 조준을 취소합니다.
 ]=]
-function AimController:Cancel()
+function AimControllerClient:Cancel()
 	if not self._aimState then
 		return
 	end
@@ -206,23 +205,23 @@ end
 --[=[
 	현재 조준 중 여부를 반환합니다.
 ]=]
-function AimController:IsAiming(): boolean
+function AimControllerClient:IsAiming(): boolean
 	return self._aimState ~= nil
 end
 
 -- ─── 내부 ────────────────────────────────────────────────────────────────────
 
-function AimController:_getHRP(): BasePart?
+function AimControllerClient:_getHRP(): BasePart?
 	local char = Players.LocalPlayer.Character
 	return char and char:FindFirstChild("HumanoidRootPart") :: BasePart? or nil
 end
 
-function AimController:_getHumanoid(): Humanoid?
+function AimControllerClient:_getHumanoid(): Humanoid?
 	local char = Players.LocalPlayer.Character
 	return char and char:FindFirstChildOfClass("Humanoid") :: Humanoid? or nil
 end
 
-function AimController:_getAimDirection(): (Vector3?, Vector3?)
+function AimControllerClient:_getAimDirection(): (Vector3?, Vector3?)
 	local char = Players.LocalPlayer.Character
 	if not char then
 		return nil, nil
@@ -250,7 +249,7 @@ function AimController:_getAimDirection(): (Vector3?, Vector3?)
 	return hrp.Position, dirH.Unit
 end
 
-function AimController:_updateCharacterRotation()
+function AimControllerClient:_updateCharacterRotation()
 	local hrp = self:_getHRP()
 	if not hrp then
 		return
@@ -273,7 +272,7 @@ function AimController:_updateCharacterRotation()
 end
 
 -- 좌클릭 해제 시 발사
-function AimController:_confirm()
+function AimControllerClient:_confirm()
 	local state = self._aimState
 	if not state then
 		return
@@ -318,7 +317,7 @@ function AimController:_confirm()
 		local currentLook = hrp.CFrame.LookVector
 		local currentYaw = math.atan2(-currentLook.X, -currentLook.Z)
 		self._yawSpring.Position = currentYaw
-		self._yawSpring.Target = yaw -- 즉시 스냅 대신 spring이 부드럽게 이동
+		self._yawSpring.Target = yaw
 		self._postFireYaw = yaw
 
 		if postFireDuration > 0 then
@@ -336,12 +335,15 @@ function AimController:_confirm()
 	end
 	-- ─────────────────────────────────────────────────────────────────────────
 
+	-- onFire 배열 실행
+	AbilityExecutor.OnFire(clientModule, ctx)
+
 	-- 서버 전송
 	onFireServer(direction)
 end
 
 -- 취소: indicator hide만, postFire 타이머는 건드리지 않음
-function AimController:_cancelInternal()
+function AimControllerClient:_cancelInternal()
 	local state = self._aimState
 	if not state then
 		return
@@ -359,7 +361,7 @@ function AimController:_cancelInternal()
 end
 
 -- 매 프레임
-function AimController:_onRenderStep()
+function AimControllerClient:_onRenderStep()
 	local state = self._aimState
 	if not state then
 		-- postFire 중이면 spring이 목표 방향까지 부드럽게 회전 계속 구동
@@ -394,7 +396,7 @@ function AimController:_onRenderStep()
 	AbilityExecutor.OnAim(state.clientModule, ctx)
 end
 
-function AimController.Destroy(self: AimController)
+function AimControllerClient.Destroy(self: AimControllerClient)
 	if self._postFireCancel then
 		self._postFireCancel()
 		self._postFireCancel = nil
@@ -405,4 +407,4 @@ function AimController.Destroy(self: AimController)
 	self._maid:Destroy()
 end
 
-return AimController
+return AimControllerClient

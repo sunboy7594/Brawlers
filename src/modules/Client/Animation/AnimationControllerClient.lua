@@ -16,10 +16,12 @@
 
 local require = require(script.Parent.loader).load(script)
 
+local RunService = game:GetService("RunService")
+
 local Maid = require("Maid")
+local PlayerBinderClient = require("PlayerBinderClient")
 local ServiceBag = require("ServiceBag")
 local Spring = require("Spring")
-local RunService = game:GetService("RunService")
 
 -- ─── Spring 변환 상수 ─────────────────────────────────────────────────────────
 -- stiffness=200 → Speed≈20, damping=1.6 → Damper≈1.0
@@ -56,6 +58,7 @@ export type AnimationControllerClient = typeof(setmetatable(
 	{} :: {
 		_serviceBag: ServiceBag.ServiceBag,
 		_maid: any,
+		_playerBinder: any,
 		_queue: { [Motor6D]: { AnimEntry } },
 		_current: { [Motor6D]: AnimEntry },
 		_defaultC0: { [Motor6D]: CFrame },
@@ -70,6 +73,7 @@ function AnimationControllerClient.Init(self: AnimationControllerClient, service
 	assert(not (self :: any)._serviceBag, "Already initialized")
 	self._serviceBag = assert(serviceBag, "No serviceBag")
 	self._maid = Maid.new()
+	self._playerBinder = serviceBag:GetService(PlayerBinderClient)
 
 	local weakMeta = { __mode = "k" }
 	self._queue = setmetatable({}, weakMeta)
@@ -82,6 +86,8 @@ end
 
 function AnimationControllerClient.Start(self: AnimationControllerClient): ()
 	self._maid:GiveTask(RunService.RenderStepped:Connect(function(dt)
+		-- PlayerBinderClient에서 MoveDir 폴링
+		self._cachedMoveDir = self._playerBinder:GetMoveDir()
 		self:_update(dt)
 	end))
 end
@@ -120,20 +126,20 @@ function AnimationControllerClient:GetDefaultC0(joint: Motor6D): CFrame
 end
 
 --[=[
-	HumanoidAnimatorClient가 매 프레임 호출해 캐싱된 로컬 이동 방향을 설정합니다.
-	@param dir Vector3 -- 캐릭터 로컬 좌표계 기준 이동 방향
-]=]
-function AnimationControllerClient:SetMoveDir(dir: Vector3)
-	self._cachedMoveDir = dir
-end
-
---[=[
-	프레임당 1회 캐싱된 로컬 이동 방향을 반환합니다.
+	매 프레임 캐싱된 로컬 이동 방향을 반환합니다.
 	AnimDef 클로저에서 매 관절마다 직접 계산하는 대신 이 값을 사용하세요.
 	@return Vector3
 ]=]
 function AnimationControllerClient:GetMoveDir(): Vector3
 	return self._cachedMoveDir
+end
+
+--[=[
+	로컬 이동 방향을 직접 설정합니다. (하위호환 또는 외부 주입용)
+	@param dir Vector3 -- 캐릭터 로컬 좌표계 기준 이동 방향
+]=]
+function AnimationControllerClient:SetMoveDir(dir: Vector3)
+	self._cachedMoveDir = dir
 end
 
 -- ─── 공개 API ─────────────────────────────────────────────────────────────────
@@ -303,6 +309,11 @@ end
 
 --[=[
 	Nevermore Spring을 이용해 joint.C0를 targetC0 방향으로 부드럽게 이동시킵니다.
+	@param joint     Motor6D
+	@param targetC0  CFrame  목표 포즈
+	@param speed     number  Nevermore Spring Speed
+	@param damper    number  Nevermore Spring Damper
+	@param _dt       number  시그니처 호환용 (lazy evaluation이라 미사용)
 ]=]
 function AnimationControllerClient:spring(
 	joint: Motor6D,
