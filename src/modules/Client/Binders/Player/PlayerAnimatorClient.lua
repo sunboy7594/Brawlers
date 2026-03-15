@@ -7,10 +7,11 @@
 	담당:
 	- 로컬 플레이어 캐릭터 여부 확인
 	- Humanoid 존재 여부에 따라 경로 분기
-	  - Humanoid 있음 → HumanoidAnimator 경로 (Motor6D 수집, JointsChanged 발행)
+	  - Humanoid 있음 → HumanoidAnimator 경로 (Motor6D 수집)
 	  - Humanoid 없음 → CustomBodyAnimator stub (추후 구현)
 	- 매 프레임 MoveDirection을 로컬 좌표로 계산 → GetMoveDir()로 노출
-	- JointsChanged Signal → PlayerBinderClient를 통해 구독자에게 전달
+	- GetJoints()로 현재 조인트 테이블 노출
+	- JointsChanged Signal → 조인트가 런타임 중 바뀔 때만 발행 (초기값은 GetJoints()로 읽음)
 ]=]
 
 local require = require(script.Parent.loader).load(script)
@@ -47,9 +48,10 @@ export type PlayerAnimatorClient = typeof(setmetatable(
 	{} :: {
 		Instance: Model,
 		IsLocalPlayer: boolean,
-		JointsChanged: any, -- Signal<{ [string]: Motor6D }?>
+		JointsChanged: any, -- Signal<{ [string]: Motor6D }?> — 런타임 변경 시만 발행
 		_maid: any,
 		_moveDir: Vector3,
+		_joints: { [string]: Motor6D }?,
 	},
 	{} :: typeof({ __index = {} })
 ))
@@ -66,9 +68,9 @@ function PlayerAnimatorClient.new(model: Model, serviceBag: any)
 	self.IsLocalPlayer = false
 	self.JointsChanged = Signal.new()
 	self._moveDir = Vector3.zero
+	self._joints = nil
 
 	-- 로컬 플레이어 캐릭터가 아니면 아무것도 하지 않음
-	-- 다른 플레이어 joint.C0는 서버에서 변경 → Roblox 자동 복제로 표시됨
 	if model ~= Players.LocalPlayer.Character then
 		return self
 	end
@@ -88,8 +90,16 @@ end
 -- ─── 공개 API ────────────────────────────────────────────────────────────────
 
 --[=[
+	현재 수집된 조인트 테이블을 반환합니다.
+	PlayerBinderClient가 컴포넌트를 받은 직후 이 값으로 초기 발행합니다.
+	@return { [string]: Motor6D }?
+]=]
+function PlayerAnimatorClient:GetJoints(): { [string]: Motor6D }?
+	return self._joints
+end
+
+--[=[
 	매 프레임 계산된 로컬 좌표 이동 방향을 반환합니다.
-	AnimationControllerClient 등 구독자가 폴링합니다.
 	@return Vector3
 ]=]
 function PlayerAnimatorClient:GetMoveDir(): Vector3
@@ -97,10 +107,6 @@ function PlayerAnimatorClient:GetMoveDir(): Vector3
 end
 
 function PlayerAnimatorClient:Destroy()
-	-- joints nil 발행 → 구독자가 EntityAnimator 등을 정리할 수 있도록
-	if self.IsLocalPlayer then
-		self.JointsChanged:Fire(nil)
-	end
 	self._maid:Destroy()
 	self.JointsChanged:Destroy()
 end
@@ -117,8 +123,8 @@ function PlayerAnimatorClient:_initHumanoid(model: Model, humanoid: Humanoid, _s
 		end
 	end
 
-	-- 조인트 준비 완료 → 구독자에게 발행
-	self.JointsChanged:Fire(joints)
+	-- 조인트 저장 (PlayerBinderClient가 GetJoints()로 읽어서 발행함)
+	self._joints = joints
 
 	-- 매 프레임 MoveDirection 로컬 좌표 계산
 	local root = model:FindFirstChild("HumanoidRootPart") :: BasePart?

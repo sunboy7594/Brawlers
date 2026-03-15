@@ -28,7 +28,7 @@
 	클라이언트 공격 모듈 훅 (AbilityExecutor가 실행):
 	- OnAimStart: { (ctx) -> () }?  조준 시작 1회
 	- OnAim:      { (ctx) -> () }?  매 프레임, ctx.indicator 직접 업데이트
-	- OnFire:     { (ctx) -> () }?  발사 확정 후
+	- OnFire:     { (ctx) -> () }?  발사 확정 후 — onFireServer 콜백 내부에서 호출됨
 	취소 시: indicator hide만 (onCancel 없음)
 ]=]
 
@@ -54,7 +54,7 @@ type AimState = {
 	onFireServer: (direction: Vector3) -> (),
 	startTime: number,
 	maid: any,
-	postFireDuration: number, -- 발사 후 AutoRotate 잠금 시간 (초)
+	postFireDuration: number,
 }
 
 export type AimControllerClient = typeof(setmetatable(
@@ -64,8 +64,8 @@ export type AimControllerClient = typeof(setmetatable(
 		_aimState: AimState?,
 		_cameraController: any,
 		_yawSpring: any,
-		_postFireCancel: (() -> ())?, -- cancellableDelay 취소 함수
-		_postFireYaw: number?, -- postFire spring이 향할 목표 yaw
+		_postFireCancel: (() -> ())?,
+		_postFireYaw: number?,
 	},
 	{} :: typeof({ __index = {} })
 ))
@@ -153,13 +153,6 @@ function AimControllerClient:StartAim(
 		self:_cancelInternal()
 	end
 
-	-- postFire 잠금 타이머가 남아있으면 취소
-	-- (새 조준이 시작됐으므로 AutoRotate 복원 필요 없음 — 아래에서 직접 관리)
-	if self._postFireCancel then
-		self._postFireCancel()
-		self._postFireCancel = nil
-	end
-
 	-- ShiftLock 활성 시 AutoRotate 비활성 + yawSpring 초기화
 	if self._cameraController:IsShiftLocked() then
 		local humanoid = self:_getHumanoid()
@@ -185,16 +178,10 @@ function AimControllerClient:StartAim(
 		postFireDuration = postFireDuration or 0,
 	}
 
-	-- 인디케이터 표시
 	ctx.indicator:show()
-
-	-- onAimStart 배열 실행
 	AbilityExecutor.OnAimStart(clientModule, ctx)
 end
 
---[=[
-	현재 조준을 취소합니다.
-]=]
 function AimControllerClient:Cancel()
 	if not self._aimState then
 		return
@@ -202,9 +189,6 @@ function AimControllerClient:Cancel()
 	self:_cancelInternal()
 end
 
---[=[
-	현재 조준 중 여부를 반환합니다.
-]=]
 function AimControllerClient:IsAiming(): boolean
 	return self._aimState ~= nil
 end
@@ -290,30 +274,25 @@ function AimControllerClient:_confirm()
 	ctx.direction = direction
 	ctx.origin = origin or Vector3.zero
 
-	-- 인디케이터 숨기기
 	ctx.indicator:hide()
 
-	local clientModule = state.clientModule
 	local onFireServer = state.onFireServer
 	local postFireDuration = state.postFireDuration
 
 	state.maid:Destroy()
 	self._aimState = nil
 
-	-- ── postFire 회전 고정 ────────────────────────────────────────────────────
-	-- AutoRotate를 끄고 HRP를 조준방향으로 즉시 스냅한 뒤,
-	-- postFireDuration 후 cancellableDelay로 복원.
-	-- 새 조준이 시작되면 startAim에서 _postFireCancel()을 호출해 타이머를 취소.
+	-- OnFire는 onFireServer 콜백(BasicAttackClient) 내부에서 쿨타임 통과 후 호출됨
+	local isFired = onFireServer(direction)
+
+	-- ── postFire 회전 고정 (발사 성공 시에만) ─────────────────────────────────
 	local humanoid = self:_getHumanoid()
 	local hrp = self:_getHRP()
 
-	if humanoid and hrp then
+	if isFired and humanoid and hrp then
 		humanoid.AutoRotate = false
 
-		-- 발사 방향 yaw 계산
 		local yaw = math.atan2(-direction.X, -direction.Z)
-
-		-- spring 현재 위치를 HRP 실제 yaw로 초기화 (단타 시 spring이 미초기화 상태일 수 있음)
 		local currentLook = hrp.CFrame.LookVector
 		local currentYaw = math.atan2(-currentLook.X, -currentLook.Z)
 		self._yawSpring.Position = currentYaw
@@ -334,12 +313,6 @@ function AimControllerClient:_confirm()
 		end
 	end
 	-- ─────────────────────────────────────────────────────────────────────────
-
-	-- onFire 배열 실행
-	AbilityExecutor.OnFire(clientModule, ctx)
-
-	-- 서버 전송
-	onFireServer(direction)
 end
 
 -- 취소: indicator hide만, postFire 타이머는 건드리지 않음
@@ -353,7 +326,6 @@ function AimControllerClient:_cancelInternal()
 	state.maid:Destroy()
 	self._aimState = nil
 
-	-- ShiftLock 조준 중에 취소된 경우 AutoRotate 즉시 복원
 	local humanoid = self:_getHumanoid()
 	if humanoid then
 		humanoid.AutoRotate = true
@@ -364,7 +336,6 @@ end
 function AimControllerClient:_onRenderStep()
 	local state = self._aimState
 	if not state then
-		-- postFire 중이면 spring이 목표 방향까지 부드럽게 회전 계속 구동
 		if self._postFireCancel and self._postFireYaw then
 			local hrp = self:_getHRP()
 			if hrp then
@@ -383,16 +354,12 @@ function AimControllerClient:_onRenderStep()
 		return
 	end
 
-	-- ctx 갱신
 	local ctx = state.ctx
 	ctx.aimTime = os.clock() - state.startTime
 	ctx.direction = direction
 	ctx.origin = origin
 
-	-- 매 프레임 기본 위치/방향 업데이트
 	ctx.indicator:update({ origin = origin, direction = direction })
-
-	-- onAim 배열 실행
 	AbilityExecutor.OnAim(state.clientModule, ctx)
 end
 

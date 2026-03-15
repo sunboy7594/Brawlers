@@ -60,8 +60,8 @@ export type BasicAttackState = {
 	lastHitTime: number,
 
 	-- 콤보 (증감은 각 공격 모듈이 담당)
-	fireComboCount: number, -- 공격할 때마다 증가
-	hitComboCount: number, -- 피격시켰을 때만 증가
+	fireComboCount: number,
+	hitComboCount: number,
 
 	-- 계산
 	origin: Vector3,
@@ -279,18 +279,19 @@ function BasicAttackClient:_tryStartAim()
 		AimControllerClient.AbilityType.BasicAttack,
 		entry.module,
 		state,
-		function(direction: Vector3)
+		function(direction: Vector3) -- 발사 성공/실패여부 return
 			if state.currentAmmo <= 0 then
-				return
+				return false
 			end
 			if os.clock() < state.postDelayUntil then
-				return
+				return false
 			end
 
 			state.postDelayUntil = os.clock() + entry.def.postDelay
 			state.lastFireTime = os.clock()
 			BasicAttackRemoting.Fire:FireServer(direction)
 			AbilityExecutor.OnFire(entry.module, state)
+			return true
 		end,
 		entry.def.postDelay
 	)

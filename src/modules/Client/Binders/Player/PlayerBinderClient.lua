@@ -7,7 +7,8 @@
 	서버에서 캐릭터 스폰 시 CollectionService:AddTag(character, "Player")를 호출해야 합니다.
 
 	로컬 플레이어의 PlayerAnimatorClient로부터:
-	- JointsChanged Signal을 프록시하여 구독자에게 전달
+	- 컴포넌트 생성 직후 GetJoints()로 초기 조인트를 JointsChanged에 즉시 발행
+	- 런타임 조인트 변경 시 JointsChanged 재발행 (PlayerAnimatorClient.JointsChanged 프록시)
 	- GetMoveDir()을 위임하여 노출
 ]=]
 
@@ -52,7 +53,7 @@ function PlayerBinderClient.Init(self: PlayerBinderClient, serviceBag: ServiceBa
 end
 
 function PlayerBinderClient.Start(self: PlayerBinderClient): ()
-	-- Start()를 먼저 호출해야 GetClassAddedSignal/GetClassRemovedSignal 내부 Signal이 초기화됨
+	-- Start() 먼저 호출해야 GetClassAddedSignal 내부 Signal이 초기화됨
 	self._binder:Start()
 
 	self._maid:GiveTask(self._binder:GetClassAddedSignal():Connect(function(component)
@@ -61,10 +62,14 @@ function PlayerBinderClient.Start(self: PlayerBinderClient): ()
 		end
 		self._localComponent = component
 
-		-- JointsChanged 프록시
+		-- 런타임 조인트 변경 구독 (미래 변경 대비)
 		self._componentMaid:GiveTask(component.JointsChanged:Connect(function(joints)
 			self.JointsChanged:Fire(joints)
 		end))
+
+		-- 초기 조인트 즉시 발행
+		-- PlayerAnimatorClient.new()는 이미 완료됐으므로 GetJoints()로 현재값 읽음
+		self.JointsChanged:Fire(component:GetJoints())
 	end))
 
 	self._maid:GiveTask(self._binder:GetClassRemovedSignal():Connect(function(component)
@@ -73,6 +78,8 @@ function PlayerBinderClient.Start(self: PlayerBinderClient): ()
 		end
 		self._localComponent = nil
 		self._componentMaid:DoCleaning()
+		-- nil 발행 → 구독자가 EntityAnimator 정리
+		self.JointsChanged:Fire(nil)
 	end))
 end
 
