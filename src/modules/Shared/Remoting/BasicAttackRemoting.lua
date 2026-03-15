@@ -9,8 +9,11 @@
 	- Fire:        (클라이언트 → 서버) 공격 발사 (direction: Vector3)
 	- AmmoChanged: (서버 → 클라이언트) 탄약 변경 알림
 	               (current, max, reloadTime, postDelay: number)
-	- HitChecked:  (서버 → 모든 클라이언트) 히트 체크 알림
-	               (attackerUserId: number, victimUserIds: { number })
+	- HitChecked:  (서버 → 공격자만) 히트 체크 알림
+	               (victimUserIds: { number })
+	- HitReaction: (서버 → 피격자만) 피격 반응 알림
+	               각 공격기술 onHitChecked에서 필요 시 FireClient로 발송
+	               전달 데이터는 공격기술 모듈이 결정
 ]=]
 
 local require = require(script.Parent.loader).load(script)
@@ -27,6 +30,7 @@ if RunService:IsServer() then
 	BasicAttackRemoting.Fire:DeclareEvent()
 	BasicAttackRemoting.AmmoChanged:DeclareEvent()
 	BasicAttackRemoting.HitChecked:DeclareEvent()
+	BasicAttackRemoting.HitReaction:DeclareEvent() -- 아직 쓰는 곳 없음
 else
 	BasicAttackRemoting = Remoting.Client.new(ReplicatedStorage, "BasicAttack")
 end

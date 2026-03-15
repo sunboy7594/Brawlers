@@ -8,6 +8,7 @@
 	- 좌클릭 감지 → AimControllerClient:StartAim() 호출
 	- AmmoChanged 수신 → state 탄약 필드 갱신
 	- HitChecked 수신 → state.victims 갱신 → onHitChecked 배열 실행
+	  (HitChecked는 서버에서 공격자에게만 FireClient로 발송됨)
 	- PlayerBinderClient.JointsChanged 구독 → joints 자가 갱신 → EntityAnimator 재생성
 	- state 소유 및 관리
 	- fireComboCount/hitComboCount 증감은 각 공격 모듈이 담당
@@ -144,8 +145,10 @@ function BasicAttackClient.Init(self: BasicAttackClient, serviceBag: ServiceBag.
 		)
 	)
 
-	self._maid:GiveTask(BasicAttackRemoting.HitChecked:Connect(function(attackerUserId: unknown, victimUserIds: unknown)
-		self:_onHitChecked(attackerUserId, victimUserIds)
+	-- HitChecked: 서버가 공격자에게만 FireClient로 발송
+	-- attackerUserId 파라미터 없음 (이 클라이언트 = 공격자 확정)
+	self._maid:GiveTask(BasicAttackRemoting.HitChecked:Connect(function(victimUserIds: unknown)
+		self:_onHitChecked(victimUserIds)
 	end))
 end
 
@@ -279,7 +282,7 @@ function BasicAttackClient:_tryStartAim()
 		AimControllerClient.AbilityType.BasicAttack,
 		entry.module,
 		state,
-		function(direction: Vector3) -- 발사 성공/실패여부 return
+		function(direction: Vector3)
 			if state.currentAmmo <= 0 then
 				return false
 			end
@@ -299,7 +302,7 @@ function BasicAttackClient:_tryStartAim()
 	BasicAttackRemoting.AimStarted:FireServer()
 end
 
-function BasicAttackClient:_onHitChecked(_attackerUserId: unknown, victimUserIds: unknown)
+function BasicAttackClient:_onHitChecked(victimUserIds: unknown)
 	local state = self._state
 	if not state then
 		return

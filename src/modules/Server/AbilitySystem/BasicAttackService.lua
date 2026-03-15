@@ -8,7 +8,7 @@
 	- 플레이어별 탄약 상태 관리
 	- 탄약 1칸씩 독립 재생 (Heartbeat)
 	- BasicAttackRemoting.Fire 수신 → 검증 → 서버 공격 모듈 onFire 배열 실행
-	- 히트 체크 후 HitChecked:FireAllClients() 발송
+	- 히트 체크 후 HitChecked:FireClient(공격자) 발송
 	- LoadoutRemoting.RequestEquipBasicAttack → 유효성 검증 후 장착 처리
 
 	Anti-exploit:
@@ -21,6 +21,16 @@
 	- 플레이어 관리 필드 + 발사 컨텍스트를 단일 테이블로 관리
 	- 클라이언트 전송값 일절 사용 안 함 (direction 검증 제외)
 	- hitComboCount/fireComboCount 증감은 각 공격 모듈이 담당
+
+	onHit 콜백:
+	- Fire 시점에 BasicAttackService가 state.onHit에 주입
+	- 공격기술 모듈은 InstantHit.apply()에 state.onHit을 넘겨 판정 완료 시 호출되도록 함
+	- 판정 완료 시점에 HitChecked(공격자), onHitChecked 훅 실행
+
+	스냅샷:
+	- Fire 시점에 table.clone(state)으로 생성
+	- onHit 콜백 및 onHitChecked 훅에 전달
+	- delay가 있는 공격에서 state가 다음 Fire로 덮어씌워져도 이 발사의 컨텍스트 보존
 ]=]
 
 local require = require(script.Parent.loader).load(script)
@@ -73,6 +83,9 @@ export type BasicAttackState = {
 	aimTime: number,
 	idleTime: number,
 	victims: { Model }?,
+
+	-- 판정 콜백 (BasicAttackService가 Fire마다 주입, 공격기술 모듈이 InstantHit에 전달)
+	onHit: ((victims: { Model }) -> ())?,
 }
 
 type AttackModule = {
@@ -144,71 +157,62 @@ function BasicAttackService.Start(self: BasicAttackService): ()
 	for _, player in Players:GetPlayers() do
 		self:_onPlayerAdded(player)
 	end
-	self._maid:GiveTask(Players.PlayerAdded:Connect(function(player)
+
+	self._maid:GiveTask(Players.PlayerAdded:Connect(function(player: Player)
 		self:_onPlayerAdded(player)
 	end))
-	self._maid:GiveTask(Players.PlayerRemoving:Connect(function(player)
+
+	self._maid:GiveTask(Players.PlayerRemoving:Connect(function(player: Player)
 		self:_onPlayerRemoving(player)
 	end))
+
 	self._maid:GiveTask(RunService.Heartbeat:Connect(function()
 		self:_updateAmmoRegen()
 	end))
 end
 
--- ─── 플레이어 라이프사이클 ────────────────────────────────────────────────────
+-- ─── 플레이어 관리 ───────────────────────────────────────────────────────────
 
 function BasicAttackService:_onPlayerAdded(player: Player)
 	local pMaid = Maid.new()
 	self._playerMaids[player.UserId] = pMaid
 
+	local state: BasicAttackState = {
+		equippedAttackId = nil,
+		humanoid = nil,
+		rootPart = nil,
+		currentAmmo = 0,
+		maxAmmo = 0,
+		reloadTime = 0,
+		postDelay = 0,
+		lastFireTime = 0,
+		postDelayUntil = 0,
+		lastRegenTime = 0,
+		lastHitTime = 0,
+		aimStartTime = 0,
+		fireComboCount = 0,
+		hitComboCount = 0,
+		attacker = nil,
+		origin = Vector3.zero,
+		direction = Vector3.new(0, 0, -1),
+		aimTime = 0,
+		idleTime = 0,
+		victims = nil,
+		onHit = nil,
+	}
+	self._playerStates[player.UserId] = state
+
 	local function onCharacterAdded(char: Model)
 		local humanoid = char:WaitForChild("Humanoid") :: Humanoid
 		local rootPart = char:WaitForChild("HumanoidRootPart") :: BasePart
-
-		local existing = self._playerStates[player.UserId]
-		local equippedId = if existing then existing.equippedAttackId else nil
-		local now = os.clock()
-
-		self._playerStates[player.UserId] = {
-			equippedAttackId = equippedId,
-			humanoid = humanoid,
-			rootPart = rootPart,
-			currentAmmo = 0,
-			maxAmmo = 0,
-			reloadTime = 0,
-			postDelay = 0,
-			lastFireTime = 0,
-			postDelayUntil = 0,
-			lastRegenTime = now,
-			lastHitTime = 0,
-			aimStartTime = 0,
-			fireComboCount = 0,
-			hitComboCount = 0,
-			attacker = nil,
-			origin = Vector3.zero,
-			direction = Vector3.new(0, 0, -1),
-			aimTime = 0,
-			idleTime = 0,
-			victims = nil,
-		}
-
-		if equippedId and ATTACK_REGISTRY[equippedId] then
-			local def = ATTACK_REGISTRY[equippedId].def
-			local state = self._playerStates[player.UserId]
-			state.maxAmmo = def.maxAmmo
-			state.reloadTime = def.reloadTime
-			state.postDelay = def.postDelay
-			state.currentAmmo = def.maxAmmo
-			self:_fireAmmoChanged(player, state)
-		end
+		state.humanoid = humanoid
+		state.rootPart = rootPart
+		state.attacker = char
 
 		pMaid:GiveTask(humanoid.Died:Connect(function()
-			local state = self._playerStates[player.UserId]
-			if state then
-				state.humanoid = nil
-				state.rootPart = nil
-				state.attacker = nil
-			end
+			state.humanoid = nil
+			state.rootPart = nil
+			state.attacker = nil
 		end))
 	end
 
@@ -236,7 +240,6 @@ function BasicAttackService:_onAimStarted(player: Player)
 	end
 
 	local now = os.clock()
-
 	if now < state.postDelayUntil then
 		return
 	end
@@ -309,42 +312,47 @@ function BasicAttackService:_onFire(player: Player, direction: unknown)
 	state.currentAmmo -= 1
 	self:_fireAmmoChanged(player, state)
 
-	-- [8] onFire 배열 실행 (모듈이 fireComboCount/hitComboCount 등 직접 제어)
-	local allVictims: { Model } = {}
-	if entry.module.onFire then
-		for _, fn in entry.module.onFire do
-			local result = fn(state)
-			if type(result) == "table" then
-				for _, v in result :: { Model } do
-					table.insert(allVictims, v)
-				end
+	-- [8] 스냅샷 생성 (Fire 시점 state 복사)
+	--     onHit/victims는 이 발사에서 의미 없으므로 초기화
+	local snapshot = table.clone(state)
+	snapshot.victims = nil
+	snapshot.onHit = nil
+
+	-- [9] onHit 콜백 주입
+	--     공격기술 모듈의 onFire에서 InstantHit.apply(…, state.onHit)로 사용됨
+	--     판정 완료 시점(delay 있든 없든)에 호출됨
+	state.onHit = function(victims: { Model })
+		-- live state 갱신
+		if #victims > 0 then
+			state.lastHitTime = os.clock()
+		end
+		state.victims = victims
+
+		-- 서버 onHitChecked 훅 실행 (snapshot 기준 컨텍스트)
+		if entry.module.onHitChecked then
+			for _, fn in entry.module.onHitChecked do
+				fn(snapshot)
 			end
 		end
+
+		-- HitChecked → 공격자만
+		local victimUserIds: { number } = {}
+		for _, victimModel in victims do
+			local victimPlayer = Players:GetPlayerFromCharacter(victimModel)
+			if victimPlayer then
+				table.insert(victimUserIds, victimPlayer.UserId)
+			end
+		end
+		BasicAttackRemoting.HitChecked:FireClient(player, victimUserIds)
 	end
 
-	-- [9] 히트 타이밍 갱신
-	if #allVictims > 0 then
-		state.lastHitTime = now
-	end
-
-	state.victims = allVictims
-
-	-- [10] onHitChecked 배열 실행
-	if entry.module.onHitChecked then
-		for _, fn in entry.module.onHitChecked do
+	-- [10] onFire 배열 실행
+	--      공격기술 모듈은 InstantHit.apply(…, state.onHit)를 호출함
+	if entry.module.onFire then
+		for _, fn in entry.module.onFire do
 			fn(state)
 		end
 	end
-
-	-- [11] 클라이언트에 전송
-	local victimUserIds: { number } = {}
-	for _, victimModel in allVictims do
-		local victimPlayer = Players:GetPlayerFromCharacter(victimModel)
-		if victimPlayer then
-			table.insert(victimUserIds, victimPlayer.UserId)
-		end
-	end
-	BasicAttackRemoting.HitChecked:FireAllClients(player.UserId, victimUserIds)
 end
 
 -- ─── 탄약 재생 ───────────────────────────────────────────────────────────────
@@ -401,6 +409,7 @@ function BasicAttackService:_setPlayerAttack(player: Player, attackId: string)
 	state.lastHitTime = 0
 	state.fireComboCount = 0
 	state.hitComboCount = 0
+	state.onHit = nil
 
 	self:_fireAmmoChanged(player, state)
 end
