@@ -15,6 +15,7 @@
 	  anim:PlayAnimation("RunFOV")               -- 무한 재생
 	  anim:PlayAnimation("RunBob")               -- RunFOV와 동시 재생
 	  anim:PlayAnimation("HitShake", 0.3)        -- 0.3초 후 자동 정지
+	  anim:PlayAnimation("HitShake", 0.3, nil, true) -- force=true: 재생 중이어도 처음부터 재시작
 	  anim:Stop("RunFOV")                        -- 이름으로 정지
 	  anim:Stop()                                -- 전부 정지
 	  anim:StopAllEffects()                      -- effect만 전부 정지
@@ -95,18 +96,23 @@ end
 	- effect / offset: 이름 기반 등록. 여러 개 동시 가능.
 	- override: 하나만 유지. 새 등록 시 기존 override 자동 교체.
 
-	이미 같은 이름이 재생 중이면 무시합니다.
+	force=true이면 이미 재생 중인 경우 기존 것을 정지하고 처음부터 재시작합니다.
+	force=false(기본): 이미 재생 중이면 무시합니다.
 ]=]
-function CameraAnimator:PlayAnimation(name: string, duration: number?, onFinish: (() -> ())?)
+function CameraAnimator:PlayAnimation(name: string, duration: number?, onFinish: (() -> ())?, force: boolean?)
 	local def = self._animDefs[name]
 	if not def then
 		warn(string.format("[CameraAnimator] '%s' 에 카메라 애니메이션 정의 '%s' 없음", self._owner, name))
 		return
 	end
 
-	-- 이미 재생 중이면 무시
+	-- 이미 재생 중일 때
 	if self._activeAnims[name] then
-		return
+		if not force then
+			return
+		end
+		-- force=true: 기존 것 정지 후 재시작
+		self:_stopByName(name)
 	end
 
 	-- override는 기존 거 교체

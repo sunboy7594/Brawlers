@@ -11,11 +11,15 @@
 
 	onHitChecked:
 	- snapshot(Fire 시점 state 복사본)을 받음
-	- HitReaction 등 피격자 신호가 필요하면 여기서 BasicAttackRemoting.HitReaction:FireClient()
+	- 1, 2콤보: HitShake + HitStagger
+	- 3콤보:    HitRecoil + HitKnockback (넉백 느낌)
 ]=]
 
 local require = require(script.Parent.loader).load(script)
 
+local Players = game:GetService("Players")
+
+local BasicAttackRemoting = require("BasicAttackRemoting")
 local InstantHit = require("InstantHit")
 
 type BasicAttackState = {
@@ -70,8 +74,25 @@ return {
 	},
 
 	onHitChecked = {
-		-- snapshot을 받음 (Fire 시점 컨텍스트)
-		-- 피격자에게 HitReaction 보낼 필요 있으면 여기서 처리
-		-- 예: BasicAttackRemoting.HitReaction:FireClient(victimPlayer, { attackId = snapshot.equippedAttackId, ... })
+		function(snapshot: BasicAttackState)
+			local victims = snapshot.victims
+			if not victims or #victims == 0 then
+				return
+			end
+
+			-- 콤보에 따라 피격 반응 분기
+			local isHeavy = snapshot.fireComboCount == 3
+
+			local payload = if isHeavy
+				then { animName = "HitKnockback", cameraAnimName = "HitRecoil" }
+				else { animName = "HitStagger", cameraAnimName = "HitShake" }
+
+			for _, victimModel in victims do
+				local victimPlayer = Players:GetPlayerFromCharacter(victimModel)
+				if victimPlayer then
+					BasicAttackRemoting.HitReaction:FireClient(victimPlayer, payload)
+				end
+			end
+		end,
 	},
 }
