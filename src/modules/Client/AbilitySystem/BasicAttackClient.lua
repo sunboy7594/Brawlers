@@ -6,16 +6,17 @@
 
 	담당:
 	- 좌클릭 감지 → AimController:StartAim() 호출
-	- AmmoChanged 수신 → 탄약/postDelay 상태 보관
-	- HitChecked 수신 → ctx.comboCount 갱신 → onHitChecked 배열 실행
+	- AmmoChanged 수신 → state 탄약 필드 갱신
+	- HitChecked 수신 → state.victims 갱신 → onHitChecked 배열 실행
 	- SetJoints(joints) 수신 → SetEquippedAttack 시 EntityAnimator 생성
-	- ctx 소유 및 관리
+	- state 소유 및 관리
+	- fireComboCount/hitComboCount 증감은 각 공격 모듈이 담당
 ]=]
 
 local require = require(script.Parent.loader).load(script)
 
 local Players = game:GetService("Players")
-local RunService = game:GetService("RunService") -- ← 추가
+local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 
 local AbilityExecutor = require("AbilityExecutor")
@@ -39,19 +40,34 @@ for id, def in BasicAttackDefs do
 	}
 end
 
--- ─── ClientContext 타입 ───────────────────────────────────────────────────────
+-- ─── BasicAttackState 타입 ───────────────────────────────────────────────────
 
-type ClientContext = {
-	aimTime: number,
-	idleTime: number,
-	comboCount: number,
-	direction: Vector3,
-	origin: Vector3,
+export type BasicAttackState = {
+	-- 연출
 	indicator: any,
 	animator: any?,
+
+	-- 탄약
+	currentAmmo: number,
+	maxAmmo: number,
+	reloadTime: number,
+	postDelay: number,
+
+	-- 타이밍
+	lastFireTime: number,
+	postDelayUntil: number,
+	lastHitTime: number,
+
+	-- 콤보 (증감은 각 공격 모듈이 담당)
+	fireComboCount: number, -- 공격할 때마다 증가
+	hitComboCount: number, -- 피격시켰을 때만 증가
+
+	-- 계산
+	origin: Vector3,
+	direction: Vector3,
+	aimTime: number,
+	idleTime: number,
 	victims: { Player }?,
-	isPostDelay: boolean, -- ← 추가
-	hasAmmo: boolean, -- ← 추가
 }
 
 -- ─── 타입 ────────────────────────────────────────────────────────────────────
@@ -64,16 +80,9 @@ export type BasicAttackClient = typeof(setmetatable(
 		_animController: AnimationControllerClient.AnimationControllerClient,
 
 		_equippedAttackId: string?,
-		_currentAmmo: number,
-		_maxAmmo: number,
-		_reloadTime: number,
-		_postDelay: number,
-		_postDelayUntil: number,
-		_lastFireTime: number,
-
 		_joints: { [string]: Motor6D }?,
 		_attackAnimator: any?,
-		_ctx: ClientContext?,
+		_state: BasicAttackState?,
 	},
 	{} :: typeof({ __index = {} })
 ))
@@ -81,6 +90,13 @@ export type BasicAttackClient = typeof(setmetatable(
 local BasicAttackClient = {}
 BasicAttackClient.ServiceName = "BasicAttackClient"
 BasicAttackClient.__index = BasicAttackClient
+
+-- ─── 인디케이터 색상 상수 ─────────────────────────────────────────────────────
+
+local COLOR_NORMAL = Color3.fromRGB(160, 160, 160)
+local COLOR_NO_AMMO = Color3.fromRGB(220, 50, 50)
+local ALPHA_NORMAL = 0
+local ALPHA_POST_DELAY = 0.8
 
 -- ─── 초기화 ──────────────────────────────────────────────────────────────────
 
@@ -91,79 +107,60 @@ function BasicAttackClient.Init(self: BasicAttackClient, serviceBag: ServiceBag.
 	self._animController = serviceBag:GetService(AnimationControllerClient)
 
 	self._equippedAttackId = nil
-	self._currentAmmo = 0
-	self._maxAmmo = 0
-	self._reloadTime = 0
-	self._postDelay = 0
-	self._postDelayUntil = 0
-	self._lastFireTime = 0
-
 	self._joints = nil
 	self._attackAnimator = nil
-	self._ctx = nil
+	self._state = nil
 
-	-- Nevermore Remoting 클라이언트는 :Connect() 직접 사용 (OnClientEvent 없음)
 	self._maid:GiveTask(
 		BasicAttackRemoting.AmmoChanged:Connect(
 			function(current: unknown, max: unknown, reloadTime: unknown, postDelay: unknown)
+				local state = self._state
+				if not state then
+					return
+				end
 				if type(current) == "number" then
-					self._currentAmmo = current
+					state.currentAmmo = current
 				end
 				if type(max) == "number" then
-					self._maxAmmo = max
+					state.maxAmmo = max
 				end
 				if type(reloadTime) == "number" then
-					self._reloadTime = reloadTime
+					state.reloadTime = reloadTime
 				end
 				if type(postDelay) == "number" then
-					self._postDelay = postDelay
+					state.postDelay = postDelay
 				end
 			end
 		)
 	)
 
-	self._maid:GiveTask(
-		BasicAttackRemoting.HitChecked:Connect(
-			function(attackerUserId: unknown, victimUserIds: unknown, serverComboCount: unknown)
-				self:_onHitChecked(attackerUserId, victimUserIds, serverComboCount)
-			end
-		)
-	)
+	self._maid:GiveTask(BasicAttackRemoting.HitChecked:Connect(function(attackerUserId: unknown, victimUserIds: unknown)
+		self:_onHitChecked(attackerUserId, victimUserIds)
+	end))
 end
 
--- indicator 상태별 색상 상수
-local COLOR_NORMAL = Color3.fromRGB(160, 160, 160)
-local COLOR_NO_AMMO = Color3.fromRGB(220, 50, 50)
-local ALPHA_NORMAL = 0
-local ALPHA_POST_DELAY = 0.8
-
 function BasicAttackClient.Start(self: BasicAttackClient): ()
-	-- 매 프레임: ctx 상태 갱신 + indicator 기본 색상 관리
+	-- 매 프레임: indicator 기본 색상 관리
 	self._maid:GiveTask(RunService.Heartbeat:Connect(function()
-		local ctx = self._ctx
-		if not ctx then
+		local state = self._state
+		if not state then
 			return
 		end
 
-		local isPostDelay = os.clock() < self._postDelayUntil
-		local hasAmmo = self._currentAmmo > 0
-
-		ctx.isPostDelay = isPostDelay
-		ctx.hasAmmo = hasAmmo
-
-		-- 조준 중일 때만 indicator에 반영
-		-- (onAim 훅이 없거나, 커스텀하지 않을 경우의 기본 시각 상태)
 		if self._aimController:IsAiming() then
+			local hasAmmo = state.currentAmmo > 0
+			local isPostDelay = os.clock() < state.postDelayUntil
+
 			if not hasAmmo then
-				ctx.indicator:update({ color = COLOR_NO_AMMO })
+				state.indicator:update({ color = COLOR_NO_AMMO })
 			else
-				ctx.indicator:update({ color = COLOR_NORMAL })
+				state.indicator:update({ color = COLOR_NORMAL })
 			end
 
 			if isPostDelay then
-				ctx.indicator:update({ transparency = ALPHA_POST_DELAY })
+				state.indicator:update({ transparency = ALPHA_POST_DELAY })
 			else
-				ctx.indicator:update({ transparency = ALPHA_NORMAL })
+				state.indicator:update({ transparency = ALPHA_NORMAL })
 			end
 		end
 	end))
@@ -191,27 +188,31 @@ end
 
 function BasicAttackClient:SetEquippedAttack(attackId: string)
 	self._equippedAttackId = attackId
-	self._postDelayUntil = 0
-	self._lastFireTime = 0
 
-	if self._ctx then
-		self._ctx.indicator:destroy()
+	if self._state then
+		self._state.indicator:destroy()
 	end
 
 	local entry = ATTACK_REGISTRY[attackId]
 	local indicator = if entry then DynamicIndicator.new(entry.module.shapes) else DynamicIndicator.new(nil)
 
-	self._ctx = {
-		aimTime = 0,
-		idleTime = 0,
-		comboCount = 0,
-		direction = Vector3.new(0, 0, -1),
-		origin = Vector3.zero,
+	self._state = {
 		indicator = indicator,
 		animator = nil,
+		currentAmmo = 0,
+		maxAmmo = 0,
+		reloadTime = 0,
+		postDelay = 0,
+		lastFireTime = 0,
+		postDelayUntil = 0,
+		lastHitTime = 0,
+		fireComboCount = 0,
+		hitComboCount = 0,
+		origin = Vector3.zero,
+		direction = Vector3.new(0, 0, -1),
+		aimTime = 0,
+		idleTime = 0,
 		victims = nil,
-		isPostDelay = false, -- ← 추가
-		hasAmmo = true, -- ← 추가
 	}
 
 	self:_rebuildAnimator()
@@ -224,8 +225,8 @@ function BasicAttackClient:_rebuildAnimator()
 		self._attackAnimator:Destroy()
 		self._attackAnimator = nil
 	end
-	if self._ctx then
-		self._ctx.animator = nil
+	if self._state then
+		self._state.animator = nil
 	end
 
 	local attackId = self._equippedAttackId
@@ -248,13 +249,12 @@ function BasicAttackClient:_rebuildAnimator()
 	)
 	self._attackAnimator = animator
 
-	if self._ctx then
-		self._ctx.animator = animator
+	if self._state then
+		self._state.animator = animator
 	end
 end
 
 function BasicAttackClient:_tryStartAim()
-	-- ammo/postDelay 조건 제거 → 조준은 항상 가능
 	local attackId = self._equippedAttackId
 	if not attackId then
 		return
@@ -265,38 +265,41 @@ function BasicAttackClient:_tryStartAim()
 		return
 	end
 
-	local ctx = self._ctx
-	if not ctx then
+	local state = self._state
+	if not state then
 		return
 	end
 
-	ctx.idleTime = if self._lastFireTime > 0 then os.clock() - self._lastFireTime else 0
+	state.idleTime = if state.lastFireTime > 0 then os.clock() - state.lastFireTime else 0
 
-	self._aimController:StartAim(AimController.AbilityType.BasicAttack, entry.module, ctx, function(direction: Vector3)
-		-- 실제 발사 시점에만 조건 검증
-		if self._currentAmmo <= 0 then
-			return
-		end
-		if os.clock() < self._postDelayUntil then
-			return
-		end
+	self._aimController:StartAim(
+		AimController.AbilityType.BasicAttack,
+		entry.module,
+		state,
+		function(direction: Vector3)
+			if state.currentAmmo <= 0 then
+				return
+			end
+			if os.clock() < state.postDelayUntil then
+				return
+			end
 
-		self._postDelayUntil = os.clock() + entry.def.postDelay
-		self._lastFireTime = os.clock()
-		BasicAttackRemoting.Fire:FireServer(direction)
-		AbilityExecutor.OnFire(entry.module, ctx)
-	end, entry.def.postDelay)
+			state.postDelayUntil = os.clock() + entry.def.postDelay
+			state.lastFireTime = os.clock()
+			BasicAttackRemoting.Fire:FireServer(direction)
+			AbilityExecutor.OnFire(entry.module, state)
+		end,
+		entry.def.postDelay
+	)
 
 	BasicAttackRemoting.AimStarted:FireServer()
 end
 
-function BasicAttackClient:_onHitChecked(_attackerUserId: unknown, victimUserIds: unknown, serverComboCount: unknown)
-	local ctx = self._ctx
-	if not ctx then
+function BasicAttackClient:_onHitChecked(_attackerUserId: unknown, victimUserIds: unknown)
+	local state = self._state
+	if not state then
 		return
 	end
-
-	ctx.comboCount = serverComboCount :: number
 
 	local victims: { Player } = {}
 	for _, userId in ipairs(victimUserIds :: { number }) do
@@ -305,7 +308,11 @@ function BasicAttackClient:_onHitChecked(_attackerUserId: unknown, victimUserIds
 			table.insert(victims, player)
 		end
 	end
-	ctx.victims = victims
+	state.victims = victims
+
+	if #victims > 0 then
+		state.lastHitTime = os.clock()
+	end
 
 	local attackId = self._equippedAttackId
 	if not attackId then
@@ -317,7 +324,7 @@ function BasicAttackClient:_onHitChecked(_attackerUserId: unknown, victimUserIds
 		return
 	end
 
-	AbilityExecutor.OnHitChecked(entry.module, ctx)
+	AbilityExecutor.OnHitChecked(entry.module, state)
 end
 
 function BasicAttackClient.Destroy(self: BasicAttackClient)
