@@ -82,6 +82,19 @@ AimControllerClient.AbilityType = {
 	Ultimate = "Ultimate",
 }
 
+-- ─── 유틸 ────────────────────────────────────────────────────────────────────
+
+-- 두 각도 사이의 최단 delta를 [-π, π] 범위로 정규화
+local function normalizeAngleDelta(from: number, to: number): number
+	local delta = to - from
+	if delta > math.pi then
+		delta -= math.pi * 2
+	elseif delta < -math.pi then
+		delta += math.pi * 2
+	end
+	return delta
+end
+
 -- ─── 초기화 ──────────────────────────────────────────────────────────────────
 
 function AimControllerClient.Init(self: AimControllerClient, serviceBag: ServiceBag.ServiceBag): ()
@@ -128,6 +141,7 @@ end
 
 --[=[
 	새 조준을 시작합니다.
+
 	@param abilityType      string                       AimControllerClient.AbilityType 중 하나
 	@param clientModule     table                        공격 클라이언트 모듈
 	@param ctx              table                        BasicAttackClient가 소유하는 ClientContext
@@ -243,13 +257,7 @@ function AimControllerClient:_updateCharacterRotation()
 	local targetYaw = math.atan2(-lookVector.X, -lookVector.Z)
 
 	local current = self._yawSpring.Target
-	local delta = targetYaw - current
-	if delta > math.pi then
-		delta -= math.pi * 2
-	end
-	if delta < -math.pi then
-		delta += math.pi * 2
-	end
+	local delta = normalizeAngleDelta(current, targetYaw)
 	self._yawSpring.Target = current + delta
 
 	hrp.CFrame = CFrame.new(hrp.Position) * CFrame.Angles(0, self._yawSpring.Position, 0)
@@ -292,12 +300,16 @@ function AimControllerClient:_confirm()
 	if isFired and humanoid and hrp then
 		humanoid.AutoRotate = false
 
-		local yaw = math.atan2(-direction.X, -direction.Z)
+		local rawYaw = math.atan2(-direction.X, -direction.Z)
 		local currentLook = hrp.CFrame.LookVector
 		local currentYaw = math.atan2(-currentLook.X, -currentLook.Z)
+
+		-- ±π 경계를 넘을 때 긴 방향으로 돌지 않도록 최단 경로로 정규화
+		local targetYaw = currentYaw + normalizeAngleDelta(currentYaw, rawYaw)
+
 		self._yawSpring.Position = currentYaw
-		self._yawSpring.Target = yaw
-		self._postFireYaw = yaw
+		self._yawSpring.Target = targetYaw
+		self._postFireYaw = targetYaw
 
 		if postFireDuration > 0 then
 			self._postFireCancel = cancellableDelay(postFireDuration, function()
