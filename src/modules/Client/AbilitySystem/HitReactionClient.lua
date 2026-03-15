@@ -106,6 +106,7 @@ function HitReactionClient:_onHitReaction(data: unknown)
 	if cameraAnimName and type(cameraAnimName) == "string" then
 		local def = (HitReactionCameraAnimDef :: any)[cameraAnimName]
 		if def then
+			print(cameraAnimName)
 			self._cameraAnimator:PlayAnimation(cameraAnimName, def.duration, nil, def.force)
 		end
 	end
@@ -115,6 +116,7 @@ function HitReactionClient:_onHitReaction(data: unknown)
 	if animName and type(animName) == "string" and self._animator then
 		local def = (HitReactionAnimDef :: any)[animName]
 		if def then
+			print(animName)
 			self._animator:PlayAnimation(animName, def.duration, nil, def.force)
 		end
 	end

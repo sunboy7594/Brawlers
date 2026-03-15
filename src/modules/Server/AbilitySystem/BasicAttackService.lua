@@ -328,6 +328,9 @@ function BasicAttackService:_onFire(player: Player, direction: unknown)
 		end
 		state.victims = victims
 
+		-- snapshot에도 victims 반영 (onHitChecked에서 참조)
+		snapshot.victims = victims
+
 		-- 서버 onHitChecked 훅 실행 (snapshot 기준 컨텍스트)
 		if entry.module.onHitChecked then
 			for _, fn in entry.module.onHitChecked do
@@ -353,6 +356,12 @@ function BasicAttackService:_onFire(player: Player, direction: unknown)
 			fn(state)
 		end
 	end
+
+	-- [11] snapshot에 onFire가 변경한 콤보 카운트 반영
+	--      snapshot은 [8]에서 생성되므로 onFire 이전 값이 들어있음
+	--      onHitChecked에서 올바른 콤보 번호를 참조하려면 여기서 동기화 필요
+	snapshot.fireComboCount = state.fireComboCount
+	snapshot.hitComboCount = state.hitComboCount
 end
 
 -- ─── 탄약 재생 ───────────────────────────────────────────────────────────────

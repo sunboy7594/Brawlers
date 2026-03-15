@@ -219,7 +219,7 @@ function CameraAnimator:_stopByName(name: string)
 	end
 
 	if active.durationThread then
-		task.cancel(active.durationThread)
+		pcall(task.cancel, active.durationThread)
 	end
 
 	local modKey = self._owner .. "_" .. name
