@@ -308,12 +308,14 @@ function BasicAttackService:_onFire(player: Player, direction: unknown)
 
 	-- [7] sctx 업데이트 (lastFireTime 갱신 전에 aimTime 계산)
 	local sctx = state.sctx
+
+	state.comboCount = sctx.comboCount -- sctx를 통해 콤보를 바꿨을 수도.
+
 	sctx.attacker = state.humanoid and state.humanoid.Parent :: Model? or nil
 	sctx.origin = state.rootPart.Position
 	sctx.direction = dir
 	sctx.aimTime = if state.aimStartTime > 0 then now - state.aimStartTime else 0
 	sctx.idleTime = if state.lastFireTime > 0 then now - state.lastFireTime else 0
-	sctx.comboCount = if sctx.idleTime >= COMBO_RESET_TIME then 0 else state.comboCount -- 초기화or초기화X
 	sctx.victims = nil
 
 	-- [8] 발사 처리 (sctx 계산 후 갱신)
@@ -337,9 +339,7 @@ function BasicAttackService:_onFire(player: Player, direction: unknown)
 		end
 	end
 
-	-- [10] 히트 확정
-	sctx.victims = allVictims
-
+	-- [10] 히트 체크 이후
 	if #allVictims > 0 then
 		state.lastHitTime = now -- 실제 히트했을 때만 갱신
 		state.comboCount += 1
@@ -353,7 +353,11 @@ function BasicAttackService:_onFire(player: Player, direction: unknown)
 		end
 	end
 
-	-- [11] 히트 체크 완료 (항상 전송)
+	-- [11] sctx 업데이트
+	sctx.victims = allVictims
+	sctx.comboCount = state.comboCount
+
+	-- [12] 히트 체크 완료 (항상 전송)
 	local victimUserIds: { number } = {}
 	for _, victimModel in allVictims do
 		local victimPlayer = Players:GetPlayerFromCharacter(victimModel)

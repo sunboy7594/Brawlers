@@ -19,6 +19,10 @@ return {
 
 	onFire = {
 		function(ctx: ClientContext)
+			if ctx.idleTime >= 3.0 then
+				ctx.comboCount = 0
+			end
+
 			if ctx.animator then
 				local animName = COMBO_ANIMS[(ctx.comboCount % #COMBO_ANIMS) + 1]
 				ctx.animator:PlayAnimation(animName, 0.4, nil, true)

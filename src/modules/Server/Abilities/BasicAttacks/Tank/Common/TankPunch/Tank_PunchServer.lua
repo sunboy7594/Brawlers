@@ -30,6 +30,11 @@ return {
 				return {}
 			end
 
+			-- 콤보 리셋: sctx와 state 모두 초기화해야 함
+			if sctx.idleTime >= 3.0 then
+				sctx.comboCount = 0
+			end
+
 			-- 콤보에 따른 판정 분기
 			if sctx.comboCount == 3 then
 				-- 3콤보: 더 넓은 범위
