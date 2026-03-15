@@ -137,6 +137,14 @@ function CameraAnimator:PlayAnimation(name: string, duration: number?, onFinish:
 	local durationThread: thread? = nil
 	if duration then
 		durationThread = task.delay(duration, function()
+			-- 이 타이머가 현재 activeAnims에 등록된 것과 동일한지 확인
+			-- force=true로 재시작됐거나 이미 Stop()됐으면 stale 타이머이므로 무시
+			local active = self._activeAnims[name]
+			if not active or active.durationThread ~= durationThread then
+				return
+			end
+			-- durationThread를 nil로 먼저 제거 → _stopByName이 자기 자신을 cancel 시도하지 않도록
+			active.durationThread = nil
 			self:_stopByName(name)
 			if onFinish then
 				onFinish()
@@ -219,7 +227,7 @@ function CameraAnimator:_stopByName(name: string)
 	end
 
 	if active.durationThread then
-		pcall(task.cancel, active.durationThread)
+		task.cancel(active.durationThread)
 	end
 
 	local modKey = self._owner .. "_" .. name
