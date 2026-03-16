@@ -37,25 +37,25 @@ local CC_TYPES = PlayerStateDefs.CC_TYPES
 local ComponentType = PlayerStateDefs.ComponentType
 
 type EffectInstance = {
-	instanceId:  string,
+	instanceId: string,
 	componentId: string?,
-	effectDef:   PlayerStateDefs.EffectDef,
-	component:   PlayerStateDefs.Component,
-	payloadId:   string,
-	expiresAt:   number?,
+	effectDef: PlayerStateDefs.EffectDef,
+	component: PlayerStateDefs.Component,
+	payloadId: string,
+	expiresAt: number?,
 }
 
 type PlayerRuntime = {
-	effects:           { EffectInstance },
-	isMoveLocked:      boolean,
-	isAttackLocked:    boolean,
-	isIgnoreCC:        boolean,
-	isIgnoreDamage:    boolean,
-	slowMultiplier:    number,
+	effects: { EffectInstance },
+	isMoveLocked: boolean,
+	isAttackLocked: boolean,
+	isIgnoreCC: boolean,
+	isIgnoreDamage: boolean,
+	slowMultiplier: number,
 	receiveDamageMult: number,
-	dealDamageMult:    number,
-	humanoid:          Humanoid?,
-	rootPart:          BasePart?,
+	dealDamageMult: number,
+	humanoid: Humanoid?,
+	rootPart: BasePart?,
 }
 
 export type PlayerStateService = typeof(setmetatable(
@@ -104,16 +104,16 @@ function PlayerStateService:_onPlayerAdded(player: Player)
 	self._playerMaids[player.UserId] = pMaid
 
 	local runtime: PlayerRuntime = {
-		effects           = {},
-		isMoveLocked      = false,
-		isAttackLocked    = false,
-		isIgnoreCC        = false,
-		isIgnoreDamage    = false,
-		slowMultiplier    = 1.0,
+		effects = {},
+		isMoveLocked = false,
+		isAttackLocked = false,
+		isIgnoreCC = false,
+		isIgnoreDamage = false,
+		slowMultiplier = 1.0,
 		receiveDamageMult = 1.0,
-		dealDamageMult    = 1.0,
-		humanoid          = nil,
-		rootPart          = nil,
+		dealDamageMult = 1.0,
+		humanoid = nil,
+		rootPart = nil,
 	}
 	self._runtimes[player.UserId] = runtime
 
@@ -151,20 +151,31 @@ end
 
 function PlayerStateService:ChangePlayerState(target: Player, effectDef: PlayerStateDefs.EffectDef): string
 	local runtime = self._runtimes[target.UserId]
-	if not runtime then return "" end
+	if not runtime then
+		return ""
+	end
 	local payloadId = self:_generateId()
 	self:_applyEffectDef(target, runtime, effectDef, payloadId)
 	return payloadId
 end
 
-function PlayerStateService:RepeatChangePlayerState(target: Player, effectDef: PlayerStateDefs.EffectDef, totalDuration: number, count: number): () -> ()
+function PlayerStateService:RepeatChangePlayerState(
+	target: Player,
+	effectDef: PlayerStateDefs.EffectDef,
+	totalDuration: number,
+	count: number
+): () -> ()
 	local interval = totalDuration / count
 	local fired = 0
 	local cancelled = false
 	local function tick()
-		if cancelled then return end
+		if cancelled then
+			return
+		end
 		local runtime = self._runtimes[target.UserId]
-		if not runtime then return end
+		if not runtime then
+			return
+		end
 		local payloadId = self:_generateId()
 		self:_applyEffectDef(target, runtime, effectDef, payloadId)
 		fired += 1
@@ -173,12 +184,16 @@ function PlayerStateService:RepeatChangePlayerState(target: Player, effectDef: P
 		end
 	end
 	task.delay(0, tick)
-	return function() cancelled = true end
+	return function()
+		cancelled = true
+	end
 end
 
 function PlayerStateService:Cleanse(target: Player)
 	local runtime = self._runtimes[target.UserId]
-	if not runtime then return end
+	if not runtime then
+		return
+	end
 	local removedPayloads: { [string]: boolean } = {}
 	local toRemove: { EffectInstance } = {}
 	for _, inst in runtime.effects do
@@ -199,7 +214,9 @@ end
 
 function PlayerStateService:RemoveEffect(target: Player, instanceId: string)
 	local runtime = self._runtimes[target.UserId]
-	if not runtime then return end
+	if not runtime then
+		return
+	end
 	local payloadId: string? = nil
 	for _, inst in runtime.effects do
 		if inst.instanceId == instanceId then
@@ -211,7 +228,10 @@ function PlayerStateService:RemoveEffect(target: Player, instanceId: string)
 	if payloadId then
 		local hasMore = false
 		for _, inst in runtime.effects do
-			if inst.payloadId == payloadId then hasMore = true break end
+			if inst.payloadId == payloadId then
+				hasMore = true
+				break
+			end
 		end
 		if not hasMore then
 			PlayerStateRemoting.EffectRemoved:FireClient(target, payloadId)
@@ -236,15 +256,24 @@ function PlayerStateService:IsAttackLocked(player: Player): boolean
 	return if runtime then runtime.isAttackLocked else false
 end
 
-function PlayerStateService:_applyEffectDef(target: Player, runtime: PlayerRuntime, effectDef: PlayerStateDefs.EffectDef, payloadId: string)
+function PlayerStateService:_applyEffectDef(
+	target: Player,
+	runtime: PlayerRuntime,
+	effectDef: PlayerStateDefs.EffectDef,
+	payloadId: string
+)
 	local components = effectDef.components
 	local force = effectDef.force == true
 	if components then
 		for _, comp in components do
 			local c = comp :: any
 			if not force then
-				if runtime.isIgnoreDamage and c.type == ComponentType.Damage then continue end
-				if runtime.isIgnoreCC and CC_TYPES[c.type] then continue end
+				if runtime.isIgnoreDamage and c.type == ComponentType.Damage then
+					continue
+				end
+				if runtime.isIgnoreCC and CC_TYPES[c.type] then
+					continue
+				end
 			end
 			if c.type == ComponentType.Cleanse then
 				self:Cleanse(target)
@@ -267,7 +296,12 @@ function PlayerStateService:_generateId(): string
 	return "ps_" .. tostring(self._idCounter)
 end
 
-function PlayerStateService:_registerInstance(runtime: PlayerRuntime, effectDef: PlayerStateDefs.EffectDef, comp: PlayerStateDefs.Component, payloadId: string): string
+function PlayerStateService:_registerInstance(
+	runtime: PlayerRuntime,
+	effectDef: PlayerStateDefs.EffectDef,
+	comp: PlayerStateDefs.Component,
+	payloadId: string
+): string
 	local c = comp :: any
 	local instanceId = self:_generateId()
 	if c.id then
@@ -279,32 +313,45 @@ function PlayerStateService:_registerInstance(runtime: PlayerRuntime, effectDef:
 		end
 	end
 	local inst: EffectInstance = {
-		instanceId  = instanceId,
+		instanceId = instanceId,
 		componentId = c.id,
-		effectDef   = effectDef,
-		component   = comp,
-		payloadId   = payloadId,
-		expiresAt   = if c.duration then os.clock() + c.duration else nil,
+		effectDef = effectDef,
+		component = comp,
+		payloadId = payloadId,
+		expiresAt = if c.duration then os.clock() + c.duration else nil,
 	}
 	table.insert(runtime.effects, inst)
 	return instanceId
 end
 
-function PlayerStateService:_applyDamage(target: Player, runtime: PlayerRuntime, effectDef: PlayerStateDefs.EffectDef, comp: any)
+function PlayerStateService:_applyDamage(
+	target: Player,
+	runtime: PlayerRuntime,
+	effectDef: PlayerStateDefs.EffectDef,
+	comp: any
+)
 	local humanoid = runtime.humanoid
-	if not humanoid then return end
+	if not humanoid then
+		return
+	end
 	local amount = comp.amount * runtime.receiveDamageMult
 	if effectDef.source then
 		local sourceRuntime = self._runtimes[effectDef.source.UserId]
-		if sourceRuntime then amount *= sourceRuntime.dealDamageMult end
+		if sourceRuntime then
+			amount *= sourceRuntime.dealDamageMult
+		end
 	end
 	humanoid:TakeDamage(amount)
-	if amount > 0 then self:_checkVulnerable(target, runtime, effectDef) end
+	if amount > 0 then
+		self:_checkVulnerable(target, runtime, effectDef)
+	end
 end
 
 function PlayerStateService:_applyKnockback(runtime: PlayerRuntime, comp: any)
 	local rootPart = runtime.rootPart
-	if not rootPart then return end
+	if not rootPart then
+		return
+	end
 	local attachment = Instance.new("Attachment")
 	attachment.Parent = rootPart
 	local lv = Instance.new("LinearVelocity")
@@ -313,13 +360,22 @@ function PlayerStateService:_applyKnockback(runtime: PlayerRuntime, comp: any)
 	lv.VectorVelocity = (comp.direction :: Vector3).Unit * (comp.force :: number)
 	lv.MaxForce = math.huge
 	lv.Parent = rootPart
-	task.delay(0.08, function() lv:Destroy() attachment:Destroy() end)
+	task.delay(0.08, function()
+		lv:Destroy()
+		attachment:Destroy()
+	end)
 end
 
-function PlayerStateService:_checkVulnerable(target: Player, runtime: PlayerRuntime, incomingDef: PlayerStateDefs.EffectDef)
+function PlayerStateService:_checkVulnerable(
+	target: Player,
+	runtime: PlayerRuntime,
+	incomingDef: PlayerStateDefs.EffectDef
+)
 	for _, inst in runtime.effects do
 		local c = inst.component :: any
-		if c.type ~= ComponentType.Vulnerable or not c.onHit then continue end
+		if c.type ~= ComponentType.Vulnerable or not c.onHit then
+			continue
+		end
 		local onHitDef = c.onHit :: PlayerStateDefs.EffectDef
 		if incomingDef.source and not onHitDef.source then
 			(onHitDef :: any).source = incomingDef.source
@@ -333,32 +389,43 @@ function PlayerStateService:_rebuildCache(runtime: PlayerRuntime)
 	local slowMult, receiveMult, dealMult = 1.0, 1.0, 1.0
 	for _, inst in runtime.effects do
 		local c = inst.component :: any
-		if     c.type == ComponentType.MoveLock          then isMoveLocked   = true
-		elseif c.type == ComponentType.AttackLock        then isAttackLocked = true
-		elseif c.type == ComponentType.IgnoreCC          then isIgnoreCC     = true
-		elseif c.type == ComponentType.IgnoreDamage      then isIgnoreDamage = true
-		elseif c.type == ComponentType.Slow              then slowMult    *= c.multiplier
-		elseif c.type == ComponentType.ReceiveDamageMult then receiveMult *= c.multiplier
-		elseif c.type == ComponentType.DealDamageMult    then dealMult    *= c.multiplier
+		if c.type == ComponentType.MoveLock then
+			isMoveLocked = true
+		elseif c.type == ComponentType.AttackLock then
+			isAttackLocked = true
+		elseif c.type == ComponentType.IgnoreCC then
+			isIgnoreCC = true
+		elseif c.type == ComponentType.IgnoreDamage then
+			isIgnoreDamage = true
+		elseif c.type == ComponentType.Slow then
+			slowMult *= c.multiplier
+		elseif c.type == ComponentType.ReceiveDamageMult then
+			receiveMult *= c.multiplier
+		elseif c.type == ComponentType.DealDamageMult then
+			dealMult *= c.multiplier
 		end
 	end
-	runtime.isMoveLocked      = isMoveLocked
-	runtime.isAttackLocked    = isAttackLocked
-	runtime.isIgnoreCC        = isIgnoreCC
-	runtime.isIgnoreDamage    = isIgnoreDamage
-	runtime.slowMultiplier    = slowMult
+	runtime.isMoveLocked = isMoveLocked
+	runtime.isAttackLocked = isAttackLocked
+	runtime.isIgnoreCC = isIgnoreCC
+	runtime.isIgnoreDamage = isIgnoreDamage
+	runtime.slowMultiplier = slowMult
 	runtime.receiveDamageMult = receiveMult
-	runtime.dealDamageMult    = dealMult
+	runtime.dealDamageMult = dealMult
 end
 
 function PlayerStateService:_syncMovement(target: Player, runtime: PlayerRuntime)
 	local ms = self._movementService
-	if not ms then return end
+	if not ms then
+		return
+	end
 	if runtime.isMoveLocked then
 		ms:SetMovementLocked(target, true)
 	else
 		ms:SetMovementLocked(target, false)
-		if ms.SetSpeedMultiplier then ms:SetSpeedMultiplier(target, runtime.slowMultiplier) end
+		if ms.SetSpeedMultiplier then
+			ms:SetSpeedMultiplier(target, runtime.slowMultiplier)
+		end
 	end
 end
 
@@ -388,7 +455,9 @@ function PlayerStateService:_onHeartbeat(_dt: number)
 	local now = os.clock()
 	for userId, runtime in self._runtimes do
 		local player = Players:GetPlayerByUserId(userId)
-		if not player then continue end
+		if not player then
+			continue
+		end
 		local dirty = false
 		local expiredPayloads: { [string]: boolean } = {}
 		local i = 1
@@ -405,7 +474,10 @@ function PlayerStateService:_onHeartbeat(_dt: number)
 		for pid in expiredPayloads do
 			local hasMore = false
 			for _, inst in runtime.effects do
-				if inst.payloadId == pid then hasMore = true break end
+				if inst.payloadId == pid then
+					hasMore = true
+					break
+				end
 			end
 			if not hasMore then
 				PlayerStateRemoting.EffectRemoved:FireClient(player, pid)

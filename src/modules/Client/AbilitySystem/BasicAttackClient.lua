@@ -44,13 +44,9 @@ local cancellableDelay = require("cancellableDelay")
 -- ─── 상수 ────────────────────────────────────────────────────────────────────
 -- ⚠️ 주의: BasicAttackService.lua의 POST_DELAY_QUEUE_THRESHOLD와
 --          반드시 동일한 값을 유지해야 합니다.
---          한쪽만 바꾸면 예약 발사 타이밍이 서버-클라이언트 간 어긋납니다.
-local POST_DELAY_QUEUE_THRESHOLD = 0.30 -- 잔여 비율 30% 이하일 때 서버 전송 허용
+local POST_DELAY_QUEUE_THRESHOLD = 0.30
 
 -- ─── 레지스트리 ──────────────────────────────────────────────────────────────
--- 주의: 클라이언트에서는 절대로 id .. "Server" 를 require 하지 않습니다.
---       서버 모듈은 ServerScriptService에만 존재하므로 클라이언트에서 require 시 에러.
-
 local ATTACK_REGISTRY: { [string]: { def: any, module: any, animDef: any } } = {}
 for id, def in BasicAttackDefs do
 	ATTACK_REGISTRY[id] = {
@@ -132,7 +128,6 @@ function BasicAttackClient.Init(self: BasicAttackClient, serviceBag: ServiceBag.
 		end
 	end))
 
-	-- Init 내부, 기존 remoting 구독들 옆에 추가
 	self._maid:GiveTask(ClassRemoting.ClassChanged:Connect(function(_className: unknown)
 		self:_cancelClientCombatState()
 	end))
@@ -175,7 +170,6 @@ function BasicAttackClient.Start(self: BasicAttackClient): ()
 		if self._aimController:IsAiming() then
 			local hasAmmo = state.currentAmmo > 0
 			local isPostDelay = os.clock() < state.postDelayUntil
-
 			local canFire = state.currentAmmo > 0 and os.clock() >= state.postDelayUntil
 
 			if canFire then
@@ -212,12 +206,9 @@ end
 -- ─── 공개 API ────────────────────────────────────────────────────────────────
 
 function BasicAttackClient:SetEquippedAttack(attackId: string)
-	-- 조준 중이면 즉시 취소 (버그 1: 구 ctx dangling 방지)
 	self._aimController:Cancel()
-	-- postFire 회전 잠금 해제 (버그 2: AutoRotate 미복원 방지)
 	self._aimController:CancelPostFire()
 
-	-- 예약 클라이언트 OnFire 취소
 	if self._pendingOnFireCancel then
 		self._pendingOnFireCancel()
 		self._pendingOnFireCancel = nil
@@ -258,8 +249,8 @@ end
 -- ─── 내부 ────────────────────────────────────────────────────────────────────
 
 function BasicAttackClient:_cancelClientCombatState()
-	self._aimController:Cancel() -- 버그 A: 조준 상태 즉시 종료
-	self._aimController:CancelPostFire() -- 버그 B: AutoRotate 잠금 해제
+	self._aimController:Cancel()
+	self._aimController:CancelPostFire()
 	if self._pendingOnFireCancel then
 		self._pendingOnFireCancel()
 		self._pendingOnFireCancel = nil
@@ -348,6 +339,7 @@ function BasicAttackClient:_tryStartAim()
 					self._pendingOnFireCancel = nil
 					state.direction = capturedDirection
 					state.lastFireTime = scheduledAt
+					state.effectiveAimTime = 0 -- 예약 발사 시 리셋
 					AbilityExecutor.OnFire(entry.module, state)
 				end)
 
@@ -362,6 +354,7 @@ function BasicAttackClient:_tryStartAim()
 			state.direction = direction
 			state.postDelayUntil = now + entry.def.postDelay
 			state.lastFireTime = now
+			state.effectiveAimTime = 0 -- 즉시 발사 시 리셋
 			BasicAttackRemoting.Fire:FireServer(direction)
 			AbilityExecutor.OnFire(entry.module, state)
 			return true

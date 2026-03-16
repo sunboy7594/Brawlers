@@ -16,40 +16,40 @@ local PlayerStateDefs = require("PlayerStateDefs")
 local Tag = PlayerStateDefs.Tag
 
 type ScreenEffectMapping = {
-	vfx:   string,
+	vfx: string,
 	flash: boolean?,
-	loop:  boolean?,
+	loop: boolean?,
 }
 
 local PlayerStateScreenEffectDef: { [string]: ScreenEffectMapping } = {
 
 	[Tag.ScreenHitRed] = {
-		vfx   = "hit_red",
+		vfx = "hit_red",
 		flash = true,
 	},
 
 	[Tag.ScreenBlind] = {
-		vfx  = "blind",
+		vfx = "blind",
 		loop = true,
 	},
 
 	[Tag.ScreenStun] = {
-		vfx  = "stun_distort",
+		vfx = "stun_distort",
 		loop = true,
 	},
 
 	[Tag.ScreenFreeze] = {
-		vfx  = "freeze_blue",
+		vfx = "freeze_blue",
 		loop = true,
 	},
 
 	[Tag.ScreenBurn] = {
-		vfx  = "burn_red",
+		vfx = "burn_red",
 		loop = true,
 	},
 
 	[Tag.ScreenPoison] = {
-		vfx  = "poison_green",
+		vfx = "poison_green",
 		loop = true,
 	},
 }

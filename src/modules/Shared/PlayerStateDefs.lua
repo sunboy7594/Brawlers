@@ -66,61 +66,61 @@
 local PlayerStateDefs = {}
 
 PlayerStateDefs.ComponentType = {
-	Damage            = "damage",
-	Slow              = "slow",
-	MoveLock          = "moveLock",
-	AttackLock        = "attackLock",
-	Knockback         = "knockback",
+	Damage = "damage",
+	Slow = "slow",
+	MoveLock = "moveLock",
+	AttackLock = "attackLock",
+	Knockback = "knockback",
 	ReceiveDamageMult = "receiveDamageMult",
-	DealDamageMult    = "dealDamageMult",
-	IgnoreCC          = "ignoreCC",
-	IgnoreDamage      = "ignoreDamage",
-	Cleanse           = "cleanse",
-	CameraLock        = "cameraLock",
-	Vulnerable        = "vulnerable",
+	DealDamageMult = "dealDamageMult",
+	IgnoreCC = "ignoreCC",
+	IgnoreDamage = "ignoreDamage",
+	Cleanse = "cleanse",
+	CameraLock = "cameraLock",
+	Vulnerable = "vulnerable",
 }
 
 PlayerStateDefs.CC_TYPES = {
-	[PlayerStateDefs.ComponentType.Slow]       = true,
-	[PlayerStateDefs.ComponentType.MoveLock]   = true,
+	[PlayerStateDefs.ComponentType.Slow] = true,
+	[PlayerStateDefs.ComponentType.MoveLock] = true,
 	[PlayerStateDefs.ComponentType.AttackLock] = true,
-	[PlayerStateDefs.ComponentType.Knockback]  = true,
+	[PlayerStateDefs.ComponentType.Knockback] = true,
 	[PlayerStateDefs.ComponentType.CameraLock] = true,
 }
 
 PlayerStateDefs.Tag = {
-	AnimHit        = "anim_hit",
-	AnimStun       = "anim_stun",
-	AnimAirborne   = "anim_airborne",
-	AnimRagdoll    = "anim_ragdoll",
-	AnimFreeze     = "anim_freeze",
-	AnimKnockback  = "anim_knockback",
-	AnimExhausted  = "anim_exhausted",
-	CamShake          = "cam_shake",
-	CamRecoil         = "cam_recoil",
-	CamKnockback      = "cam_knockback",
+	AnimHit = "anim_hit",
+	AnimStun = "anim_stun",
+	AnimAirborne = "anim_airborne",
+	AnimRagdoll = "anim_ragdoll",
+	AnimFreeze = "anim_freeze",
+	AnimKnockback = "anim_knockback",
+	AnimExhausted = "anim_exhausted",
+	CamShake = "cam_shake",
+	CamRecoil = "cam_recoil",
+	CamKnockback = "cam_knockback",
 	CamMotionSickness = "cam_motion_sickness",
-	ScreenHitRed  = "screen_hit_red",
-	ScreenBlind   = "screen_blind",
-	ScreenStun    = "screen_stun",
-	ScreenFreeze  = "screen_freeze",
-	ScreenBurn    = "screen_burn",
-	ScreenPoison  = "screen_poison",
-	VfxBurn       = "vfx_burn",
-	VfxPoison     = "vfx_poison",
-	VfxBleed      = "vfx_bleed",
-	VfxShock      = "vfx_shock",
-	VfxFreeze     = "vfx_freeze",
-	VfxSlow       = "vfx_slow",
-	VfxStunStars  = "vfx_stun_stars",
-	VfxShield     = "vfx_shield",
+	ScreenHitRed = "screen_hit_red",
+	ScreenBlind = "screen_blind",
+	ScreenStun = "screen_stun",
+	ScreenFreeze = "screen_freeze",
+	ScreenBurn = "screen_burn",
+	ScreenPoison = "screen_poison",
+	VfxBurn = "vfx_burn",
+	VfxPoison = "vfx_poison",
+	VfxBleed = "vfx_bleed",
+	VfxShock = "vfx_shock",
+	VfxFreeze = "vfx_freeze",
+	VfxSlow = "vfx_slow",
+	VfxStunStars = "vfx_stun_stars",
+	VfxShield = "vfx_shield",
 	VfxHyperArmor = "vfx_hyperarmor",
 	VfxVulnerable = "vfx_vulnerable",
 }
 
 export type TagEntry = {
-	name:      string,
-	duration:  number,
+	name: string,
+	duration: number,
 	intensity: number,
 }
 
@@ -139,15 +139,15 @@ export type Component =
 	| { type: "vulnerable", id: string?, onHit: EffectDef, duration: number? }
 
 export type EffectDef = {
-	force:      boolean?,
-	source:     Player?,
-	tags:       { TagEntry }?,
+	force: boolean?,
+	source: Player?,
+	tags: { TagEntry }?,
 	components: { Component }?,
 }
 
 export type RepeatParams = {
 	totalDuration: number,
-	count:         number,
+	count: number,
 }
 
 return PlayerStateDefs

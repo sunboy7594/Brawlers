@@ -20,65 +20,65 @@ local Tag = PlayerStateDefs.Tag
 
 type VfxMapping = {
 	particleId: string?,
-	attachTo:   string?,
-	loop:       boolean?,
-	emitCount:  number?,
-	billboard:  boolean?,
+	attachTo: string?,
+	loop: boolean?,
+	emitCount: number?,
+	billboard: boolean?,
 }
 
 local PlayerStateVfxDef: { [string]: VfxMapping } = {
 
 	[Tag.VfxBurn] = {
 		particleId = "rbxassetid://BURN_PARTICLE",
-		loop       = true,
+		loop = true,
 	},
 
 	[Tag.VfxPoison] = {
 		particleId = "rbxassetid://POISON_PARTICLE",
-		loop       = true,
+		loop = true,
 	},
 
 	[Tag.VfxBleed] = {
 		particleId = "rbxassetid://BLEED_PARTICLE",
-		loop       = false,
-		emitCount  = 10,
+		loop = false,
+		emitCount = 10,
 	},
 
 	[Tag.VfxShock] = {
 		particleId = "rbxassetid://SHOCK_PARTICLE",
-		loop       = true,
+		loop = true,
 	},
 
 	[Tag.VfxFreeze] = {
 		particleId = "rbxassetid://FREEZE_PARTICLE",
-		loop       = true,
+		loop = true,
 	},
 
 	[Tag.VfxSlow] = {
 		particleId = "rbxassetid://SLOW_PARTICLE",
-		loop       = true,
+		loop = true,
 	},
 
 	[Tag.VfxStunStars] = {
 		billboard = true,
-		attachTo  = "Head",
-		loop      = true,
+		attachTo = "Head",
+		loop = true,
 	},
 
 	[Tag.VfxShield] = {
 		billboard = true,
-		loop      = true,
+		loop = true,
 	},
 
 	[Tag.VfxHyperArmor] = {
 		particleId = "rbxassetid://HYPERARMOR_PARTICLE",
-		loop       = true,
+		loop = true,
 	},
 
 	[Tag.VfxVulnerable] = {
 		billboard = true,
-		attachTo  = "Head",
-		loop      = true,
+		attachTo = "Head",
+		loop = true,
 	},
 }
 

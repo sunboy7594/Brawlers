@@ -86,7 +86,7 @@ local PlayerStateAnimDef: { [string]: AnimMapping } = {
 
 export type ResolvedAnim = {
 	animKey: string?,
-	loop:    boolean?,
+	loop: boolean?,
 	special: string?,
 }
 
@@ -106,7 +106,7 @@ function PlayerStateAnimDef.resolve(tagName: string, intensity: number): Resolve
 	end
 	return {
 		animKey = chosen.animKey,
-		loop    = chosen.loop,
+		loop = chosen.loop,
 		special = chosen.special,
 	}
 end
