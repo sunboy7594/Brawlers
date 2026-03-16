@@ -13,6 +13,7 @@
 	변경 이력:
 	- _applyDamage: humanoid:TakeDamage() → HpService:ApplyDamage() 위임.
 	  multiplier 계산(receiveDamageMult, dealDamageMult)은 여기서 완료 후 최종 값만 전달.
+	- ApplyDamage에 effectDef.source를 전달하여 팀 체크 가능하도록 함.
 
 	보호 처리:
 	- 대상에 ignoreCC 활성     → force=false effect의 cc계열 component 무시
@@ -412,6 +413,7 @@ end
 --[=[
 	대미지 component 처리.
 	multiplier 계산을 여기서 완료한 뒤 최종 값을 HpService에 위임.
+	effectDef.source를 함께 전달하여 HpService에서 팀 체크 수행.
 ]=]
 function PlayerStateService:_applyDamage(
 	target: Player,
@@ -432,8 +434,8 @@ function PlayerStateService:_applyDamage(
 		return
 	end
 
-	-- HpService에 위임 (humanoid:TakeDamage 직접 호출 금지)
-	self._hpService:ApplyDamage(target, amount)
+	-- HpService에 위임. source를 전달하여 팀 체크 포함.
+	self._hpService:ApplyDamage(target, amount, effectDef.source)
 	self:_checkVulnerable(target, runtime, effectDef)
 end
 

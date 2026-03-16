@@ -28,8 +28,9 @@ serviceBag:GetService(require("PassiveClient"))
 serviceBag:GetService(require("SkillClient"))
 serviceBag:GetService(require("UltimateClient"))
 
--- ─── HP System ───────────────────────────────────
+-- ─── PlayerState ─────────────────────────────────
 serviceBag:GetService(require("HpClient"))
+serviceBag:GetService(require("TeamClient"))
 
 -- ─── 테스트용 (슬롯 시스템 완성 시 제거) ─────────
 serviceBag:GetService(require("TestLoadoutClient"))

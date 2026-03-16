@@ -7,6 +7,7 @@
 	변경 이력:
 	- applyEffects: humanoid:TakeDamage() → HpService:ApplyDamage() 위임.
 	  Player 캐릭터면 HpService, NPC면 기존 TakeDamage 유지.
+	- ApplyDamage에 attacker player를 source로 전달 (팀 체크용).
 	- init(hpService): HpService 인스턴스 주입. HpService.Init에서 단 1회 호출.
 
 	HpService 주입 이유:
@@ -35,11 +36,11 @@ local _hpService: any = nil
 export type HitConfig = {
 	shape: "cone" | "circle" | "line",
 	range: number,
-	angle: number?, -- cone 전용 (도 단위)
-	width: number?, -- line 전용
+	angle: number?,   -- cone 전용 (도 단위)
+	width: number?,   -- line 전용
 	damage: number,
 	knockback: number?,
-	delay: number?, -- 생략 시 0 (즉시 판정)
+	delay: number?,   -- 생략 시 0 (즉시 판정)
 }
 
 -- ─── 주입 API ────────────────────────────────────────────────────────────────
@@ -163,15 +164,20 @@ local function filterLine(
 end
 
 -- 대미지 및 넉백을 적용합니다.
--- Player 캐릭터 → HpService:ApplyDamage (HP 시스템 통합)
--- NPC           → humanoid:TakeDamage   (기존 방식 유지)
+-- Player 캐릭터 → HpService:ApplyDamage(target, amount, source) (팀 체크 포함)
+-- NPC           → humanoid:TakeDamage (기존 방식 유지)
 local function applyEffects(attacker: Model, hits: { Model }, config: HitConfig)
+	-- attacker의 Player 인스턴스 (팀 체크 source로 사용)
+	local attackerPlayer = Players:GetPlayerFromCharacter(attacker)
+
 	for _, char in hits do
 		-- HP 처리
-		local player = Players:GetPlayerFromCharacter(char)
-		if player and _hpService then
-			_hpService:ApplyDamage(player, config.damage)
+		local targetPlayer = Players:GetPlayerFromCharacter(char)
+		if targetPlayer and _hpService then
+			-- source를 전달하여 HpService에서 팀 체크
+			_hpService:ApplyDamage(targetPlayer, config.damage, attackerPlayer)
 		else
+			-- NPC: 기존 방식 유지
 			local humanoid = char:FindFirstChildOfClass("Humanoid")
 			if humanoid then
 				humanoid:TakeDamage(config.damage)

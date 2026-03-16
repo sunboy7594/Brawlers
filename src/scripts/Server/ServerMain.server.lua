@@ -13,12 +13,14 @@ local serviceBag = require("ServiceBag").new()
 
 -- ─── Core ────────────────────────────────────────
 -- ClassService는 BasicAttackService를 GetService하므로 먼저 등록
--- HpService는 ClassService를 GetService하므로 ClassService 다음에 등록
+-- TeamService는 HpService보다 먼저 등록 (HpService.Init에서 GetService)
+-- HpService는 ClassService, TeamService를 GetService하므로 그 다음에 등록
 -- PlayerStateService는 HpService를 GetService하므로 HpService 다음에 등록
 serviceBag:GetService(require("BrawlersService"))
 serviceBag:GetService(require("TagService"))
 serviceBag:GetService(require("BasicAttackService"))
 serviceBag:GetService(require("ClassService"))
+serviceBag:GetService(require("TeamService"))
 serviceBag:GetService(require("HpService"))
 
 -- ─── Movement ────────────────────────────────────

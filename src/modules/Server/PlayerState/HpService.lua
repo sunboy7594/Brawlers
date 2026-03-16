@@ -26,6 +26,12 @@
 	InstantHit 연동:
 	  InstantHit은 ServiceBag 외부 유틸 모듈이므로
 	  Init에서 InstantHit.init(self)로 인스턴스를 직접 주입함.
+
+	팀 시스템 연동:
+	  ApplyDamage(target, amount, source?)
+	  source가 있고 source ≠ target일 때 TeamService:CanDamage 체크.
+	  같은 팀이면 대미지 무시.
+	  source == nil이면 환경 대미지로 간주하여 항상 적용.
 ]=]
 
 local require = require(script.Parent.loader).load(script)
@@ -39,6 +45,7 @@ local InstantHit = require("InstantHit")
 local Maid = require("Maid")
 local ServiceBag = require("ServiceBag")
 local Signal = require("Signal")
+local TeamService = require("TeamService")
 
 -- ─── 타입 ────────────────────────────────────────────────────────────────────
 
@@ -53,6 +60,7 @@ export type HpService = typeof(setmetatable(
 		_serviceBag: ServiceBag.ServiceBag,
 		_maid: any,
 		_classService: any,
+		_teamService: any,
 		_hpData: { [number]: PlayerHp },
 		_playerMaids: { [number]: any },
 		OnDeath: any, -- Signal<Player>
@@ -71,6 +79,7 @@ function HpService.Init(self: HpService, serviceBag: ServiceBag.ServiceBag): ()
 	self._serviceBag = serviceBag
 	self._maid = Maid.new()
 	self._classService = serviceBag:GetService(ClassService)
+	self._teamService = serviceBag:GetService(TeamService)
 	self._hpData = {}
 	self._playerMaids = {}
 	self.OnDeath = Signal.new()
@@ -109,7 +118,9 @@ function HpService:_onPlayerAdded(player: Player)
 
 		-- 패시브 등으로 이미 maxHp가 조정된 경우 그 값을 유지
 		local existing = self._hpData[player.UserId]
-		local max = if existing and existing.className == className then existing.max else baseMax
+		local max = if existing and existing.className == className
+			then existing.max
+			else baseMax
 
 		self._hpData[player.UserId] = {
 			current = max,
@@ -173,15 +184,31 @@ end
 
 --[=[
 	대미지를 적용합니다.
+
+	팀 체크:
+	  source가 있고 source ≠ target일 때 TeamService:CanDamage로 팀킬 여부 판단.
+	  같은 팀이면 대미지를 무시합니다.
+	  source == nil이면 환경 대미지로 간주하여 항상 적용.
+
 	multiplier(receiveDamageMult, dealDamageMult) 적용이 완료된 최종 값을 전달할 것.
 	ignoreDamage 보호 처리는 호출 측(PlayerStateService)이 담당.
-	@param target Player
-	@param amount number  최종 대미지 (양수)
+
+	@param target Player   피격자
+	@param amount number   최종 대미지 (양수)
+	@param source Player?  공격자. nil이면 환경/자해 대미지
 ]=]
-function HpService:ApplyDamage(target: Player, amount: number)
+function HpService:ApplyDamage(target: Player, amount: number, source: Player?)
 	if amount <= 0 then
 		return
 	end
+
+	-- 팀 체크: source가 있고 자기 자신이 아닌 경우에만
+	if source and source ~= target then
+		if not self._teamService:CanDamage(source, target) then
+			return
+		end
+	end
+
 	local data = self._hpData[target.UserId]
 	if not data or data.current <= 0 then
 		return
