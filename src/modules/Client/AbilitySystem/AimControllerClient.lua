@@ -31,7 +31,7 @@
 	- OnAimStart: { (abilityState) -> () }?  조준 시작 1회
 	- OnAim:      { (abilityState) -> () }?  매 프레임, abilityState.indicator 직접 업데이트
 	- OnFire:     { (abilityState) -> () }?  발사 확정 후 — onFireServer 콜백 내부에서 호출됨
-	취소 시: indicator hideAll만 (onCancel 없음)
+	취소 시: aimTime/effectiveAimTime 리셋 후 indicator hideAll (onCancel 없음)
 ]=]
 
 local require = require(script.Parent.loader).load(script)
@@ -49,7 +49,7 @@ local cancellableDelay = require("cancellableDelay")
 
 -- ─── 타입 ────────────────────────────────────────────────────────────────────
 
-type AimState = {
+type AimSession = {
 	abilityType: string,
 	clientModule: any,
 	abilityState: any,
@@ -63,7 +63,7 @@ export type AimControllerClient = typeof(setmetatable(
 	{} :: {
 		_serviceBag: ServiceBag.ServiceBag,
 		_maid: any,
-		_aimState: AimState?,
+		_aimSession: AimSession?,
 		_cameraController: any,
 		_yawSpring: any,
 		_postFireCancel: (() -> ())?,
@@ -101,7 +101,7 @@ end
 function AimControllerClient.Init(self: AimControllerClient, serviceBag: ServiceBag.ServiceBag): ()
 	self._serviceBag = serviceBag
 	self._maid = Maid.new()
-	self._aimState = nil
+	self._aimSession = nil
 	self._cameraController = serviceBag:GetService(CameraControllerClient)
 	self._postFireCancel = nil
 	self._postFireYaw = nil
@@ -154,13 +154,13 @@ function AimControllerClient:StartAim(
 	onFireServer: (direction: Vector3) -> (),
 	postFireDuration: number?
 )
-	local state = self._aimState
+	local aimSession = self._aimSession
 
-	if state and state.abilityType == abilityType then
+	if aimSession and aimSession.abilityType == abilityType then
 		return
 	end
 
-	if state then
+	if aimSession then
 		self:_cancelInternal()
 	end
 
@@ -178,7 +178,7 @@ function AimControllerClient:StartAim(
 		end
 	end
 
-	self._aimState = {
+	self._aimSession = {
 		abilityType = abilityType,
 		clientModule = clientModule,
 		abilityState = abilityState,
@@ -196,7 +196,7 @@ end
 	현재 조준을 취소합니다.
 ]=]
 function AimControllerClient:Cancel()
-	if not self._aimState then
+	if not self._aimSession then
 		return
 	end
 	self:_cancelInternal()
@@ -219,7 +219,7 @@ function AimControllerClient:CancelPostFire()
 end
 
 function AimControllerClient:IsAiming(): boolean
-	return self._aimState ~= nil
+	return self._aimSession ~= nil
 end
 
 -- ─── 내부 ────────────────────────────────────────────────────────────────────
@@ -279,8 +279,8 @@ function AimControllerClient:_updateCharacterRotation()
 end
 
 function AimControllerClient:_confirm()
-	local state = self._aimState
-	if not state then
+	local aimSession = self._aimSession
+	if not aimSession then
 		return
 	end
 
@@ -290,18 +290,18 @@ function AimControllerClient:_confirm()
 		return
 	end
 
-	local abilityState = state.abilityState
-	abilityState.aimTime = os.clock() - state.startTime
+	local abilityState = aimSession.abilityState
+	abilityState.aimTime = os.clock() - aimSession.startTime
 	abilityState.direction = direction
 	abilityState.origin = origin or Vector3.zero
 
 	abilityState.indicator:hideAll()
 
-	local onFireServer = state.onFireServer
-	local postFireDuration = state.postFireDuration
+	local onFireServer = aimSession.onFireServer
+	local postFireDuration = aimSession.postFireDuration
 
-	state.maid:Destroy()
-	self._aimState = nil
+	aimSession.maid:Destroy()
+	self._aimSession = nil
 
 	local isFired = onFireServer(direction)
 
@@ -340,14 +340,18 @@ function AimControllerClient:_confirm()
 end
 
 function AimControllerClient:_cancelInternal()
-	local state = self._aimState
-	if not state then
+	local aimSession = self._aimSession
+	if not aimSession then
 		return
 	end
 
-	state.abilityState.indicator:hideAll()
-	state.maid:Destroy()
-	self._aimState = nil
+	local abilityState = aimSession.abilityState
+	abilityState.indicator:hideAll()
+	abilityState.aimTime = 0
+	abilityState.effectiveAimTime = 0
+
+	aimSession.maid:Destroy()
+	self._aimSession = nil
 
 	local humanoid = self:_getHumanoid()
 	if humanoid then
@@ -356,8 +360,8 @@ function AimControllerClient:_cancelInternal()
 end
 
 function AimControllerClient:_onRenderStep()
-	local state = self._aimState
-	if not state then
+	local aimSession = self._aimSession
+	if not aimSession then
 		if self._postFireCancel and self._postFireYaw then
 			local hrp = self:_getHRP()
 			if hrp then
@@ -376,14 +380,14 @@ function AimControllerClient:_onRenderStep()
 		return
 	end
 
-	local abilityState = state.abilityState
-	abilityState.aimTime = os.clock() - state.startTime
+	local abilityState = aimSession.abilityState
+	abilityState.aimTime = os.clock() - aimSession.startTime
 	abilityState.direction = direction
 	abilityState.origin = origin
 
 	-- origin/direction은 abilityState에만 세팅.
 	-- indicator 업데이트는 각 모듈의 onAim에서 담당.
-	AbilityExecutor.OnAim(state.clientModule, abilityState)
+	AbilityExecutor.OnAim(aimSession.clientModule, abilityState)
 end
 
 function AimControllerClient.Destroy(self: AimControllerClient)
@@ -391,7 +395,7 @@ function AimControllerClient.Destroy(self: AimControllerClient)
 		self._postFireCancel()
 		self._postFireCancel = nil
 	end
-	if self._aimState then
+	if self._aimSession then
 		self:_cancelInternal()
 	end
 	self._maid:Destroy()

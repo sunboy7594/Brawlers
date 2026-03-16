@@ -6,11 +6,11 @@
 
 	담당:
 	- 좌클릭 감지 → AimControllerClient:StartAim() 호출
-	- AmmoChanged 수신 → state 탄약 필드 갱신
-	- HitChecked 수신 → state.victims 갱신 → onHitChecked 배열 실행
+	- AmmoChanged 수신 → abilityState 탄약 필드 갱신
+	- HitChecked 수신 → abilityState.victims 갱신 → onHitChecked 배열 실행
 	  (HitChecked는 서버에서 공격자에게만 FireClient로 발송됨)
 	- PlayerBinderClient.JointsChanged 구독 → joints 자가 갱신 → EntityAnimator 재생성
-	- state 소유 및 관리
+	- abilityState 소유 및 관리
 	- fireComboCount/hitComboCount 증감은 각 공격 모듈이 담당
 
 	postDelay 예약 발사:
@@ -18,7 +18,7 @@
 	  서버로 Fire를 전송하여 서버가 cancellableDelay로 예약하도록 허용
 	- 클라이언트도 cancellableDelay(_pendingOnFireCancel)로 동일 타이밍에 OnFire 실행
 	- postDelayUntil을 즉시 갱신하여 클라이언트가 만료 직후 즉시 발사를 시도하지 않도록 방지
-	- 예약 OnFire 직전에 state.direction을 클릭 시점 direction으로 명시 고정
+	- 예약 OnFire 직전에 abilityState.direction을 클릭 시점 direction으로 명시 고정
 	  (미고정 시: _onRenderStep이 마지막으로 쓴 값과 달라 방향 불일치 발생)
 ]=]
 
@@ -89,7 +89,7 @@ export type BasicAttackClient = typeof(setmetatable(
 		_equippedAttackId: string?,
 		_joints: { [string]: Motor6D }?,
 		_attackAnimator: any?,
-		_state: BasicAttackState?,
+		_abilityState: BasicAttackState?,
 		_pendingOnFireCancel: (() -> ())?,
 	},
 	{} :: typeof({ __index = {} })
@@ -117,7 +117,7 @@ function BasicAttackClient.Init(self: BasicAttackClient, serviceBag: ServiceBag.
 	self._equippedAttackId = nil
 	self._joints = nil
 	self._attackAnimator = nil
-	self._state = nil
+	self._abilityState = nil
 	self._pendingOnFireCancel = nil
 
 	local playerBinder = serviceBag:GetService(PlayerBinderClient)
@@ -135,21 +135,21 @@ function BasicAttackClient.Init(self: BasicAttackClient, serviceBag: ServiceBag.
 	self._maid:GiveTask(
 		BasicAttackRemoting.AmmoChanged:Connect(
 			function(current: unknown, max: unknown, reloadTime: unknown, postDelay: unknown)
-				local state = self._state
-				if not state then
+				local abilityState = self._abilityState
+				if not abilityState then
 					return
 				end
 				if type(current) == "number" then
-					state.currentAmmo = current
+					abilityState.currentAmmo = current
 				end
 				if type(max) == "number" then
-					state.maxAmmo = max
+					abilityState.maxAmmo = max
 				end
 				if type(reloadTime) == "number" then
-					state.reloadTime = reloadTime
+					abilityState.reloadTime = reloadTime
 				end
 				if type(postDelay) == "number" then
-					state.postDelay = postDelay
+					abilityState.postDelay = postDelay
 				end
 			end
 		)
@@ -162,33 +162,33 @@ end
 
 function BasicAttackClient.Start(self: BasicAttackClient): ()
 	self._maid:GiveTask(RunService.Heartbeat:Connect(function(dt)
-		local state = self._state
-		if not state then
+		local abilityState = self._abilityState
+		if not abilityState then
 			return
 		end
 
 		if self._aimController:IsAiming() then
-			local hasAmmo = state.currentAmmo > 0
-			local isPostDelay = os.clock() < state.postDelayUntil
+			local hasAmmo = abilityState.currentAmmo > 0
+			local isPostDelay = os.clock() < abilityState.postDelayUntil
 			local canFire = hasAmmo and not isPostDelay
 
 			if canFire then
-				state.effectiveAimTime += dt
+				abilityState.effectiveAimTime += dt
 			else
-				state.effectiveAimTime = 0
+				abilityState.effectiveAimTime = 0
 			end
 
 			-- 모든 shape에 색상/투명도 일괄 적용
 			if not hasAmmo then
-				state.indicator:updateAll({ color = COLOR_NO_AMMO })
+				abilityState.indicator:updateAll({ color = COLOR_NO_AMMO })
 			else
-				state.indicator:updateAll({ color = COLOR_NORMAL })
+				abilityState.indicator:updateAll({ color = COLOR_NORMAL })
 			end
 
 			if isPostDelay then
-				state.indicator:updateAll({ transparency = ALPHA_POST_DELAY })
+				abilityState.indicator:updateAll({ transparency = ALPHA_POST_DELAY })
 			else
-				state.indicator:updateAll({ transparency = ALPHA_NORMAL })
+				abilityState.indicator:updateAll({ transparency = ALPHA_NORMAL })
 			end
 		end
 	end))
@@ -217,15 +217,15 @@ function BasicAttackClient:SetEquippedAttack(attackId: string)
 
 	self._equippedAttackId = attackId
 
-	if self._state then
-		self._state.indicator:destroy()
+	if self._abilityState then
+		self._abilityState.indicator:destroy()
 	end
 
 	local entry = ATTACK_REGISTRY[attackId]
 	-- shapes = { cone = "cone", ... } 형태로 전달
 	local indicator = if entry then DynamicIndicator.new(entry.module.shapes) else DynamicIndicator.new({})
 
-	self._state = {
+	self._abilityState = {
 		indicator = indicator,
 		animator = nil,
 		currentAmmo = 0,
@@ -264,8 +264,8 @@ function BasicAttackClient:_rebuildAnimator()
 		self._attackAnimator:Destroy()
 		self._attackAnimator = nil
 	end
-	if self._state then
-		self._state.animator = nil
+	if self._abilityState then
+		self._abilityState.animator = nil
 	end
 
 	local attackId = self._equippedAttackId
@@ -288,8 +288,8 @@ function BasicAttackClient:_rebuildAnimator()
 	)
 	self._attackAnimator = animator
 
-	if self._state then
-		self._state.animator = animator
+	if self._abilityState then
+		self._abilityState.animator = animator
 	end
 end
 
@@ -304,33 +304,33 @@ function BasicAttackClient:_tryStartAim()
 		return
 	end
 
-	local state = self._state
-	if not state then
+	local abilityState = self._abilityState
+	if not abilityState then
 		return
 	end
 
-	state.idleTime = if state.lastFireTime > 0 then os.clock() - state.lastFireTime else 0
+	abilityState.idleTime = if abilityState.lastFireTime > 0 then os.clock() - abilityState.lastFireTime else 0
 
 	self._aimController:StartAim(
 		AimControllerClient.AbilityType.BasicAttack,
 		entry.module,
-		state,
+		abilityState,
 		function(direction: Vector3)
-			if state.currentAmmo <= 0 then
+			if abilityState.currentAmmo <= 0 then
 				return false
 			end
 
 			local now = os.clock()
 
-			if now < state.postDelayUntil then
-				local remaining = state.postDelayUntil - now
+			if now < abilityState.postDelayUntil then
+				local remaining = abilityState.postDelayUntil - now
 
-				if state.postDelay <= 0 or remaining / state.postDelay > POST_DELAY_QUEUE_THRESHOLD then
+				if abilityState.postDelay <= 0 or remaining / abilityState.postDelay > POST_DELAY_QUEUE_THRESHOLD then
 					return false
 				end
 
-				local scheduledAt = state.postDelayUntil
-				state.postDelayUntil = scheduledAt + entry.def.postDelay
+				local scheduledAt = abilityState.postDelayUntil
+				abilityState.postDelayUntil = scheduledAt + entry.def.postDelay
 
 				local capturedDirection = direction
 				if self._pendingOnFireCancel then
@@ -339,10 +339,10 @@ function BasicAttackClient:_tryStartAim()
 				end
 				self._pendingOnFireCancel = cancellableDelay(remaining, function()
 					self._pendingOnFireCancel = nil
-					state.direction = capturedDirection
-					state.lastFireTime = scheduledAt
-					state.effectiveAimTime = 0
-					AbilityExecutor.OnFire(entry.module, state)
+					abilityState.direction = capturedDirection
+					abilityState.lastFireTime = scheduledAt
+					abilityState.effectiveAimTime = 0
+					AbilityExecutor.OnFire(entry.module, abilityState)
 				end)
 
 				BasicAttackRemoting.Fire:FireServer(direction)
@@ -353,12 +353,12 @@ function BasicAttackClient:_tryStartAim()
 				self._pendingOnFireCancel()
 				self._pendingOnFireCancel = nil
 			end
-			state.direction = direction
-			state.postDelayUntil = now + entry.def.postDelay
-			state.lastFireTime = now
-			state.effectiveAimTime = 0
+			abilityState.direction = direction
+			abilityState.postDelayUntil = now + entry.def.postDelay
+			abilityState.lastFireTime = now
+			abilityState.effectiveAimTime = 0
 			BasicAttackRemoting.Fire:FireServer(direction)
-			AbilityExecutor.OnFire(entry.module, state)
+			AbilityExecutor.OnFire(entry.module, abilityState)
 			return true
 		end,
 		entry.def.postDelay
@@ -368,8 +368,8 @@ function BasicAttackClient:_tryStartAim()
 end
 
 function BasicAttackClient:_onHitChecked(victimUserIds: unknown)
-	local state = self._state
-	if not state then
+	local abilityState = self._abilityState
+	if not abilityState then
 		return
 	end
 
@@ -380,10 +380,10 @@ function BasicAttackClient:_onHitChecked(victimUserIds: unknown)
 			table.insert(victims, player)
 		end
 	end
-	state.victims = victims
+	abilityState.victims = victims
 
 	if #victims > 0 then
-		state.lastHitTime = os.clock()
+		abilityState.lastHitTime = os.clock()
 	end
 
 	local attackId = self._equippedAttackId
@@ -396,7 +396,7 @@ function BasicAttackClient:_onHitChecked(victimUserIds: unknown)
 		return
 	end
 
-	AbilityExecutor.OnHitChecked(entry.module, state)
+	AbilityExecutor.OnHitChecked(entry.module, abilityState)
 end
 
 function BasicAttackClient.Destroy(self: BasicAttackClient)
