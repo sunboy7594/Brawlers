@@ -15,6 +15,8 @@
 	billboard:  true면 BillboardGui 방식
 ]=]
 
+local require = require(script.Parent.loader).load(script)
+
 local PlayerStateDefs = require("PlayerStateDefs")
 local Tag = PlayerStateDefs.Tag
 

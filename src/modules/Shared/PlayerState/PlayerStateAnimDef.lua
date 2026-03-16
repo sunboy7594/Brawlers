@@ -1,28 +1,31 @@
 --!strict
 --[=[
-	@class HitReactionAnimDef
+	@class PlayerStateAnimDef
 
-	PlayerState 시스템이 사용하는 캐릭터 몸 애니메이션 정의.
-	EntityAnimator에 주입됩니다.
+	PlayerState 시스템의 캐릭터 애니메이션 정의.
+	tag name → AnimDef 구현을 직접 포함합니다.
 
-	애니메이션 목록:
-	- HitStagger  : 일반 피격 (intensity 무시)
-	- HitKnockback: 강한 피격 (intensity 무시)
-	- Knockback   : 넘백 (intensity → 각도/속도)
-	- Stun        : 스턴 루프 (intensity → 루프 속도)
-	- Airborne    : 에어본 루프 (intensity → 루프 속도)
-	- Freeze      : 빙결 루프 (intensity → 고정 강도)
-	- Exhausted   : 탈진 루프 (intensity → 루프 속도)
+	EntityAnimator에 주입되며, PlayerStateClient가 직접 require합니다.
 
-	loop 애니메이션 사용 방식:
-	  EntityAnimator:PlayAnimation("Stun", duration) 형태로 호출.
-	  duration이 만료되면 자동 종료.
+	resolve(tagName, intensity):
+	  intensity 구간에 따라 사용할 animKey와 loop 여부를 반환.
+
+	loop = true:
+	  EntityAnimator:PlayAnimation(animKey, duration) 형태로 호출하면
+	  duration 동안 반복 재생 후 자동 종료.
 
 	intensity 전달 방식:
-	  AnimFactory는 ac(AnimationControllerClient)를 인자로 받음.
-	  ac는 PlayerStateClient에서 intensity를 upvalue로 주입하여
-	  factory 호출 시 전달합니다:
-	    factory(joint, defaultC0, { ac = animController, intensity = tag.intensity })
+	  AnimFactory의 세 번째 인자 ac = { ac: AnimationControllerClient, intensity: number }
+	  factory 내부에서 ac.intensity로 강도 스케일링.
+
+	─── 애니메이션 목록 ─────────────────────────────────────────────
+	  HitStagger   : 일반 피격 (intensity 무시)
+	  HitKnockback : 강한 피격 (intensity 무시)
+	  Knockback    : 넉백 반응 (intensity → 각도/속도)
+	  Stun         : 스턴 루프 (intensity → 흔들림 속도/크기)
+	  Airborne     : 에어본 루프 (intensity → 팔 벌어짐/흔들림)
+	  Freeze       : 빙결 루프 (intensity → 고정 강도/떨림)
+	  Exhausted    : 탈진 루프 (intensity → 숨 주기/크기)
 ]=]
 
 local Layer = {
@@ -31,20 +34,43 @@ local Layer = {
 	OVERRIDE = 2,
 }
 
-type OnUpdate = (joint: Motor6D, dt: number) -> ()
+-- ─── 타입 ────────────────────────────────────────────────────────────────────
+
 type AC = { ac: any, intensity: number }
+type OnUpdate = (joint: Motor6D, dt: number) -> ()
 type AnimFactory = (joint: Motor6D, defaultC0: CFrame, ac: AC) -> OnUpdate
 
 type AnimDef =
 	{ type: "anim", layer: number, duration: number, force: boolean?, joints: { [string]: AnimFactory } }
 	| { type: "modify", joints: { [string]: (joint: Motor6D, defaultC0: CFrame, ac: AC) -> (CFrame, number) -> CFrame } }
 
-local HitReactionAnimDef: { [string]: AnimDef } = {}
+-- ─── 내부 매핑 타입 ──────────────────────────────────────────────────────────
+
+type AnimVariant = {
+	threshold: number,
+	animKey: string?,
+	loop: boolean?,
+	special: string?,
+}
+
+type AnimMapping = {
+	variants: { AnimVariant },
+}
+
+export type ResolvedAnim = {
+	animKey: string?,
+	loop: boolean?,
+	special: string?,
+}
+
+-- ─── AnimDef 구현 ─────────────────────────────────────────────────────────────
+
+local Anims: { [string]: AnimDef } = {}
 
 -- ============================================================
 -- HitStagger: 일반 피격
 -- ============================================================
-HitReactionAnimDef["HitStagger"] = {
+Anims["HitStagger"] = {
 	type = "anim",
 	layer = Layer.ACTION,
 	duration = 0.3,
@@ -74,7 +100,7 @@ HitReactionAnimDef["HitStagger"] = {
 -- ============================================================
 -- HitKnockback: 강한 피격
 -- ============================================================
-HitReactionAnimDef["HitKnockback"] = {
+Anims["HitKnockback"] = {
 	type = "anim",
 	layer = Layer.ACTION,
 	duration = 0.4,
@@ -120,9 +146,9 @@ HitReactionAnimDef["HitKnockback"] = {
 }
 
 -- ============================================================
--- Knockback: 넘백 반응 (intensity → 각도/속도)
+-- Knockback: 넉백 반응 (intensity → 각도/속도)
 -- ============================================================
-HitReactionAnimDef["Knockback"] = {
+Anims["Knockback"] = {
 	type = "anim",
 	layer = Layer.ACTION,
 	duration = 0.5,
@@ -130,58 +156,49 @@ HitReactionAnimDef["Knockback"] = {
 	joints = {
 		Waist = function(_j: Motor6D, defaultC0: CFrame, ac: AC): OnUpdate
 			local t = 0
-			local intensity = ac.intensity
-			local maxAngle = math.rad(10 + intensity * 25) -- 10~35도
-			local speed = 15 + intensity * 10 -- 15~25
+			local maxAngle = math.rad(10 + ac.intensity * 25)
+			local speed = 15 + ac.intensity * 10
 			return function(joint: Motor6D, dt: number)
 				t += dt
 				local p = math.min(t / 0.5, 1)
-				local angle = math.sin(p * math.pi) * -maxAngle
-				ac.ac:spring(joint, defaultC0 * CFrame.Angles(angle, 0, 0), speed, 1.0, dt)
+				ac.ac:spring(joint, defaultC0 * CFrame.Angles(math.sin(p * math.pi) * -maxAngle, 0, 0), speed, 1.0, dt)
 			end
 		end,
 		Neck = function(_j: Motor6D, defaultC0: CFrame, ac: AC): OnUpdate
 			local t = 0
-			local intensity = ac.intensity
-			local maxAngle = math.rad(8 + intensity * 18) -- 8~26도
-			local speed = 14 + intensity * 8
+			local maxAngle = math.rad(8 + ac.intensity * 18)
+			local speed = 14 + ac.intensity * 8
 			return function(joint: Motor6D, dt: number)
 				t += dt
 				local p = math.min(t / 0.5, 1)
-				local angle = math.sin(p * math.pi) * -maxAngle
-				ac.ac:spring(joint, defaultC0 * CFrame.Angles(angle, 0, 0), speed, 1.0, dt)
+				ac.ac:spring(joint, defaultC0 * CFrame.Angles(math.sin(p * math.pi) * -maxAngle, 0, 0), speed, 1.0, dt)
 			end
 		end,
 		RightShoulder = function(_j: Motor6D, defaultC0: CFrame, ac: AC): OnUpdate
 			local t = 0
-			local intensity = ac.intensity
-			local maxAngle = math.rad(15 + intensity * 25) -- 15~40도
+			local maxAngle = math.rad(15 + ac.intensity * 25)
 			return function(joint: Motor6D, dt: number)
 				t += dt
 				local p = math.min(t / 0.5, 1)
-				local angle = math.sin(p * math.pi) * maxAngle
-				ac.ac:spring(joint, defaultC0 * CFrame.Angles(0, 0, angle), 16, 1.0, dt)
+				ac.ac:spring(joint, defaultC0 * CFrame.Angles(0, 0, math.sin(p * math.pi) * maxAngle), 16, 1.0, dt)
 			end
 		end,
 		LeftShoulder = function(_j: Motor6D, defaultC0: CFrame, ac: AC): OnUpdate
 			local t = 0
-			local intensity = ac.intensity
-			local maxAngle = math.rad(15 + intensity * 25)
+			local maxAngle = math.rad(15 + ac.intensity * 25)
 			return function(joint: Motor6D, dt: number)
 				t += dt
 				local p = math.min(t / 0.5, 1)
-				local angle = math.sin(p * math.pi) * -maxAngle
-				ac.ac:spring(joint, defaultC0 * CFrame.Angles(0, 0, angle), 16, 1.0, dt)
+				ac.ac:spring(joint, defaultC0 * CFrame.Angles(0, 0, math.sin(p * math.pi) * -maxAngle), 16, 1.0, dt)
 			end
 		end,
 	},
 }
 
 -- ============================================================
--- Stun: 스턴 루프 (intensity → 루프 속도)
--- 머리가 흤델리며 상체가 굳어짐
+-- Stun: 스턴 루프 (intensity → 흔들림 속도/크기)
 -- ============================================================
-HitReactionAnimDef["Stun"] = {
+Anims["Stun"] = {
 	type = "anim",
 	layer = Layer.OVERRIDE,
 	duration = math.huge,
@@ -189,25 +206,23 @@ HitReactionAnimDef["Stun"] = {
 	joints = {
 		Waist = function(_j: Motor6D, defaultC0: CFrame, ac: AC): OnUpdate
 			local t = 0
-			local intensity = ac.intensity
-			local freq = 1.5 + intensity * 1.5 -- 1.5~3Hz
-			local amp = math.rad(3 + intensity * 6) -- 3~9도
+			local freq = 1.5 + ac.intensity * 1.5
+			local amp = math.rad(3 + ac.intensity * 6)
+			local droop = math.rad(8 + ac.intensity * 10)
 			return function(joint: Motor6D, dt: number)
 				t += dt
 				local sway = math.sin(t * freq * math.pi * 2) * amp
-				local droop = math.rad(8 + intensity * 10) -- 앞으로 굳어짐
 				ac.ac:spring(joint, defaultC0 * CFrame.Angles(droop, sway, 0), 8, 0.9, dt)
 			end
 		end,
 		Neck = function(_j: Motor6D, defaultC0: CFrame, ac: AC): OnUpdate
 			local t = 0
-			local intensity = ac.intensity
-			local freq = 1.5 + intensity * 1.5
-			local amp = math.rad(5 + intensity * 8)
+			local freq = 1.5 + ac.intensity * 1.5
+			local amp = math.rad(5 + ac.intensity * 8)
+			local droop = math.rad(12 + ac.intensity * 12)
 			return function(joint: Motor6D, dt: number)
 				t += dt
 				local sway = math.sin(t * freq * math.pi * 2 + 0.5) * amp
-				local droop = math.rad(12 + intensity * 12)
 				ac.ac:spring(joint, defaultC0 * CFrame.Angles(droop, sway, 0), 6, 0.85, dt)
 			end
 		end,
@@ -215,10 +230,9 @@ HitReactionAnimDef["Stun"] = {
 }
 
 -- ============================================================
--- Airborne: 에어본 루프 (intensity → 효과)
--- 뫸엞리며 팔이 벌어짐
+-- Airborne: 에어본 루프 (intensity → 팔 벌어짐/흔들림)
 -- ============================================================
-HitReactionAnimDef["Airborne"] = {
+Anims["Airborne"] = {
 	type = "anim",
 	layer = Layer.OVERRIDE,
 	duration = math.huge,
@@ -226,18 +240,16 @@ HitReactionAnimDef["Airborne"] = {
 	joints = {
 		Waist = function(_j: Motor6D, defaultC0: CFrame, ac: AC): OnUpdate
 			local t = 0
-			local intensity = ac.intensity
-			local targetAngle = math.rad(-(10 + intensity * 20)) -- 앞으로 굳어짐
+			local targetAngle = math.rad(-(10 + ac.intensity * 20))
 			return function(joint: Motor6D, dt: number)
 				t += dt
-				local wobble = math.sin(t * 4) * math.rad(2 + intensity * 4)
+				local wobble = math.sin(t * 4) * math.rad(2 + ac.intensity * 4)
 				ac.ac:spring(joint, defaultC0 * CFrame.Angles(targetAngle + wobble, 0, 0), 10, 0.9, dt)
 			end
 		end,
 		RightShoulder = function(_j: Motor6D, defaultC0: CFrame, ac: AC): OnUpdate
 			local t = 0
-			local intensity = ac.intensity
-			local spread = math.rad(25 + intensity * 35)
+			local spread = math.rad(25 + ac.intensity * 35)
 			return function(joint: Motor6D, dt: number)
 				t += dt
 				local wobble = math.sin(t * 3 + 0.3) * math.rad(3)
@@ -246,8 +258,7 @@ HitReactionAnimDef["Airborne"] = {
 		end,
 		LeftShoulder = function(_j: Motor6D, defaultC0: CFrame, ac: AC): OnUpdate
 			local t = 0
-			local intensity = ac.intensity
-			local spread = math.rad(25 + intensity * 35)
+			local spread = math.rad(25 + ac.intensity * 35)
 			return function(joint: Motor6D, dt: number)
 				t += dt
 				local wobble = math.sin(t * 3 - 0.3) * math.rad(3)
@@ -258,10 +269,9 @@ HitReactionAnimDef["Airborne"] = {
 }
 
 -- ============================================================
--- Freeze: 빙결 루프 (intensity → 고정 강도)
--- 전체적으로 굳어지고 미세하게 떨림
+-- Freeze: 빙결 루프 (intensity → 고정 강도/떨림)
 -- ============================================================
-HitReactionAnimDef["Freeze"] = {
+Anims["Freeze"] = {
 	type = "anim",
 	layer = Layer.OVERRIDE,
 	duration = math.huge,
@@ -269,22 +279,19 @@ HitReactionAnimDef["Freeze"] = {
 	joints = {
 		Waist = function(_j: Motor6D, defaultC0: CFrame, ac: AC): OnUpdate
 			local t = 0
-			local intensity = ac.intensity
-			local frozenAngle = math.rad(5 + intensity * 10)
+			local frozenAngle = math.rad(5 + ac.intensity * 10)
 			return function(joint: Motor6D, dt: number)
 				t += dt
-				-- 매우 작은 떨림으로 빙결 품표현
-				local tremble = math.sin(t * 18) * math.rad(0.3 + intensity * 0.7)
+				local tremble = math.sin(t * 18) * math.rad(0.3 + ac.intensity * 0.7)
 				ac.ac:spring(joint, defaultC0 * CFrame.Angles(frozenAngle + tremble, 0, 0), 30, 1.0, dt)
 			end
 		end,
 		Neck = function(_j: Motor6D, defaultC0: CFrame, ac: AC): OnUpdate
 			local t = 0
-			local intensity = ac.intensity
-			local frozenAngle = math.rad(3 + intensity * 7)
+			local frozenAngle = math.rad(3 + ac.intensity * 7)
 			return function(joint: Motor6D, dt: number)
 				t += dt
-				local tremble = math.sin(t * 20 + 0.5) * math.rad(0.2 + intensity * 0.5)
+				local tremble = math.sin(t * 20 + 0.5) * math.rad(0.2 + ac.intensity * 0.5)
 				ac.ac:spring(joint, defaultC0 * CFrame.Angles(frozenAngle + tremble, 0, 0), 28, 1.0, dt)
 			end
 		end,
@@ -292,10 +299,9 @@ HitReactionAnimDef["Freeze"] = {
 }
 
 -- ============================================================
--- Exhausted: 탈진 루프 (intensity → 휘음/속도)
--- 숫을 헥헥 도르며 말이 굳어짐
+-- Exhausted: 탈진 루프 (intensity → 숨 주기/크기)
 -- ============================================================
-HitReactionAnimDef["Exhausted"] = {
+Anims["Exhausted"] = {
 	type = "anim",
 	layer = Layer.OVERRIDE,
 	duration = math.huge,
@@ -303,10 +309,9 @@ HitReactionAnimDef["Exhausted"] = {
 	joints = {
 		Waist = function(_j: Motor6D, defaultC0: CFrame, ac: AC): OnUpdate
 			local t = 0
-			local intensity = ac.intensity
-			local freq = 0.8 + intensity * 0.8 -- 0.8~1.6Hz (숨 주기)
-			local droop = math.rad(12 + intensity * 18) -- 기본 굳어짐
-			local amp = math.rad(4 + intensity * 6) -- 휘음 효과
+			local freq = 0.8 + ac.intensity * 0.8
+			local droop = math.rad(12 + ac.intensity * 18)
+			local amp = math.rad(4 + ac.intensity * 6)
 			return function(joint: Motor6D, dt: number)
 				t += dt
 				local breath = math.sin(t * freq * math.pi * 2) * amp
@@ -315,10 +320,9 @@ HitReactionAnimDef["Exhausted"] = {
 		end,
 		Neck = function(_j: Motor6D, defaultC0: CFrame, ac: AC): OnUpdate
 			local t = 0
-			local intensity = ac.intensity
-			local freq = 0.8 + intensity * 0.8
-			local droop = math.rad(15 + intensity * 20)
-			local amp = math.rad(3 + intensity * 5)
+			local freq = 0.8 + ac.intensity * 0.8
+			local droop = math.rad(15 + ac.intensity * 20)
+			local amp = math.rad(3 + ac.intensity * 5)
 			return function(joint: Motor6D, dt: number)
 				t += dt
 				local breath = math.sin(t * freq * math.pi * 2 + 0.3) * amp
@@ -328,4 +332,80 @@ HitReactionAnimDef["Exhausted"] = {
 	},
 }
 
-return HitReactionAnimDef
+-- ─── tag → animKey 매핑 ───────────────────────────────────────────────────────
+
+local MAPPING: { [string]: AnimMapping } = {
+
+	-- 0~0.5: 일반 피격, 0.5~1: 강한 피격
+	["anim_hit"] = {
+		variants = {
+			{ threshold = 0.0, animKey = "HitStagger" },
+			{ threshold = 0.5, animKey = "HitKnockback" },
+		},
+	},
+
+	-- intensity → 스턴 루프 속도/크기
+	["anim_stun"] = {
+		variants = {
+			{ threshold = 0.0, animKey = "Stun", loop = true },
+		},
+	},
+
+	["anim_airborne"] = {
+		variants = {
+			{ threshold = 0.0, animKey = "Airborne", loop = true },
+		},
+	},
+
+	["anim_ragdoll"] = {
+		variants = {
+			{ threshold = 0.0, special = "ragdoll" },
+		},
+	},
+
+	["anim_freeze"] = {
+		variants = {
+			{ threshold = 0.0, animKey = "Freeze", loop = true },
+		},
+	},
+
+	-- intensity → 넉백 각도/속도 스케일링
+	["anim_knockback"] = {
+		variants = {
+			{ threshold = 0.0, animKey = "Knockback" },
+		},
+	},
+
+	["anim_exhausted"] = {
+		variants = {
+			{ threshold = 0.0, animKey = "Exhausted", loop = true },
+		},
+	},
+}
+
+-- ─── 공개 API ─────────────────────────────────────────────────────────────────
+
+local PlayerStateAnimDef = Anims
+
+--[=[
+	intensity에 따라 사용할 animKey/loop/special을 반환합니다.
+]=]
+function PlayerStateAnimDef.resolve(tagName: string, intensity: number): ResolvedAnim?
+	local mapping = MAPPING[tagName]
+	if not mapping then
+		return nil
+	end
+	local chosen = mapping.variants[1]
+	for _, variant in mapping.variants do
+		if intensity >= variant.threshold then
+			chosen = variant
+		end
+	end
+	return {
+		animKey = chosen.animKey,
+		loop = chosen.loop,
+		special = chosen.special,
+	}
+end
+
+return PlayerStateAnimDef

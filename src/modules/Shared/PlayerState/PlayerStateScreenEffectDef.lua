@@ -12,6 +12,8 @@
 	loop:  true면 duration 동안 지속 유지.
 ]=]
 
+local require = require(script.Parent.loader).load(script)
+
 local PlayerStateDefs = require("PlayerStateDefs")
 local Tag = PlayerStateDefs.Tag
 
