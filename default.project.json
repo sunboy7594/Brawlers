@@ -1,0 +1,35 @@
+{
+  "name": "Brawlers",
+  "globIgnorePaths": [
+    "**/.package-lock.json",
+    "**/.pnpm",
+    "**/.pnpm-workspace-state-v1.json",
+    "**/.modules.yaml",
+    "**/.ignored",
+    "**/.ignored_*"
+  ],
+  "tree": {
+    "$className": "DataModel",
+    "ServerScriptService": {
+      "Brawlers": {
+        "$className": "Folder",
+        "game": {
+          "$path": "src/modules"
+        },
+        "node_modules": {
+          "$path": "node_modules"
+        }
+      },
+      "BrawlersScripts": {
+        "$path": "src/scripts/Server"
+      }
+    },
+    "StarterPlayer": {
+      "StarterPlayerScripts": {
+        "BrawlersScripts": {
+          "$path": "src/scripts/Client"
+        }
+      }
+    }
+  }
+}
