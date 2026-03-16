@@ -23,17 +23,44 @@ local BasicAttackRemoting = require("BasicAttackRemoting")
 local InstantHit = require("InstantHit")
 
 type BasicAttackState = {
+	-- 장착 정보
+	equippedAttackId: string?,
+
+	-- 캐릭터
+	humanoid: Humanoid?,
+	rootPart: BasePart?,
+
+	-- 탄약
+	currentAmmo: number,
+	maxAmmo: number,
+	reloadTime: number,
+	postDelay: number,
+
+	-- 타이밍
+	lastFireTime: number,
+	postDelayUntil: number,
+	lastRegenTime: number,
+	lastHitTime: number,
+	aimStartTime: number,
+
+	-- 콤보
+	fireComboCount: number,
+	hitComboCount: number,
+
+	-- 발사 컨텍스트
 	attacker: Model?,
 	origin: Vector3,
 	direction: Vector3,
 	aimTime: number,
+	effectiveAimTime: number,
 	idleTime: number,
-	lastHitTime: number,
-	fireComboCount: number,
-	hitComboCount: number,
-	currentAmmo: number,
 	victims: { Model }?,
+
+	-- 판정 콜백
 	onHit: ((victims: { Model }) -> ())?,
+
+	-- 예약 발사 취소 함수
+	pendingFireCancel: (() -> ())?,
 }
 
 local IDLE_COMBO_RESET = 3.0

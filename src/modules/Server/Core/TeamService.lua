@@ -37,7 +37,15 @@ local Teams = game:GetService("Teams")
 
 local Maid = require("Maid")
 local ServiceBag = require("ServiceBag")
-local TeamUtils = require("TeamUtils")
+
+-- ─── 내부 유틸 ───────────────────────────────────────────────────────────────
+
+local function areTeamMates(playerA: Player, playerB: Player): boolean
+	if playerA.Neutral or playerB.Neutral then
+		return false
+	end
+	return playerA.Team ~= nil and playerA.Team == playerB.Team
+end
 
 -- ─── 타입 ────────────────────────────────────────────────────────────────────
 
@@ -193,7 +201,7 @@ function TeamService:CanDamage(source: Player?, target: Player): boolean
 	end
 
 	-- 같은 팀이면 대미지 차단
-	if TeamUtils.areTeamMates(source, target) then
+	if areTeamMates(source, target) then
 		return false
 	end
 

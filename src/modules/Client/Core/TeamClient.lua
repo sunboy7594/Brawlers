@@ -24,7 +24,22 @@ local Players = game:GetService("Players")
 
 local Maid = require("Maid")
 local ServiceBag = require("ServiceBag")
-local TeamUtils = require("TeamUtils")
+
+-- ─── 내부 유틸 ───────────────────────────────────────────────────────────────
+
+local function getTeam(player: Player): Team?
+	if player.Neutral then
+		return nil
+	end
+	return player.Team
+end
+
+local function areTeamMates(playerA: Player, playerB: Player): boolean
+	if playerA.Neutral or playerB.Neutral then
+		return false
+	end
+	return playerA.Team ~= nil and playerA.Team == playerB.Team
+end
 
 -- ─── 타입 ────────────────────────────────────────────────────────────────────
 
@@ -52,7 +67,7 @@ function TeamClient.Start(self: TeamClient): ()
 
 	-- 테스트용: 팀 변경 시 Output 출력
 	self._maid:GiveTask(localPlayer:GetPropertyChangedSignal("Team"):Connect(function()
-		local team = TeamUtils.getTeam(localPlayer)
+		local team = getTeam(localPlayer)
 		if team then
 			print(string.format("[Team] %s 배정됨", team.Name))
 		else
@@ -66,11 +81,11 @@ end
 --[=[
 	대상 플레이어가 나의 적인지 반환합니다.
 
+	- 자기 자신           → false
 	- 내가 팀 없음 (FFA) → true (모두 적)
 	- 상대가 팀 없음      → true
 	- 같은 팀             → false
 	- 다른 팀             → true
-	- 자기 자신           → false
 
 	@param player Player
 	@return boolean
@@ -83,7 +98,7 @@ function TeamClient:IsEnemy(player: Player): boolean
 	if localPlayer.Neutral or player.Neutral then
 		return true
 	end
-	return not TeamUtils.areTeamMates(localPlayer, player)
+	return not areTeamMates(localPlayer, player)
 end
 
 --[=[
@@ -92,7 +107,7 @@ end
 	@return Team?
 ]=]
 function TeamClient:GetMyTeam(): Team?
-	return TeamUtils.getTeam(Players.LocalPlayer)
+	return getTeam(Players.LocalPlayer)
 end
 
 function TeamClient.Destroy(self: TeamClient)
