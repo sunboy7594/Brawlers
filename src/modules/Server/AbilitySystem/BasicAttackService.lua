@@ -94,6 +94,7 @@ export type BasicAttackState = {
 	origin: Vector3,
 	direction: Vector3,
 	aimTime: number,
+	effectiveAimTime: number, -- 추가
 	idleTime: number,
 	victims: { Model }?,
 
@@ -212,6 +213,7 @@ function BasicAttackService:_onPlayerAdded(player: Player)
 		origin = Vector3.zero,
 		direction = Vector3.new(0, 0, -1),
 		aimTime = 0,
+		effectiveAimTime = 0, -- 추가
 		idleTime = 0,
 		victims = nil,
 		onHit = nil,
@@ -350,6 +352,7 @@ function BasicAttackService:_executeFire(player: Player, state: BasicAttackState
 	state.direction = dir
 	state.aimTime = if state.aimStartTime > 0 then now - state.aimStartTime else 0
 	state.idleTime = if state.lastFireTime > 0 then now - state.lastFireTime else 0
+	state.effectiveAimTime = 0 -- 추가
 	state.victims = nil
 
 	state.lastFireTime = now
@@ -451,7 +454,8 @@ function BasicAttackService:_setPlayerAttack(player: Player, attackId: string)
 	state.postDelay = entry.def.postDelay
 	state.currentAmmo = entry.def.maxAmmo
 	state.postDelayUntil = 0
-	state.aimStartTime = 0 -- 버그 3: 신무기 첫 발사 aimTime 오염 방지
+	state.aimStartTime = 0
+	state.effectiveAimTime = 0 -- 추가
 	state.lastRegenTime = os.clock()
 	state.lastHitTime = 0
 	state.fireComboCount = 0
@@ -481,6 +485,7 @@ function BasicAttackService:CancelCombatState(player: Player)
 
 	state.postDelayUntil = 0
 	state.aimStartTime = 0
+	state.effectiveAimTime = 0 -- 추가
 	state.onHit = nil
 end
 

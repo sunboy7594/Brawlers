@@ -39,7 +39,6 @@ local EntityAnimator = require("EntityAnimator")
 local Maid = require("Maid")
 local PlayerBinderClient = require("PlayerBinderClient")
 local ServiceBag = require("ServiceBag")
-local TransparencyService = require("transparencyservice")
 local cancellableDelay = require("cancellableDelay")
 
 -- ─── 상수 ────────────────────────────────────────────────────────────────────
@@ -78,6 +77,7 @@ export type BasicAttackState = {
 	origin: Vector3,
 	direction: Vector3,
 	aimTime: number,
+	effectiveAimTime: number,
 	idleTime: number,
 	victims: { Player }?,
 }
@@ -166,7 +166,7 @@ function BasicAttackClient.Init(self: BasicAttackClient, serviceBag: ServiceBag.
 end
 
 function BasicAttackClient.Start(self: BasicAttackClient): ()
-	self._maid:GiveTask(RunService.Heartbeat:Connect(function()
+	self._maid:GiveTask(RunService.Heartbeat:Connect(function(dt)
 		local state = self._state
 		if not state then
 			return
@@ -175,6 +175,14 @@ function BasicAttackClient.Start(self: BasicAttackClient): ()
 		if self._aimController:IsAiming() then
 			local hasAmmo = state.currentAmmo > 0
 			local isPostDelay = os.clock() < state.postDelayUntil
+
+			local canFire = state.currentAmmo > 0 and os.clock() >= state.postDelayUntil
+
+			if canFire then
+				state.effectiveAimTime = state.effectiveAimTime + dt
+			else
+				state.effectiveAimTime = 0
+			end
 
 			if not hasAmmo then
 				state.indicator:update({ color = COLOR_NO_AMMO })
@@ -222,8 +230,7 @@ function BasicAttackClient:SetEquippedAttack(attackId: string)
 	end
 
 	local entry = ATTACK_REGISTRY[attackId]
-	local ts = self._serviceBag:GetService(TransparencyService)
-	local indicator = if entry then DynamicIndicator.new(entry.module.shapes, ts) else DynamicIndicator.new(nil, ts)
+	local indicator = if entry then DynamicIndicator.new(entry.module.shapes) else DynamicIndicator.new(nil)
 
 	self._state = {
 		indicator = indicator,
@@ -240,6 +247,7 @@ function BasicAttackClient:SetEquippedAttack(attackId: string)
 		origin = Vector3.zero,
 		direction = Vector3.new(0, 0, -1),
 		aimTime = 0,
+		effectiveAimTime = 0,
 		idleTime = 0,
 		victims = nil,
 	}

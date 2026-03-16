@@ -8,14 +8,13 @@
 
 	update(params)로 shape 전환 포함 모든 시각 요소 런타임 변경 가능.
 
-	투명도는 TransparencyService를 통해 두 레이어로 관리:
-	  _baseKey   : 기본 가시성 (show/hide, cfg.transparency)
-	  _effectKey : 런타임 오버라이드 (postDelay 등)
-	TransparencyService는 두 키 중 max 값을 최종 투명도로 적용.
-	파트 원본 Transparency = 0이므로 Math.map(v, 0, 1, 0, 1) = v, 직관적으로 동작.
+	투명도는 두 레이어로 직접 관리:
+	  _baseT   : 기본 가시성 (show/hide, cfg.transparency)
+	  _effectT : 런타임 오버라이드 (postDelay 등)
+	최종 Transparency = math.max(base, effect) 직접 적용.
 
 	사용 예:
-	    local ind = DynamicIndicator.new({ "cone", "line" }, ts)
+	    local ind = DynamicIndicator.new({ "cone", "line" })
 	    ind:update({ shape = "cone", range = 8, angle = 90, color = Color3.new(1,1,0) })
 	    ind:show()
 	    ind:hide()
@@ -24,19 +23,17 @@
 
 local require = require(script.Parent.loader).load(script)
 
-local TransparencyService = require("Transparencyservice")
-
 -- ─── 상수 ────────────────────────────────────────────────────────────────────
 
 local PART_Y = 0.06
 local PART_HEIGHT = 0.15
-local CONE_SEGMENTS = 16 -- ← 5→16, 겹침 없이 틈 안 보임
+local CONE_SEGMENTS = 10
 
 local DEFAULT_COLOR = Color3.fromRGB(160, 160, 160)
-local DEFAULT_TRANSPARENCY = 0.45
+local DEFAULT_TRANSPARENCY = 0
 
 local DEFAULTS = {
-	cone = { range = 8, angle = 90, color = DEFAULT_COLOR, transparency = DEFAULT_TRANSPARENCY },
+	cone = { range = 8, angle = 360, color = DEFAULT_COLOR, transparency = DEFAULT_TRANSPARENCY },
 	circle = { radius = 5, color = DEFAULT_COLOR, transparency = DEFAULT_TRANSPARENCY },
 	line = { range = 10, width = 3, color = DEFAULT_COLOR, transparency = DEFAULT_TRANSPARENCY },
 	arc = {
@@ -63,9 +60,8 @@ export type DynamicIndicator = {
 	_activeShape: string,
 	_origin: Vector3,
 	_direction: Vector3,
-	_ts: TransparencyService.TransparencyService,
-	_baseKey: { [any]: any },
-	_effectKey: { [any]: any },
+	_baseT: { [string]: number }, -- shape별 기본 투명도
+	_effectT: { [string]: number }, -- shape별 이펙트 투명도
 	update: (self: DynamicIndicator, params: any) -> (),
 	show: (self: DynamicIndicator) -> (),
 	hide: (self: DynamicIndicator) -> (),
@@ -86,7 +82,6 @@ end
 
 -- ─── Shape 생성 ──────────────────────────────────────────────────────────────
 
--- 파트 원본 Transparency = 0. TransparencyService가 모든 투명도를 관리.
 local function makePart(folder: Folder, color: Color3): BasePart
 	local p = Instance.new("Part")
 	p.Anchored = true
@@ -95,7 +90,7 @@ local function makePart(folder: Folder, color: Color3): BasePart
 	p.CastShadow = false
 	p.Material = Enum.Material.Neon
 	p.Color = color
-	p.Transparency = 0 -- original = 0 → Math.map(v, 0, 1, 0, 1) = v
+	p.Transparency = 1 -- 초기 숨김; 투명도는 _applyTransparency로만 제어
 	p.Parent = folder
 	return p
 end
@@ -105,7 +100,6 @@ local function createCone(folder: Folder, cfg: { [string]: any }): { BasePart }
 	local segAngle = cfg.angle / CONE_SEGMENTS
 	for _ = 1, CONE_SEGMENTS do
 		local p = makePart(folder, cfg.color)
-		-- +0.05 제거: 세그먼트 겹침 없음 → 투명 시 진해지는 문제 해결
 		local segWidth = cfg.range * 2 * math.tan(math.rad(segAngle / 2))
 		p.Size = Vector3.new(segWidth, PART_HEIGHT, cfg.range)
 		table.insert(parts, p)
@@ -143,34 +137,41 @@ local CREATORS = {
 -- ─── Shape 위치 업데이트 ──────────────────────────────────────────────────────
 
 local function updateConePos(parts: { BasePart }, origin: Vector3, direction: Vector3, cfg: { [string]: any })
-	local halfAngle = cfg.angle / 2
-	local segAngle = cfg.angle / CONE_SEGMENTS
 	local dirH = Vector3.new(direction.X, 0, direction.Z)
 	if dirH.Magnitude < 0.001 then
-		return
+		dirH = Vector3.new(0, 0, -1)
+	else
+		dirH = dirH.Unit
 	end
-	dirH = dirH.Unit
+
+	local halfAngle = cfg.angle / 2
+	local segAngle = cfg.angle / CONE_SEGMENTS
 
 	for i, part in parts do
 		local segCenterDeg = -halfAngle + segAngle * (i - 0.5)
 		local rad = math.rad(segCenterDeg)
-		local cos, sin = math.cos(rad), math.sin(rad)
-		local segDir = Vector3.new(dirH.X * cos - dirH.Z * sin, 0, dirH.X * sin + dirH.Z * cos)
+		local cosR, sinR = math.cos(rad), math.sin(rad)
+
+		-- dirH 기준으로 로컬 회전 (2D 회전 행렬)
+		local segDir = Vector3.new(dirH.X * cosR - dirH.Z * sinR, 0, dirH.X * sinR + dirH.Z * cosR)
+
 		local center = Vector3.new(origin.X + segDir.X * cfg.range / 2, PART_Y, origin.Z + segDir.Z * cfg.range / 2)
+
 		part.CFrame = CFrame.lookAt(center, center + segDir)
 	end
 end
 
 local function updateCirclePos(parts: { BasePart }, origin: Vector3, _direction: Vector3, _cfg: { [string]: any })
-	parts[1].CFrame = CFrame.new(Vector3.new(origin.X, PART_Y, origin.Z)) * CFrame.fromEulerAnglesXYZ(0, 0, math.pi / 2)
+	parts[1].CFrame = CFrame.new(origin.X, PART_Y, origin.Z) * CFrame.fromEulerAnglesXYZ(0, 0, math.pi / 2)
 end
 
 local function updateLinePos(parts: { BasePart }, origin: Vector3, direction: Vector3, cfg: { [string]: any })
 	local dirH = Vector3.new(direction.X, 0, direction.Z)
 	if dirH.Magnitude < 0.001 then
-		return
+		dirH = Vector3.new(0, 0, -1)
+	else
+		dirH = dirH.Unit
 	end
-	dirH = dirH.Unit
 	local center = Vector3.new(origin.X + dirH.X * cfg.range / 2, PART_Y, origin.Z + dirH.Z * cfg.range / 2)
 	parts[1].CFrame = CFrame.lookAt(center, center + dirH)
 end
@@ -182,14 +183,16 @@ local function calcArcLanding(
 	gravity: number,
 	maxRange: number
 ): Vector3
-	local startHeight = math.max(origin.Y, 0.01)
-	local fallTime = math.sqrt(2 * startHeight / gravity)
-	local horizontal = math.min(speed * fallTime, maxRange)
 	local dirH = Vector3.new(direction.X, 0, direction.Z)
 	if dirH.Magnitude < 0.001 then
-		return Vector3.new(origin.X, PART_Y, origin.Z)
+		dirH = Vector3.new(0, 0, -1)
+	else
+		dirH = dirH.Unit
 	end
-	dirH = dirH.Unit
+	local vy = direction.Y * speed
+	local vh = math.sqrt(math.max(0, speed * speed - vy * vy))
+	local t = if gravity > 0 then (vy + math.sqrt(math.max(0, vy * vy + 2 * gravity * 3))) / gravity else 1
+	local horizontal = math.min(vh * t, maxRange)
 	return Vector3.new(origin.X + dirH.X * horizontal, PART_Y, origin.Z + dirH.Z * horizontal)
 end
 
@@ -210,7 +213,7 @@ local POS_UPDATERS = {
 local function resizeCone(parts: { BasePart }, cfg: { [string]: any })
 	local segAngle = cfg.angle / CONE_SEGMENTS
 	for _, part in parts do
-		local segWidth = cfg.range * 2 * math.tan(math.rad(segAngle / 2)) -- +0.05 제거
+		local segWidth = cfg.range * 2 * math.tan(math.rad(segAngle / 2))
 		part.Size = Vector3.new(segWidth, PART_HEIGHT, cfg.range)
 	end
 end
@@ -234,46 +237,34 @@ local RESIZERS = {
 	arc = resizeArc,
 }
 
--- ─── 내부 헬퍼 ───────────────────────────────────────────────────────────────
-
--- baseKey: 가시성 제어 (show/hide, cfg.transparency)
--- TransparencyService value=1 → 완전 숨김, value=cfg.transparency → 정상 표시
-local function setBase(
-	ts: TransparencyService.TransparencyService,
-	key: { [any]: any },
-	parts: { BasePart },
-	value: number
-)
-	for _, p in parts do
-		ts:SetTransparency(key, p, value)
-	end
-end
-
--- effectKey: 런타임 오버라이드 (postDelay 등)
--- value=0 → TransparencyService가 nil로 처리 → effectKey 리셋 → baseKey만 남음
-local function setEffect(
-	ts: TransparencyService.TransparencyService,
-	key: { [any]: any },
-	parts: { BasePart },
-	value: number
-)
-	for _, p in parts do
-		ts:SetTransparency(key, p, value)
-	end
-end
-
 -- ─── 공개 API ────────────────────────────────────────────────────────────────
 
 local DynamicIndicator = {}
 DynamicIndicator.__index = DynamicIndicator
 
-function DynamicIndicator.new(shapes: { string }?, ts: TransparencyService.TransparencyService): DynamicIndicator
+--[=[
+	내부: shape의 최종 투명도를 적용합니다.
+	final = math.max(_baseT[shape], _effectT[shape])
+]=]
+function DynamicIndicator:_applyTransparency(shapeName: string)
+	local shapeData = self._shapes[shapeName]
+	if not shapeData then
+		return
+	end
+	local base = self._baseT[shapeName] or 1
+	local effect = self._effectT[shapeName] or 0
+	local final = math.max(base, effect)
+	for _, p in shapeData.parts do
+		p.Transparency = final
+	end
+end
+
+function DynamicIndicator.new(shapes: { string }?): DynamicIndicator
 	local self = setmetatable({} :: any, DynamicIndicator)
 	local folder = getFolder()
 
-	self._ts = ts
-	self._baseKey = {} -- 고유 테이블 (TransparencyService 키)
-	self._effectKey = {} -- 고유 테이블 (TransparencyService 키)
+	self._baseT = {}
+	self._effectT = {}
 
 	local shapeList: { string } = shapes or ALL_SHAPES
 	self._shapes = {}
@@ -294,13 +285,16 @@ function DynamicIndicator.new(shapes: { string }?, ts: TransparencyService.Trans
 		self._shapes[shapeName] = { parts = parts, config = cfg }
 
 		-- 모든 shape 초기 숨김
-		setBase(ts, self._baseKey, parts, 1)
+		self._baseT[shapeName] = 1
+		self._effectT[shapeName] = 0
+		-- makePart에서 이미 Transparency=1로 생성됨
 	end
 
 	-- activeShape는 기본 투명도로 표시
 	local activeData = self._shapes[self._activeShape]
 	if activeData then
-		setBase(ts, self._baseKey, activeData.parts, activeData.config.transparency)
+		self._baseT[self._activeShape] = activeData.config.transparency
+		self:_applyTransparency(self._activeShape)
 	end
 
 	return self :: DynamicIndicator
@@ -313,15 +307,17 @@ end
 function DynamicIndicator:update(params: any)
 	-- shape 전환
 	if params.shape and params.shape ~= self._activeShape then
-		local old = self._shapes[self._activeShape]
-		if old then
-			setBase(self._ts, self._baseKey, old.parts, 1)
-			setEffect(self._ts, self._effectKey, old.parts, 0) -- effectKey도 리셋
-		end
+		local oldName = self._activeShape
+		-- 이전 shape 숨김 + effect 리셋
+		self._baseT[oldName] = 1
+		self._effectT[oldName] = 0
+		self:_applyTransparency(oldName)
+
 		self._activeShape = params.shape
 		local new = self._shapes[self._activeShape]
 		if new then
-			setBase(self._ts, self._baseKey, new.parts, new.config.transparency)
+			self._baseT[self._activeShape] = new.config.transparency
+			self:_applyTransparency(self._activeShape)
 		end
 	end
 
@@ -349,11 +345,11 @@ function DynamicIndicator:update(params: any)
 		end
 	end
 
-	-- 투명도 오버라이드 (effectKey)
-	-- 0 → TransparencyService가 nil로 처리 → effectKey 리셋 → baseKey(cfg.transparency)로 복귀
-	-- 이전 코드의 `if params.transparency` (0이 falsy라 리셋 불가 버그) 수정
+	-- 투명도 오버라이드 (effectT)
+	-- 0 → effectT=0 → math.max(base, 0) = base → 자연스럽게 baseT로 복귀
 	if params.transparency ~= nil then
-		setEffect(self._ts, self._effectKey, parts, params.transparency)
+		self._effectT[self._activeShape] = params.transparency
+		self:_applyTransparency(self._activeShape)
 	end
 
 	-- 크기 관련
@@ -381,21 +377,22 @@ function DynamicIndicator:show()
 	if not shapeData then
 		return
 	end
-	setBase(self._ts, self._baseKey, shapeData.parts, shapeData.config.transparency)
+	self._baseT[self._activeShape] = shapeData.config.transparency
+	self:_applyTransparency(self._activeShape)
 end
 
 --[=[
 	모든 shape의 Parts를 숨깁니다.
 ]=]
 function DynamicIndicator:hide()
-	for _, shapeData in self._shapes do
-		setBase(self._ts, self._baseKey, shapeData.parts, 1)
+	for shapeName in self._shapes do
+		self._baseT[shapeName] = 1
+		self:_applyTransparency(shapeName)
 	end
 end
 
 --[=[
 	모든 Parts를 Destroy합니다.
-	파트 Destroy 시 TransparencyService의 weakmap에서 자동 제거됩니다.
 ]=]
 function DynamicIndicator:destroy()
 	for _, shapeData in self._shapes do
