@@ -28,9 +28,9 @@
 	  (미취소 시: 구 타이머가 나중에 터지면서 새 잠금의 _postFireYaw를 nil로 덮어 방향 잠금 해제됨)
 
 	클라이언트 공격 모듈 훅 (AbilityExecutor가 실행):
-	- OnAimStart: { (ctx) -> () }?  조준 시작 1회
-	- OnAim:      { (ctx) -> () }?  매 프레임, ctx.indicator 직접 업데이트
-	- OnFire:     { (ctx) -> () }?  발사 확정 후 — onFireServer 콜백 내부에서 호출됨
+	- OnAimStart: { (abilityState) -> () }?  조준 시작 1회
+	- OnAim:      { (abilityState) -> () }?  매 프레임, abilityState.indicator 직접 업데이트
+	- OnFire:     { (abilityState) -> () }?  발사 확정 후 — onFireServer 콜백 내부에서 호출됨
 	취소 시: indicator hide만 (onCancel 없음)
 ]=]
 
@@ -52,7 +52,7 @@ local cancellableDelay = require("cancellableDelay")
 type AimState = {
 	abilityType: string,
 	clientModule: any,
-	ctx: any,
+	abilityState: any,
 	onFireServer: (direction: Vector3) -> (),
 	startTime: number,
 	maid: any,
@@ -143,14 +143,14 @@ end
 
 	@param abilityType      string                       AimControllerClient.AbilityType 중 하나
 	@param clientModule     table                        공격 클라이언트 모듈
-	@param ctx              table                        BasicAttackClient가 소유하는 ClientContext
+	@param abilityState     table                        능력 상태 객체 (BasicAttackState 등)
 	@param onFireServer     (direction: Vector3) -> ()   서버 전송 콜백
 	@param postFireDuration number?                      발사 후 AutoRotate 잠금 시간 (기본 0)
 ]=]
 function AimControllerClient:StartAim(
 	abilityType: string,
 	clientModule: any,
-	ctx: any,
+	abilityState: any,
 	onFireServer: (direction: Vector3) -> (),
 	postFireDuration: number?
 )
@@ -181,15 +181,15 @@ function AimControllerClient:StartAim(
 	self._aimState = {
 		abilityType = abilityType,
 		clientModule = clientModule,
-		ctx = ctx,
+		abilityState = abilityState,
 		onFireServer = onFireServer,
 		startTime = os.clock(),
 		maid = Maid.new(),
 		postFireDuration = postFireDuration or 0,
 	}
 
-	ctx.indicator:show()
-	AbilityExecutor.OnAimStart(clientModule, ctx)
+	abilityState.indicator:show()
+	AbilityExecutor.OnAimStart(clientModule, abilityState)
 end
 
 --[=[
@@ -290,12 +290,12 @@ function AimControllerClient:_confirm()
 		return
 	end
 
-	local ctx = state.ctx
-	ctx.aimTime = os.clock() - state.startTime
-	ctx.direction = direction
-	ctx.origin = origin or Vector3.zero
+	local abilityState = state.abilityState
+	abilityState.aimTime = os.clock() - state.startTime
+	abilityState.direction = direction
+	abilityState.origin = origin or Vector3.zero
 
-	ctx.indicator:hide()
+	abilityState.indicator:hide()
 
 	local onFireServer = state.onFireServer
 	local postFireDuration = state.postFireDuration
@@ -345,7 +345,7 @@ function AimControllerClient:_cancelInternal()
 		return
 	end
 
-	state.ctx.indicator:hide()
+	state.abilityState.indicator:hide()
 	state.maid:Destroy()
 	self._aimState = nil
 
@@ -376,13 +376,13 @@ function AimControllerClient:_onRenderStep()
 		return
 	end
 
-	local ctx = state.ctx
-	ctx.aimTime = os.clock() - state.startTime
-	ctx.direction = direction
-	ctx.origin = origin
+	local abilityState = state.abilityState
+	abilityState.aimTime = os.clock() - state.startTime
+	abilityState.direction = direction
+	abilityState.origin = origin
 
-	ctx.indicator:update({ origin = origin, direction = direction })
-	AbilityExecutor.OnAim(state.clientModule, ctx)
+	abilityState.indicator:update({ origin = origin, direction = direction })
+	AbilityExecutor.OnAim(state.clientModule, abilityState)
 end
 
 function AimControllerClient.Destroy(self: AimControllerClient)
