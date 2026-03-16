@@ -60,7 +60,7 @@ local MAX_DIRECTION_MAGNITUDE_DELTA = 0.1
 -- ⚠️ 주의: BasicAttackClient.lua의 POST_DELAY_QUEUE_THRESHOLD와
 --          반드시 동일한 값을 유지해야 합니다.
 --          한쪽만 바꾸면 예약 발사 타이밍이 서버-클라이언트 간 어긋납니다.
-local POST_DELAY_QUEUE_THRESHOLD = 0.3 -- 잔여 비율 30% 이하일 때 예약 발사
+local POST_DELAY_QUEUE_THRESHOLD = 0.8 -- 잔여 비율 80% 이하일 때 예약 발사
 
 -- ─── 타입 ────────────────────────────────────────────────────────────────────
 

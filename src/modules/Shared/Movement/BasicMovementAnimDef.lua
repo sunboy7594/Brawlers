@@ -9,6 +9,8 @@ local Layer = {
 	OVERRIDE = 2,
 }
 
+local TWO_PI = math.pi * 2
+
 local BasicMovementAnimDef = {}
 
 type OnUpdate = (joint: Motor6D, dt: number) -> ()
@@ -27,6 +29,8 @@ type AnimDef =
 		type: "modify",
 		joints: { [string]: ModifyFactory },
 	}
+
+export type CycleRef = { base: number, value: number }
 
 -- ─── Idle ────────────────────────────────────────────────────────────────────
 
@@ -56,7 +60,6 @@ local function makeIdle(_intensity: number): AnimDef
 					ac:spring(j, defaultC0 * RootPose, 10, 0.3, dt)
 				end
 			end,
-			-- 숨쉬기(breathOffset) 제거 → Breathing modifier가 처리
 			Waist = function(_joint, defaultC0, ac): OnUpdate
 				return function(j, dt)
 					ac:spring(j, defaultC0 * WaistPose, 10, 0.3, dt)
@@ -135,13 +138,10 @@ end
 
 --[=[
 	숨쉬기 modifier. Idle/Walk/Run 어느 상태에서도 독립적으로 동작합니다.
-	@param cycle  숨쉬기 주기 (Hz). 높을수록 빠름.
+	@param cycleRef  { base: number, value: number } — value가 Hz. 외부에서 실시간 변경 가능.
 	@param intensity  진폭 배율.
 ]=]
-local function makeBreath(cycle: number, intensity: number): AnimDef
-	local freq = cycle * math.pi * 2
-	local period = 1 / cycle
-
+local function makeBreath(cycleRef: CycleRef, intensity: number): AnimDef
 	return {
 		type = "modify",
 		joints = {
@@ -149,8 +149,8 @@ local function makeBreath(cycle: number, intensity: number): AnimDef
 			Waist = function(_joint, _defaultC0, _ac): OnModify
 				local t = 0
 				return function(current: CFrame, dt: number): CFrame
-					t = (t + dt) % period
-					local breath = math.sin(t * freq)
+					t = (t + dt * cycleRef.value) % 1
+					local breath = math.sin(t * TWO_PI)
 					return current
 						* CFrame.new(0, breath * 0.01 * intensity, 0)
 						* CFrame.Angles(breath * 0.01 * intensity, 0, 0)
@@ -160,8 +160,8 @@ local function makeBreath(cycle: number, intensity: number): AnimDef
 			Neck = function(_joint, _defaultC0, _ac): OnModify
 				local t = 0
 				return function(current: CFrame, dt: number): CFrame
-					t = (t + dt) % period
-					local sway = math.sin(t * freq + 0.5)
+					t = (t + dt * cycleRef.value) % 1
+					local sway = math.sin(t * TWO_PI + 0.5)
 					return current * CFrame.Angles(-sway * 0.025 * intensity, 0, sway * 0.015 * intensity)
 				end
 			end,
@@ -171,10 +171,12 @@ end
 
 -- ─── Walk ────────────────────────────────────────────────────────────────────
 
-local function makeWalk(cycle: number, intensity: number, lean: number): AnimDef
-	local freq = cycle * math.pi * 2
-	local period = 1 / cycle
-
+--[=[
+	@param cycleRef  { base: number, value: number } — value가 Hz. 외부에서 실시간 변경 가능.
+	@param intensity  진폭 배율.
+	@param lean  전방 기울기.
+]=]
+local function makeWalk(cycleRef: CycleRef, intensity: number, lean: number): AnimDef
 	return {
 		type = "anim",
 		layer = Layer.BASE,
@@ -182,34 +184,34 @@ local function makeWalk(cycle: number, intensity: number, lean: number): AnimDef
 			Root = function(_joint, defaultC0, ac): OnUpdate
 				local t = 0
 				return function(j, dt)
-					t = (t + dt) % period
-					local bob = math.abs(math.sin(t * freq)) * 0.12 * intensity
+					t = (t + dt * cycleRef.value) % 1
+					local bob = math.abs(math.sin(t * TWO_PI)) * 0.12 * intensity
 					ac:spring(j, defaultC0 * CFrame.new(0, -bob, 0), 10, 0.3, dt)
 				end
 			end,
 			Waist = function(_joint, defaultC0, ac): OnUpdate
 				local t = 0
 				return function(j, dt)
-					t = (t + dt) % period
-					local sway = math.sin(t * freq) * 0.08 * intensity
+					t = (t + dt * cycleRef.value) % 1
+					local sway = math.sin(t * TWO_PI) * 0.08 * intensity
 					ac:spring(j, defaultC0 * CFrame.Angles(lean, 0, sway), 10, 0.3, dt)
 				end
 			end,
 			Neck = function(_joint, defaultC0, ac): OnUpdate
 				local t = 0
 				return function(j, dt)
-					t = (t + dt) % period
-					local counter = math.sin(t * freq) * 0.04 * intensity
+					t = (t + dt * cycleRef.value) % 1
+					local counter = math.sin(t * TWO_PI) * 0.04 * intensity
 					ac:spring(j, defaultC0 * CFrame.Angles(-lean * 0.5, 0, -counter), 10, 0.3, dt)
 				end
 			end,
 			LeftHip = function(_joint, defaultC0, ac): OnUpdate
 				local t = 0
 				return function(j, dt)
-					t = (t + dt) % period
+					t = (t + dt * cycleRef.value) % 1
 					local dir = ac:GetMoveDir()
 					local fwdFactor = math.max(0.35, math.abs(dir.Z))
-					local swing = math.sin(t * freq) * 0.7 * intensity * fwdFactor
+					local swing = math.sin(t * TWO_PI) * 0.7 * intensity * fwdFactor
 					local backBias = math.max(0, dir.Z) * -0.25
 					local swingAxis = Vector3.new(-dir.Z, 0, dir.X)
 					local axisLen = swingAxis.Magnitude
@@ -226,10 +228,10 @@ local function makeWalk(cycle: number, intensity: number, lean: number): AnimDef
 			RightHip = function(_joint, defaultC0, ac): OnUpdate
 				local t = 0
 				return function(j, dt)
-					t = (t + dt) % period
+					t = (t + dt * cycleRef.value) % 1
 					local dir = ac:GetMoveDir()
 					local fwdFactor = math.max(0.35, math.abs(dir.Z))
-					local swing = -math.sin(t * freq) * 0.7 * intensity * fwdFactor
+					local swing = -math.sin(t * TWO_PI) * 0.7 * intensity * fwdFactor
 					local backBias = math.max(0, dir.Z) * -0.25
 					local swingAxis = Vector3.new(-dir.Z, 0, dir.X)
 					local axisLen = swingAxis.Magnitude
@@ -246,30 +248,30 @@ local function makeWalk(cycle: number, intensity: number, lean: number): AnimDef
 			LeftKnee = function(_joint, defaultC0, ac): OnUpdate
 				local t = 0
 				return function(j, dt)
-					t = (t + dt) % period
+					t = (t + dt * cycleRef.value) % 1
 					local dir = ac:GetMoveDir()
 					local fwdFactor = math.max(0.35, math.abs(dir.Z))
-					local bend = math.max(0, math.sin(t * freq + math.pi)) * 0.7 * intensity * fwdFactor
+					local bend = math.max(0, math.sin(t * TWO_PI + math.pi)) * 0.7 * intensity * fwdFactor
 					ac:spring(j, defaultC0 * CFrame.Angles(-bend, 0, 0), 10, 0.3, dt)
 				end
 			end,
 			RightKnee = function(_joint, defaultC0, ac): OnUpdate
 				local t = 0
 				return function(j, dt)
-					t = (t + dt) % period
+					t = (t + dt * cycleRef.value) % 1
 					local dir = ac:GetMoveDir()
 					local fwdFactor = math.max(0.35, math.abs(dir.Z))
-					local bend = math.max(0, -math.sin(t * freq + math.pi)) * 0.7 * intensity * fwdFactor
+					local bend = math.max(0, -math.sin(t * TWO_PI + math.pi)) * 0.7 * intensity * fwdFactor
 					ac:spring(j, defaultC0 * CFrame.Angles(-bend, 0, 0), 10, 0.3, dt)
 				end
 			end,
 			LeftAnkle = function(_joint, defaultC0, ac): OnUpdate
 				local t = 0
 				return function(j, dt)
-					t = (t + dt) % period
+					t = (t + dt * cycleRef.value) % 1
 					local dir = ac:GetMoveDir()
 					local baseFwd = 0.05
-					local flex = math.sin(t * freq) * 0.25 * intensity * (if dir.Z > 0.3 then -1 else 1)
+					local flex = math.sin(t * TWO_PI) * 0.25 * intensity * (if dir.Z > 0.3 then -1 else 1)
 					local sideFlex = -dir.X * 0.2
 					ac:spring(j, defaultC0 * CFrame.Angles(baseFwd + flex, 0, sideFlex), 10, 0.3, dt)
 				end
@@ -277,10 +279,10 @@ local function makeWalk(cycle: number, intensity: number, lean: number): AnimDef
 			RightAnkle = function(_joint, defaultC0, ac): OnUpdate
 				local t = 0
 				return function(j, dt)
-					t = (t + dt) % period
+					t = (t + dt * cycleRef.value) % 1
 					local dir = ac:GetMoveDir()
 					local baseFwd = 0.05
-					local flex = -math.sin(t * freq) * 0.25 * intensity * (if dir.Z > 0.3 then -1 else 1)
+					local flex = -math.sin(t * TWO_PI) * 0.25 * intensity * (if dir.Z > 0.3 then -1 else 1)
 					local sideFlex = -dir.X * 0.2
 					ac:spring(j, defaultC0 * CFrame.Angles(baseFwd + flex, 0, sideFlex), 10, 0.3, dt)
 				end
@@ -288,68 +290,68 @@ local function makeWalk(cycle: number, intensity: number, lean: number): AnimDef
 			LeftShoulder = function(_joint, defaultC0, ac): OnUpdate
 				local t = 0
 				return function(j, dt)
-					t = (t + dt) % period
+					t = (t + dt * cycleRef.value) % 1
 					local dir = ac:GetMoveDir()
 					local absZ = math.abs(dir.Z)
 					local fwdFactor = if absZ > 0.3 then absZ else 0.3
-					local swing = -math.sin(t * freq) * 0.4 * intensity * fwdFactor
-					local splay = math.abs(math.sin(t * freq)) * 0.06 * intensity * fwdFactor
+					local swing = -math.sin(t * TWO_PI) * 0.4 * intensity * fwdFactor
+					local splay = math.abs(math.sin(t * TWO_PI)) * 0.06 * intensity * fwdFactor
 					ac:spring(j, defaultC0 * CFrame.Angles(swing, 0, -splay), 10, 0.3, dt)
 				end
 			end,
 			RightShoulder = function(_joint, defaultC0, ac): OnUpdate
 				local t = 0
 				return function(j, dt)
-					t = (t + dt) % period
+					t = (t + dt * cycleRef.value) % 1
 					local dir = ac:GetMoveDir()
 					local absZ = math.abs(dir.Z)
 					local fwdFactor = if absZ > 0.3 then absZ else 0.3
-					local swing = math.sin(t * freq) * 0.4 * intensity * fwdFactor
-					local splay = math.abs(math.sin(t * freq)) * 0.06 * intensity * fwdFactor
+					local swing = math.sin(t * TWO_PI) * 0.4 * intensity * fwdFactor
+					local splay = math.abs(math.sin(t * TWO_PI)) * 0.06 * intensity * fwdFactor
 					ac:spring(j, defaultC0 * CFrame.Angles(swing, 0, splay), 10, 0.3, dt)
 				end
 			end,
 			LeftElbow = function(_joint, defaultC0, ac): OnUpdate
 				local t = 0
 				return function(j, dt)
-					t = (t + dt) % period
+					t = (t + dt * cycleRef.value) % 1
 					local dir = ac:GetMoveDir()
 					local absZ = math.abs(dir.Z)
 					local fwdFactor = if absZ > 0.3 then absZ else 0.3
-					local bend = math.max(0, -math.sin(t * freq)) * 0.4 * intensity * fwdFactor
+					local bend = math.max(0, -math.sin(t * TWO_PI)) * 0.4 * intensity * fwdFactor
 					ac:spring(j, defaultC0 * CFrame.Angles(bend, 0, 0), 10, 0.3, dt)
 				end
 			end,
 			RightElbow = function(_joint, defaultC0, ac): OnUpdate
 				local t = 0
 				return function(j, dt)
-					t = (t + dt) % period
+					t = (t + dt * cycleRef.value) % 1
 					local dir = ac:GetMoveDir()
 					local absZ = math.abs(dir.Z)
 					local fwdFactor = if absZ > 0.3 then absZ else 0.3
-					local bend = math.max(0, math.sin(t * freq)) * 0.4 * intensity * fwdFactor
+					local bend = math.max(0, math.sin(t * TWO_PI)) * 0.4 * intensity * fwdFactor
 					ac:spring(j, defaultC0 * CFrame.Angles(bend, 0, 0), 10, 0.3, dt)
 				end
 			end,
 			LeftWrist = function(_joint, defaultC0, ac): OnUpdate
 				local t = 0
 				return function(j, dt)
-					t = (t + dt) % period
+					t = (t + dt * cycleRef.value) % 1
 					local dir = ac:GetMoveDir()
 					local absZ = math.abs(dir.Z)
 					local fwdFactor = if absZ > 0.3 then absZ else 0.3
-					local flick = math.sin(t * freq + 0.3) * 0.08 * intensity * fwdFactor
+					local flick = math.sin(t * TWO_PI + 0.3) * 0.08 * intensity * fwdFactor
 					ac:spring(j, defaultC0 * CFrame.Angles(flick, 0, 0), 10, 0.3, dt)
 				end
 			end,
 			RightWrist = function(_joint, defaultC0, ac): OnUpdate
 				local t = 0
 				return function(j, dt)
-					t = (t + dt) % period
+					t = (t + dt * cycleRef.value) % 1
 					local dir = ac:GetMoveDir()
 					local absZ = math.abs(dir.Z)
 					local fwdFactor = if absZ > 0.3 then absZ else 0.3
-					local flick = -math.sin(t * freq + 0.3) * 0.08 * intensity * fwdFactor
+					local flick = -math.sin(t * TWO_PI + 0.3) * 0.08 * intensity * fwdFactor
 					ac:spring(j, defaultC0 * CFrame.Angles(flick, 0, 0), 10, 0.3, dt)
 				end
 			end,
@@ -359,9 +361,11 @@ end
 
 -- ─── Run ─────────────────────────────────────────────────────────────────────
 
-local function makeRun(cycle: number, intensity: number): AnimDef
-	local freq = cycle * math.pi * 2
-	local period = 1 / cycle
+--[=[
+	@param cycleRef  { base: number, value: number } — value가 Hz. 외부에서 실시간 변경 가능.
+	@param intensity  진폭 배율.
+]=]
+local function makeRun(cycleRef: CycleRef, intensity: number): AnimDef
 	local FORWARD_LEAN = 0.28
 
 	return {
@@ -371,9 +375,9 @@ local function makeRun(cycle: number, intensity: number): AnimDef
 			Root = function(_joint, defaultC0, ac): OnUpdate
 				local t = 0
 				return function(j, dt)
-					t = (t + dt) % period
-					local bob = math.abs(math.sin(t * freq)) * 0.22 * intensity
-					local rockFwd = math.sin(t * freq) * 0.06 * intensity
+					t = (t + dt * cycleRef.value) % 1
+					local bob = math.abs(math.sin(t * TWO_PI)) * 0.22 * intensity
+					local rockFwd = math.sin(t * TWO_PI) * 0.06 * intensity
 					local crouchOffset = -0.18 * intensity
 					ac:spring(j, defaultC0 * CFrame.new(0, crouchOffset - bob, rockFwd), 10, 0.3, dt)
 				end
@@ -381,10 +385,10 @@ local function makeRun(cycle: number, intensity: number): AnimDef
 			Waist = function(_joint, defaultC0, ac): OnUpdate
 				local t = 0
 				return function(j, dt)
-					t = (t + dt) % period
+					t = (t + dt * cycleRef.value) % 1
 					local dir = ac:GetMoveDir()
-					local sway = math.sin(t * freq) * 0.12 * intensity
-					local twist = math.sin(t * freq) * 0.1 * intensity
+					local sway = math.sin(t * TWO_PI) * 0.12 * intensity
+					local twist = math.sin(t * TWO_PI) * 0.1 * intensity
 					local fwdLean = -FORWARD_LEAN * -dir.Z
 					ac:spring(j, defaultC0 * CFrame.Angles(fwdLean, twist, sway), 10, 0.3, dt)
 				end
@@ -392,9 +396,9 @@ local function makeRun(cycle: number, intensity: number): AnimDef
 			Neck = function(_joint, defaultC0, ac): OnUpdate
 				local t = 0
 				return function(j, dt)
-					t = (t + dt) % period
+					t = (t + dt * cycleRef.value) % 1
 					local dir = ac:GetMoveDir()
-					local counter = math.sin(t * freq) * 0.06 * intensity
+					local counter = math.sin(t * TWO_PI) * 0.06 * intensity
 					local fwdLean = FORWARD_LEAN * 0.5 * -dir.Z
 					ac:spring(j, defaultC0 * CFrame.Angles(-fwdLean, 0, -counter), 10, 0.3, dt)
 				end
@@ -402,10 +406,10 @@ local function makeRun(cycle: number, intensity: number): AnimDef
 			LeftHip = function(_joint, defaultC0, ac): OnUpdate
 				local t = 0
 				return function(j, dt)
-					t = (t + dt) % period
+					t = (t + dt * cycleRef.value) % 1
 					local dir = ac:GetMoveDir()
 					local fwdFactor = math.max(0.35, math.abs(dir.Z))
-					local swing = math.sin(t * freq) * 1.5 * intensity * fwdFactor
+					local swing = math.sin(t * TWO_PI) * 1.5 * intensity * fwdFactor
 					local backBias = math.max(0, dir.Z) * -0.4
 					local swingAxis = Vector3.new(-dir.Z, 0, dir.X)
 					local axisLen = swingAxis.Magnitude
@@ -422,10 +426,10 @@ local function makeRun(cycle: number, intensity: number): AnimDef
 			RightHip = function(_joint, defaultC0, ac): OnUpdate
 				local t = 0
 				return function(j, dt)
-					t = (t + dt) % period
+					t = (t + dt * cycleRef.value) % 1
 					local dir = ac:GetMoveDir()
 					local fwdFactor = math.max(0.35, math.abs(dir.Z))
-					local swing = -math.sin(t * freq) * 1.5 * intensity * fwdFactor
+					local swing = -math.sin(t * TWO_PI) * 1.5 * intensity * fwdFactor
 					local backBias = math.max(0, dir.Z) * -0.4
 					local swingAxis = Vector3.new(-dir.Z, 0, dir.X)
 					local axisLen = swingAxis.Magnitude
@@ -442,33 +446,33 @@ local function makeRun(cycle: number, intensity: number): AnimDef
 			LeftKnee = function(_joint, defaultC0, ac): OnUpdate
 				local t = 0
 				return function(j, dt)
-					t = (t + dt) % period
+					t = (t + dt * cycleRef.value) % 1
 					local dir = ac:GetMoveDir()
 					local fwdFactor = math.max(0.35, math.abs(dir.Z))
 					local baseBend = 0.4 * intensity * fwdFactor
-					local bend = math.max(0, math.sin(t * freq + math.pi)) * 0.8 * intensity * fwdFactor
+					local bend = math.max(0, math.sin(t * TWO_PI + math.pi)) * 0.8 * intensity * fwdFactor
 					ac:spring(j, defaultC0 * CFrame.Angles(-(baseBend + bend), 0, 0), 10, 0.3, dt)
 				end
 			end,
 			RightKnee = function(_joint, defaultC0, ac): OnUpdate
 				local t = 0
 				return function(j, dt)
-					t = (t + dt) % period
+					t = (t + dt * cycleRef.value) % 1
 					local dir = ac:GetMoveDir()
 					local fwdFactor = math.max(0.35, math.abs(dir.Z))
 					local baseBend = 0.4 * intensity * fwdFactor
-					local bend = math.max(0, -math.sin(t * freq + math.pi)) * 0.8 * intensity * fwdFactor
+					local bend = math.max(0, -math.sin(t * TWO_PI + math.pi)) * 0.8 * intensity * fwdFactor
 					ac:spring(j, defaultC0 * CFrame.Angles(-(baseBend + bend), 0, 0), 10, 0.3, dt)
 				end
 			end,
 			LeftAnkle = function(_joint, defaultC0, ac): OnUpdate
 				local t = 0
 				return function(j, dt)
-					t = (t + dt) % period
+					t = (t + dt * cycleRef.value) % 1
 					local dir = ac:GetMoveDir()
 					local baseFwd = 0.1
-					local flex = math.sin(t * freq) * 0.5 * intensity * (if dir.Z > 0.3 then -1 else 1)
-					local push = math.max(0, -math.sin(t * freq)) * 0.3 * intensity
+					local flex = math.sin(t * TWO_PI) * 0.5 * intensity * (if dir.Z > 0.3 then -1 else 1)
+					local push = math.max(0, -math.sin(t * TWO_PI)) * 0.3 * intensity
 					local sideFlex = -dir.X * 0.3
 					ac:spring(j, defaultC0 * CFrame.Angles(baseFwd + flex + push, 0, sideFlex), 10, 0.3, dt)
 				end
@@ -476,11 +480,11 @@ local function makeRun(cycle: number, intensity: number): AnimDef
 			RightAnkle = function(_joint, defaultC0, ac): OnUpdate
 				local t = 0
 				return function(j, dt)
-					t = (t + dt) % period
+					t = (t + dt * cycleRef.value) % 1
 					local dir = ac:GetMoveDir()
 					local baseFwd = 0.1
-					local flex = -math.sin(t * freq) * 0.5 * intensity * (if dir.Z > 0.3 then -1 else 1)
-					local push = math.max(0, math.sin(t * freq)) * 0.3 * intensity
+					local flex = -math.sin(t * TWO_PI) * 0.5 * intensity * (if dir.Z > 0.3 then -1 else 1)
+					local push = math.max(0, math.sin(t * TWO_PI)) * 0.3 * intensity
 					local sideFlex = -dir.X * 0.3
 					ac:spring(j, defaultC0 * CFrame.Angles(baseFwd + flex + push, 0, sideFlex), 10, 0.3, dt)
 				end
@@ -488,70 +492,68 @@ local function makeRun(cycle: number, intensity: number): AnimDef
 			LeftShoulder = function(_joint, defaultC0, ac): OnUpdate
 				local t = 0
 				return function(j, dt)
-					t = (t + dt) % period
+					t = (t + dt * cycleRef.value) % 1
 					local dir = ac:GetMoveDir()
 					local absZ = math.abs(dir.Z)
 					local fwdFactor = if absZ > 0.3 then absZ else 0.3
-					local swing = -math.sin(t * freq) * 0.9 * intensity * fwdFactor
-					local splay = math.abs(math.sin(t * freq)) * 0.05 * intensity * fwdFactor
+					local swing = math.sin(t * TWO_PI) * 1.0 * intensity * fwdFactor
+					local splay = math.abs(math.sin(t * TWO_PI)) * 0.1 * intensity * fwdFactor
 					ac:spring(j, defaultC0 * CFrame.Angles(swing, 0, -splay), 10, 0.3, dt)
 				end
 			end,
 			RightShoulder = function(_joint, defaultC0, ac): OnUpdate
 				local t = 0
 				return function(j, dt)
-					t = (t + dt) % period
+					t = (t + dt * cycleRef.value) % 1
 					local dir = ac:GetMoveDir()
 					local absZ = math.abs(dir.Z)
 					local fwdFactor = if absZ > 0.3 then absZ else 0.3
-					local swing = math.sin(t * freq) * 0.9 * intensity * fwdFactor
-					local splay = math.abs(math.sin(t * freq)) * 0.06 * intensity * fwdFactor
+					local swing = -math.sin(t * TWO_PI) * 1.0 * intensity * fwdFactor
+					local splay = math.abs(math.sin(t * TWO_PI)) * 0.1 * intensity * fwdFactor
 					ac:spring(j, defaultC0 * CFrame.Angles(swing, 0, splay), 10, 0.3, dt)
 				end
 			end,
 			LeftElbow = function(_joint, defaultC0, ac): OnUpdate
 				local t = 0
 				return function(j, dt)
-					t = (t + dt) % period
+					t = (t + dt * cycleRef.value) % 1
 					local dir = ac:GetMoveDir()
 					local absZ = math.abs(dir.Z)
 					local fwdFactor = if absZ > 0.3 then absZ else 0.3
-					local baseBend = 1.2 * intensity * fwdFactor
-					local wave = math.sin(t * freq) * 0.3 * intensity * fwdFactor
-					ac:spring(j, defaultC0 * CFrame.Angles(baseBend + wave, 0, 0), 10, 0.3, dt)
+					local bend = math.max(0, math.sin(t * TWO_PI)) * 0.8 * intensity * fwdFactor
+					ac:spring(j, defaultC0 * CFrame.Angles(bend, 0, 0), 10, 0.3, dt)
 				end
 			end,
 			RightElbow = function(_joint, defaultC0, ac): OnUpdate
 				local t = 0
 				return function(j, dt)
-					t = (t + dt) % period
+					t = (t + dt * cycleRef.value) % 1
 					local dir = ac:GetMoveDir()
 					local absZ = math.abs(dir.Z)
 					local fwdFactor = if absZ > 0.3 then absZ else 0.3
-					local baseBend = 1.2 * intensity * fwdFactor
-					local wave = -math.sin(t * freq) * 0.3 * intensity * fwdFactor
-					ac:spring(j, defaultC0 * CFrame.Angles(baseBend + wave, 0, 0), 10, 0.3, dt)
+					local bend = math.max(0, -math.sin(t * TWO_PI)) * 0.8 * intensity * fwdFactor
+					ac:spring(j, defaultC0 * CFrame.Angles(bend, 0, 0), 10, 0.3, dt)
 				end
 			end,
 			LeftWrist = function(_joint, defaultC0, ac): OnUpdate
 				local t = 0
 				return function(j, dt)
-					t = (t + dt) % period
+					t = (t + dt * cycleRef.value) % 1
 					local dir = ac:GetMoveDir()
 					local absZ = math.abs(dir.Z)
 					local fwdFactor = if absZ > 0.3 then absZ else 0.3
-					local flick = math.sin(t * freq + 0.3) * 0.12 * intensity * fwdFactor
+					local flick = -math.sin(t * TWO_PI + 0.3) * 0.12 * intensity * fwdFactor
 					ac:spring(j, defaultC0 * CFrame.Angles(flick, 0, 0), 10, 0.3, dt)
 				end
 			end,
 			RightWrist = function(_joint, defaultC0, ac): OnUpdate
 				local t = 0
 				return function(j, dt)
-					t = (t + dt) % period
+					t = (t + dt * cycleRef.value) % 1
 					local dir = ac:GetMoveDir()
 					local absZ = math.abs(dir.Z)
 					local fwdFactor = if absZ > 0.3 then absZ else 0.3
-					local flick = -math.sin(t * freq + 0.3) * 0.12 * intensity * fwdFactor
+					local flick = math.sin(t * TWO_PI + 0.3) * 0.12 * intensity * fwdFactor
 					ac:spring(j, defaultC0 * CFrame.Angles(flick, 0, 0), 10, 0.3, dt)
 				end
 			end,
@@ -559,54 +561,97 @@ local function makeRun(cycle: number, intensity: number): AnimDef
 	}
 end
 
+-- ─── CycleRef 테이블 ──────────────────────────────────────────────────────────
+--[=[
+	외부(BasicMovementClient)에서 .value를 바꾸면 실시간으로 애니메이션 cycle 속도가 변합니다.
+	.base는 클래스 기본값 — 절대 직접 수정하지 마세요.
+	Walk/Run 상태 전환 시 BasicMovementClient가 현재 WalkSpeed / 기준속도 비율을 적용합니다.
+]=]
+local R: { [string]: CycleRef } = {
+	-- Default
+	Walk = { base = 1.8, value = 1.8 },
+	Run = { base = 2.0, value = 2.0 },
+	Breathing = { base = 0.28, value = 0.28 },
+	-- 탱커
+	Walk_Tank = { base = 1.8, value = 1.8 },
+	Run_Tank = { base = 2.0, value = 2.0 },
+	Breathing_Tank = { base = 0.28, value = 0.28 },
+	-- 어쌔신
+	Walk_Assassin = { base = 1.8, value = 1.8 },
+	Run_Assassin = { base = 2.0, value = 2.0 },
+	Breathing_Assassin = { base = 0.28, value = 0.28 },
+	-- 서포터
+	Walk_Support = { base = 1.8, value = 1.8 },
+	Run_Support = { base = 2.0, value = 2.0 },
+	Breathing_Support = { base = 0.28, value = 0.28 },
+	-- 컨트롤러
+	Walk_Controller = { base = 1.8, value = 1.8 },
+	Run_Controller = { base = 2.0, value = 2.0 },
+	Breathing_Controller = { base = 0.28, value = 0.28 },
+	-- 대미지딜러
+	Walk_Dealer = { base = 1.8, value = 1.8 },
+	Run_Dealer = { base = 2.0, value = 2.0 },
+	Breathing_Dealer = { base = 0.28, value = 0.28 },
+	-- 저격수
+	Walk_Marksman = { base = 1.8, value = 1.8 },
+	Run_Marksman = { base = 2.0, value = 2.0 },
+	Breathing_Marksman = { base = 0.28, value = 0.28 },
+	-- 투척수
+	Walk_Artillery = { base = 1.8, value = 1.8 },
+	Run_Artillery = { base = 2.0, value = 2.0 },
+	Breathing_Artillery = { base = 0.28, value = 0.28 },
+}
+
+BasicMovementAnimDef.CycleRefs = R
+
 -- ─── 애니메이션 등록 ──────────────────────────────────────────────────────────
 
--- Default (대미지딜러 수치 적용)
+-- Default
 BasicMovementAnimDef["Idle"] = makeIdle(0.9)
-BasicMovementAnimDef["Walk"] = makeWalk(2.5, 1.05, 0.05)
-BasicMovementAnimDef["Run"] = makeRun(2.8, 1.05)
-BasicMovementAnimDef["Breathing"] = makeBreath(0.4, 0.9)
+BasicMovementAnimDef["Walk"] = makeWalk(R.Walk, 1.05, 0.05)
+BasicMovementAnimDef["Run"] = makeRun(R.Run, 1.05)
+BasicMovementAnimDef["Breathing"] = makeBreath(R.Breathing, 0.9)
 
--- 탱커 (cycle 유지, intensity/lean → 딜러 수치)
+-- 탱커
 BasicMovementAnimDef["Idle_Tank"] = makeIdle(0.9)
-BasicMovementAnimDef["Walk_Tank"] = makeWalk(1.8, 1.05, 0.05)
-BasicMovementAnimDef["Run_Tank"] = makeRun(2.0, 1.05)
-BasicMovementAnimDef["Breathing_Tank"] = makeBreath(0.28, 0.9)
+BasicMovementAnimDef["Walk_Tank"] = makeWalk(R.Walk_Tank, 1.05, 0.05)
+BasicMovementAnimDef["Run_Tank"] = makeRun(R.Run_Tank, 1.05)
+BasicMovementAnimDef["Breathing_Tank"] = makeBreath(R.Breathing_Tank, 0.9)
 
--- 어쌔신 (cycle 유지, intensity/lean → 딜러 수치)
+-- 어쌔신
 BasicMovementAnimDef["Idle_Assassin"] = makeIdle(0.9)
-BasicMovementAnimDef["Walk_Assassin"] = makeWalk(2.9, 1.05, 0.05)
-BasicMovementAnimDef["Run_Assassin"] = makeRun(3.2, 1.05)
-BasicMovementAnimDef["Breathing_Assassin"] = makeBreath(0.6, 0.9)
+BasicMovementAnimDef["Walk_Assassin"] = makeWalk(R.Walk_Assassin, 1.05, 0.05)
+BasicMovementAnimDef["Run_Assassin"] = makeRun(R.Run_Assassin, 1.05)
+BasicMovementAnimDef["Breathing_Assassin"] = makeBreath(R.Breathing_Assassin, 0.9)
 
--- 서포터 (cycle 유지, intensity/lean → 딜러 수치)
+-- 서포터
 BasicMovementAnimDef["Idle_Support"] = makeIdle(0.9)
-BasicMovementAnimDef["Walk_Support"] = makeWalk(2.4, 1.05, 0.05)
-BasicMovementAnimDef["Run_Support"] = makeRun(2.6, 1.05)
-BasicMovementAnimDef["Breathing_Support"] = makeBreath(0.45, 0.9)
+BasicMovementAnimDef["Walk_Support"] = makeWalk(R.Walk_Support, 1.05, 0.05)
+BasicMovementAnimDef["Run_Support"] = makeRun(R.Run_Support, 1.05)
+BasicMovementAnimDef["Breathing_Support"] = makeBreath(R.Breathing_Support, 0.9)
 
--- 컨트롤러 (cycle 유지, intensity/lean → 딜러 수치)
+-- 컨트롤러
 BasicMovementAnimDef["Idle_Controller"] = makeIdle(0.9)
-BasicMovementAnimDef["Walk_Controller"] = makeWalk(2.3, 1.05, 0.05)
-BasicMovementAnimDef["Run_Controller"] = makeRun(2.6, 1.05)
-BasicMovementAnimDef["Breathing_Controller"] = makeBreath(0.38, 0.9)
+BasicMovementAnimDef["Walk_Controller"] = makeWalk(R.Walk_Controller, 1.05, 0.05)
+BasicMovementAnimDef["Run_Controller"] = makeRun(R.Run_Controller, 1.05)
+BasicMovementAnimDef["Breathing_Controller"] = makeBreath(R.Breathing_Controller, 0.9)
 
 -- 대미지딜러
 BasicMovementAnimDef["Idle_Dealer"] = makeIdle(0.9)
-BasicMovementAnimDef["Walk_Dealer"] = makeWalk(2.6, 1.05, 0.05)
-BasicMovementAnimDef["Run_Dealer"] = makeRun(2.9, 1.05)
-BasicMovementAnimDef["Breathing_Dealer"] = makeBreath(0.5, 0.9)
+BasicMovementAnimDef["Walk_Dealer"] = makeWalk(R.Walk_Dealer, 1.05, 0.05)
+BasicMovementAnimDef["Run_Dealer"] = makeRun(R.Run_Dealer, 1.05)
+BasicMovementAnimDef["Breathing_Dealer"] = makeBreath(R.Breathing_Dealer, 0.9)
 
--- 저격수 (cycle 유지, intensity/lean → 딜러 수치)
+-- 저격수
 BasicMovementAnimDef["Idle_Marksman"] = makeIdle(0.9)
-BasicMovementAnimDef["Walk_Marksman"] = makeWalk(2.0, 1.05, 0.05)
-BasicMovementAnimDef["Run_Marksman"] = makeRun(2.8, 1.05)
-BasicMovementAnimDef["Breathing_Marksman"] = makeBreath(0.35, 0.9)
+BasicMovementAnimDef["Walk_Marksman"] = makeWalk(R.Walk_Marksman, 1.05, 0.05)
+BasicMovementAnimDef["Run_Marksman"] = makeRun(R.Run_Marksman, 1.05)
+BasicMovementAnimDef["Breathing_Marksman"] = makeBreath(R.Breathing_Marksman, 0.9)
 
--- 투척수 (cycle 유지, intensity/lean → 딜러 수치)
+-- 투척수
 BasicMovementAnimDef["Idle_Artillery"] = makeIdle(0.9)
-BasicMovementAnimDef["Walk_Artillery"] = makeWalk(1.6, 1.05, 0.05)
-BasicMovementAnimDef["Run_Artillery"] = makeRun(1.9, 1.05)
-BasicMovementAnimDef["Breathing_Artillery"] = makeBreath(0.25, 0.9)
+BasicMovementAnimDef["Walk_Artillery"] = makeWalk(R.Walk_Artillery, 1.05, 0.05)
+BasicMovementAnimDef["Run_Artillery"] = makeRun(R.Run_Artillery, 1.05)
+BasicMovementAnimDef["Breathing_Artillery"] = makeBreath(R.Breathing_Artillery, 0.9)
 
 return BasicMovementAnimDef

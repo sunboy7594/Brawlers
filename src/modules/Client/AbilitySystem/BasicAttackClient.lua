@@ -44,7 +44,7 @@ local cancellableDelay = require("cancellableDelay")
 -- ─── 상수 ────────────────────────────────────────────────────────────────────
 -- ⚠️ 주의: BasicAttackService.lua의 POST_DELAY_QUEUE_THRESHOLD와
 --          반드시 동일한 값을 유지해야 합니다.
-local POST_DELAY_QUEUE_THRESHOLD = 0.30
+local POST_DELAY_QUEUE_THRESHOLD = 0.80
 
 -- ─── 레지스트리 ──────────────────────────────────────────────────────────────
 local ATTACK_REGISTRY: { [string]: { def: any, module: any, animDef: any } } = {}
