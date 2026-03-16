@@ -170,24 +170,25 @@ function BasicAttackClient.Start(self: BasicAttackClient): ()
 		if self._aimController:IsAiming() then
 			local hasAmmo = state.currentAmmo > 0
 			local isPostDelay = os.clock() < state.postDelayUntil
-			local canFire = state.currentAmmo > 0 and os.clock() >= state.postDelayUntil
+			local canFire = hasAmmo and not isPostDelay
 
 			if canFire then
-				state.effectiveAimTime = state.effectiveAimTime + dt
+				state.effectiveAimTime += dt
 			else
 				state.effectiveAimTime = 0
 			end
 
+			-- 모든 shape에 색상/투명도 일괄 적용
 			if not hasAmmo then
-				state.indicator:update({ color = COLOR_NO_AMMO })
+				state.indicator:updateAll({ color = COLOR_NO_AMMO })
 			else
-				state.indicator:update({ color = COLOR_NORMAL })
+				state.indicator:updateAll({ color = COLOR_NORMAL })
 			end
 
 			if isPostDelay then
-				state.indicator:update({ transparency = ALPHA_POST_DELAY })
+				state.indicator:updateAll({ transparency = ALPHA_POST_DELAY })
 			else
-				state.indicator:update({ transparency = ALPHA_NORMAL })
+				state.indicator:updateAll({ transparency = ALPHA_NORMAL })
 			end
 		end
 	end))
@@ -221,7 +222,8 @@ function BasicAttackClient:SetEquippedAttack(attackId: string)
 	end
 
 	local entry = ATTACK_REGISTRY[attackId]
-	local indicator = if entry then DynamicIndicator.new(entry.module.shapes) else DynamicIndicator.new(nil)
+	-- shapes = { cone = "cone", ... } 형태로 전달
+	local indicator = if entry then DynamicIndicator.new(entry.module.shapes) else DynamicIndicator.new({})
 
 	self._state = {
 		indicator = indicator,
@@ -339,7 +341,7 @@ function BasicAttackClient:_tryStartAim()
 					self._pendingOnFireCancel = nil
 					state.direction = capturedDirection
 					state.lastFireTime = scheduledAt
-					state.effectiveAimTime = 0 -- 예약 발사 시 리셋
+					state.effectiveAimTime = 0
 					AbilityExecutor.OnFire(entry.module, state)
 				end)
 
@@ -354,7 +356,7 @@ function BasicAttackClient:_tryStartAim()
 			state.direction = direction
 			state.postDelayUntil = now + entry.def.postDelay
 			state.lastFireTime = now
-			state.effectiveAimTime = 0 -- 즉시 발사 시 리셋
+			state.effectiveAimTime = 0
 			BasicAttackRemoting.Fire:FireServer(direction)
 			AbilityExecutor.OnFire(entry.module, state)
 			return true

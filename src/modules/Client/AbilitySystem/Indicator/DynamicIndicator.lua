@@ -2,23 +2,53 @@
 --[=[
 	@class DynamicIndicator
 
-	모든 인디케이터 shape를 통합한 단일 클래스.
-	생성 시 넘긴 shape 목록만 Parts를 생성.
-	shapes = nil이면 전체 shape 생성.
+	이름(id) 기반 멀티 shape 인디케이터.
 
-	update(params)로 shape 전환 포함 모든 시각 요소 런타임 변경 가능.
+	생성:
+	  DynamicIndicator.new({
+	      innerCone  = "cone",
+	      outerCone  = "cone",   -- 같은 shape도 다른 id면 독립 인스턴스
+	      baseCircle = "circle",
+	      trail      = "arc",
+	  })
 
-	투명도는 두 레이어로 직접 관리:
-	  _baseT   : 기본 가시성 (show/hide, cfg.transparency)
-	  _effectT : 런타임 오버라이드 (postDelay 등)
-	최종 Transparency = math.max(base, effect) 직접 적용.
+	update:
+	  ind:update("innerCone",  { range = 4, angleMin = -30, angleMax = 30 })
+	  ind:update("baseCircle", { radius = 6, innerRadius = 2 })
 
-	사용 예:
-	    local ind = DynamicIndicator.new({ "cone", "line" })
-	    ind:update({ shape = "cone", range = 8, angle = 90, color = Color3.new(1,1,0) })
-	    ind:show()
-	    ind:hide()
-	    ind:destroy()
+	show / hide:
+	  ind:show("innerCone")   -- innerCone만 표시
+	  ind:show("outerCone")   -- outerCone도 동시에 표시
+	  ind:hide("innerCone")
+	  ind:showAll()
+	  ind:hideAll()
+
+	destroy:
+	  ind:destroy()           -- 전체 파괴
+	  ind:destroy("innerCone") -- 특정 shape만 파괴
+
+	─── Cone ────────────────────────────────────────────────────
+	  angleMin / angleMax (도, 전방 기준)
+	  예) 중앙 90도  → angleMin=-45, angleMax=45
+	  예) 오른쪽 90도 → angleMin=0,  angleMax=90
+	  예) 전방향     → angleMin=-180, angleMax=180
+
+	─── Circle ──────────────────────────────────────────────────
+	  innerRadius=0 → 꽉 찬 원, >0 → 도넛
+	  실시간 변경 자연스럽게 전환.
+	  segments는 생성 시 고정 (기본 24).
+
+	─── Arc ─────────────────────────────────────────────────────
+	  direction + range 로 착탄 방향/거리 설정.
+	  height = 포물선 최대 높이 (nil이면 range * 0.35 자동)
+	  y(t) = 4 * height * t * (1-t),  t ∈ [0, 1]
+	  x(t) = range * t
+	  speed / gravity 입력 불필요.
+
+	─── 투명도 레이어 ────────────────────────────────────────────
+	  _baseT   : 기본 (show/hide)
+	  _effectT : 런타임 오버라이드 (update transparency)
+	  최종 = math.max(baseT, effectT)
 ]=]
 
 local require = require(script.Parent.loader).load(script)
@@ -28,45 +58,65 @@ local require = require(script.Parent.loader).load(script)
 local PART_Y = 0.06
 local PART_HEIGHT = 0.15
 local CONE_SEGMENTS = 10
+local CIRCLE_SEGMENTS = 24
+local ARC_SEGMENTS = 12
 
 local DEFAULT_COLOR = Color3.fromRGB(160, 160, 160)
 local DEFAULT_TRANSPARENCY = 0
 
-local DEFAULTS = {
-	cone = { range = 8, angle = 360, color = DEFAULT_COLOR, transparency = DEFAULT_TRANSPARENCY },
-	circle = { radius = 5, color = DEFAULT_COLOR, transparency = DEFAULT_TRANSPARENCY },
-	line = { range = 10, width = 3, color = DEFAULT_COLOR, transparency = DEFAULT_TRANSPARENCY },
+-- ─── 기본값 ──────────────────────────────────────────────────────────────────
+
+local DEFAULTS: { [string]: { [string]: any } } = {
+	cone = {
+		range = 8,
+		angleMin = -180,
+		angleMax = 180,
+		color = DEFAULT_COLOR,
+		transparency = DEFAULT_TRANSPARENCY,
+	},
+	circle = {
+		radius = 5,
+		innerRadius = 0,
+		segments = CIRCLE_SEGMENTS,
+		color = DEFAULT_COLOR,
+		transparency = DEFAULT_TRANSPARENCY,
+	},
+	line = {
+		range = 10,
+		width = 3,
+		color = DEFAULT_COLOR,
+		transparency = DEFAULT_TRANSPARENCY,
+	},
 	arc = {
-		maxRange = 20,
-		speed = 30,
-		gravity = 196,
-		arcRadius = 2,
+		range = 20,
+		height = nil, -- nil이면 range * 0.35 자동
+		arcRadius = 0.3,
+		arcSegments = ARC_SEGMENTS,
 		color = DEFAULT_COLOR,
 		transparency = DEFAULT_TRANSPARENCY,
 	},
 }
 
-local ALL_SHAPES: { string } = { "cone", "circle", "line", "arc" }
+-- ─── 내부 타입 ────────────────────────────────────────────────────────────────
 
--- ─── 타입 ────────────────────────────────────────────────────────────────────
-
-type ShapeData = {
+type ShapeEntry = {
+	shape: string,
 	parts: { BasePart },
 	config: { [string]: any },
+	origin: Vector3,
+	direction: Vector3,
+	baseT: number,
+	effectT: number,
 }
 
-export type DynamicIndicator = {
-	_shapes: { [string]: ShapeData },
-	_activeShape: string,
-	_origin: Vector3,
-	_direction: Vector3,
-	_baseT: { [string]: number }, -- shape별 기본 투명도
-	_effectT: { [string]: number }, -- shape별 이펙트 투명도
-	update: (self: DynamicIndicator, params: any) -> (),
-	show: (self: DynamicIndicator) -> (),
-	hide: (self: DynamicIndicator) -> (),
-	destroy: (self: DynamicIndicator) -> (),
-}
+-- ─── 공개 타입 ────────────────────────────────────────────────────────────────
+
+export type DynamicIndicator = typeof(setmetatable(
+	{} :: {
+		_entries: { [string]: ShapeEntry },
+	},
+	{} :: typeof({ __index = {} })
+))
 
 -- ─── 폴더 ────────────────────────────────────────────────────────────────────
 
@@ -80,9 +130,9 @@ local function getFolder(): Folder
 	return f :: Folder
 end
 
--- ─── Shape 생성 ──────────────────────────────────────────────────────────────
+-- ─── Part 헬퍼 ───────────────────────────────────────────────────────────────
 
-local function makePart(folder: Folder, color: Color3): BasePart
+local function makePart(folder: Folder, color: Color3, cylinder: boolean?): BasePart
 	local p = Instance.new("Part")
 	p.Anchored = true
 	p.CanCollide = false
@@ -90,28 +140,35 @@ local function makePart(folder: Folder, color: Color3): BasePart
 	p.CastShadow = false
 	p.Material = Enum.Material.Neon
 	p.Color = color
-	p.Transparency = 1 -- 초기 숨김; 투명도는 _applyTransparency로만 제어
+	p.Transparency = 1
+	if cylinder then
+		p.Shape = Enum.PartType.Cylinder
+	end
 	p.Parent = folder
 	return p
 end
 
+-- ─── Shape 생성 ──────────────────────────────────────────────────────────────
+
 local function createCone(folder: Folder, cfg: { [string]: any }): { BasePart }
 	local parts: { BasePart } = {}
-	local segAngle = cfg.angle / CONE_SEGMENTS
+	local segAngle = (cfg.angleMax - cfg.angleMin) / CONE_SEGMENTS
 	for _ = 1, CONE_SEGMENTS do
 		local p = makePart(folder, cfg.color)
-		local segWidth = cfg.range * 2 * math.tan(math.rad(segAngle / 2))
-		p.Size = Vector3.new(segWidth, PART_HEIGHT, cfg.range)
+		local w = cfg.range * 2 * math.tan(math.rad(segAngle / 2))
+		p.Size = Vector3.new(w, PART_HEIGHT, cfg.range)
 		table.insert(parts, p)
 	end
 	return parts
 end
 
 local function createCircle(folder: Folder, cfg: { [string]: any }): { BasePart }
-	local p = makePart(folder, cfg.color)
-	p.Shape = Enum.PartType.Cylinder
-	p.Size = Vector3.new(PART_HEIGHT, cfg.radius * 2, cfg.radius * 2)
-	return { p }
+	local parts: { BasePart } = {}
+	local segs = cfg.segments or CIRCLE_SEGMENTS
+	for _ = 1, segs do
+		table.insert(parts, makePart(folder, cfg.color))
+	end
+	return parts
 end
 
 local function createLine(folder: Folder, cfg: { [string]: any }): { BasePart }
@@ -121,105 +178,125 @@ local function createLine(folder: Folder, cfg: { [string]: any }): { BasePart }
 end
 
 local function createArc(folder: Folder, cfg: { [string]: any }): { BasePart }
-	local p = makePart(folder, cfg.color)
-	p.Shape = Enum.PartType.Cylinder
-	p.Size = Vector3.new(PART_HEIGHT, cfg.arcRadius * 2, cfg.arcRadius * 2)
-	return { p }
+	local parts: { BasePart } = {}
+	local segs = cfg.arcSegments or ARC_SEGMENTS
+	for _ = 1, segs do
+		local p = makePart(folder, cfg.color, true)
+		local r = cfg.arcRadius
+		p.Size = Vector3.new(PART_HEIGHT, r * 2, r * 2)
+		table.insert(parts, p)
+	end
+	return parts
 end
 
-local CREATORS = {
+local CREATORS: { [string]: (Folder, { [string]: any }) -> { BasePart } } = {
 	cone = createCone,
 	circle = createCircle,
 	line = createLine,
 	arc = createArc,
 }
 
--- ─── Shape 위치 업데이트 ──────────────────────────────────────────────────────
+-- ─── 위치 업데이트 ───────────────────────────────────────────────────────────
 
-local function updateConePos(parts: { BasePart }, origin: Vector3, direction: Vector3, cfg: { [string]: any })
+local function posUpdateCone(parts: { BasePart }, origin: Vector3, direction: Vector3, cfg: { [string]: any })
 	local dirH = Vector3.new(direction.X, 0, direction.Z)
-	if dirH.Magnitude < 0.001 then
-		dirH = Vector3.new(0, 0, -1)
-	else
-		dirH = dirH.Unit
-	end
+	dirH = if dirH.Magnitude < 0.001 then Vector3.new(0, 0, -1) else dirH.Unit
 
-	local halfAngle = cfg.angle / 2
-	local segAngle = cfg.angle / CONE_SEGMENTS
+	local totalAngle = cfg.angleMax - cfg.angleMin
+	local segAngle = totalAngle / CONE_SEGMENTS
 
 	for i, part in parts do
-		local segCenterDeg = -halfAngle + segAngle * (i - 0.5)
-		local rad = math.rad(segCenterDeg)
+		local deg = cfg.angleMin + segAngle * (i - 0.5)
+		local rad = math.rad(deg)
 		local cosR, sinR = math.cos(rad), math.sin(rad)
-
-		-- dirH 기준으로 로컬 회전 (2D 회전 행렬)
 		local segDir = Vector3.new(dirH.X * cosR - dirH.Z * sinR, 0, dirH.X * sinR + dirH.Z * cosR)
-
 		local center = Vector3.new(origin.X + segDir.X * cfg.range / 2, PART_Y, origin.Z + segDir.Z * cfg.range / 2)
-
 		part.CFrame = CFrame.lookAt(center, center + segDir)
 	end
 end
 
-local function updateCirclePos(parts: { BasePart }, origin: Vector3, _direction: Vector3, _cfg: { [string]: any })
-	parts[1].CFrame = CFrame.new(origin.X, PART_Y, origin.Z) * CFrame.fromEulerAnglesXYZ(0, 0, math.pi / 2)
+local function posUpdateCircle(parts: { BasePart }, origin: Vector3, _dir: Vector3, cfg: { [string]: any })
+	local segs = #parts
+	local segAngle = 360 / segs
+	local midRadius = (cfg.radius + cfg.innerRadius) / 2
+	local thickness = math.max(cfg.radius - cfg.innerRadius, 0.05)
+	local segWidth = 2 * midRadius * math.sin(math.rad(segAngle / 2)) * 2
+
+	for i, part in parts do
+		local rad = math.rad(segAngle * (i - 1))
+		local dx, dz = math.sin(rad), math.cos(rad)
+		local center = Vector3.new(origin.X + dx * midRadius, PART_Y, origin.Z + dz * midRadius)
+		part.CFrame = CFrame.lookAt(center, center + Vector3.new(dx, 0, dz))
+		part.Size = Vector3.new(segWidth, PART_HEIGHT, thickness)
+	end
 end
 
-local function updateLinePos(parts: { BasePart }, origin: Vector3, direction: Vector3, cfg: { [string]: any })
+local function posUpdateLine(parts: { BasePart }, origin: Vector3, direction: Vector3, cfg: { [string]: any })
 	local dirH = Vector3.new(direction.X, 0, direction.Z)
-	if dirH.Magnitude < 0.001 then
-		dirH = Vector3.new(0, 0, -1)
-	else
-		dirH = dirH.Unit
-	end
+	dirH = if dirH.Magnitude < 0.001 then Vector3.new(0, 0, -1) else dirH.Unit
 	local center = Vector3.new(origin.X + dirH.X * cfg.range / 2, PART_Y, origin.Z + dirH.Z * cfg.range / 2)
 	parts[1].CFrame = CFrame.lookAt(center, center + dirH)
 end
 
-local function calcArcLanding(
-	origin: Vector3,
-	direction: Vector3,
-	speed: number,
-	gravity: number,
-	maxRange: number
-): Vector3
+local function posUpdateArc(parts: { BasePart }, origin: Vector3, direction: Vector3, cfg: { [string]: any })
+	-- 수평 방향
 	local dirH = Vector3.new(direction.X, 0, direction.Z)
-	if dirH.Magnitude < 0.001 then
-		dirH = Vector3.new(0, 0, -1)
-	else
-		dirH = dirH.Unit
+	dirH = if dirH.Magnitude < 0.001 then Vector3.new(0, 0, -1) else dirH.Unit
+
+	local R = cfg.range
+	local H = if cfg.height ~= nil then cfg.height else R * 0.35
+	local segs = #parts
+	local r = cfg.arcRadius
+
+	-- 포물선: x(t) = R*t,  y(t) = 4H*t*(1-t),  t ∈ [0,1]
+	for i, part in parts do
+		local t0 = (i - 1) / segs
+		local t1 = i / segs
+		local tMid = (t0 + t1) / 2
+
+		-- 현재 세그먼트 중점
+		local x0 = R * tMid
+		local y0 = 4 * H * tMid * (1 - tMid)
+
+		-- 다음 점 (접선 방향 계산용)
+		local x1 = R * t1
+		local y1 = 4 * H * t1 * (1 - t1)
+
+		local pos = Vector3.new(origin.X + dirH.X * x0, origin.Y + y0, origin.Z + dirH.Z * x0)
+		local nextPos = Vector3.new(origin.X + dirH.X * x1, origin.Y + y1, origin.Z + dirH.Z * x1)
+
+		local segVec = nextPos - pos
+		local segLen = math.max(segVec.Magnitude, 0.01)
+
+		part.Size = Vector3.new(segLen, r * 2, r * 2)
+		part.CFrame = CFrame.lookAt(pos, nextPos)
+			* CFrame.new(segLen / 2, 0, 0)
+			* CFrame.fromEulerAnglesXYZ(0, 0, math.pi / 2)
 	end
-	local vy = direction.Y * speed
-	local vh = math.sqrt(math.max(0, speed * speed - vy * vy))
-	local t = if gravity > 0 then (vy + math.sqrt(math.max(0, vy * vy + 2 * gravity * 3))) / gravity else 1
-	local horizontal = math.min(vh * t, maxRange)
-	return Vector3.new(origin.X + dirH.X * horizontal, PART_Y, origin.Z + dirH.Z * horizontal)
 end
 
-local function updateArcPos(parts: { BasePart }, origin: Vector3, direction: Vector3, cfg: { [string]: any })
-	local landing = calcArcLanding(origin, direction, cfg.speed, cfg.gravity, cfg.maxRange)
-	parts[1].CFrame = CFrame.new(landing) * CFrame.fromEulerAnglesXYZ(0, 0, math.pi / 2)
-end
-
-local POS_UPDATERS = {
-	cone = updateConePos,
-	circle = updateCirclePos,
-	line = updateLinePos,
-	arc = updateArcPos,
+local POS_UPDATERS: { [string]: ({ BasePart }, Vector3, Vector3, { [string]: any }) -> () } = {
+	cone = posUpdateCone,
+	circle = posUpdateCircle,
+	line = posUpdateLine,
+	arc = posUpdateArc,
 }
 
--- ─── Shape 크기 갱신 ─────────────────────────────────────────────────────────
+-- ─── 크기 리사이즈 ────────────────────────────────────────────────────────────
+
+local SIZE_FIELDS: { [string]: { string } } = {
+	cone = { "range", "angleMin", "angleMax" },
+	circle = { "radius", "innerRadius" }, -- posUpdate에서 Size도 갱신
+	line = { "range", "width" },
+	arc = { "range", "height", "arcRadius" },
+}
 
 local function resizeCone(parts: { BasePart }, cfg: { [string]: any })
-	local segAngle = cfg.angle / CONE_SEGMENTS
-	for _, part in parts do
-		local segWidth = cfg.range * 2 * math.tan(math.rad(segAngle / 2))
-		part.Size = Vector3.new(segWidth, PART_HEIGHT, cfg.range)
+	local segAngle = (cfg.angleMax - cfg.angleMin) / CONE_SEGMENTS
+	for _, p in parts do
+		local w = cfg.range * 2 * math.tan(math.rad(segAngle / 2))
+		p.Size = Vector3.new(w, PART_HEIGHT, cfg.range)
 	end
-end
-
-local function resizeCircle(parts: { BasePart }, cfg: { [string]: any })
-	parts[1].Size = Vector3.new(PART_HEIGHT, cfg.radius * 2, cfg.radius * 2)
 end
 
 local function resizeLine(parts: { BasePart }, cfg: { [string]: any })
@@ -227,15 +304,27 @@ local function resizeLine(parts: { BasePart }, cfg: { [string]: any })
 end
 
 local function resizeArc(parts: { BasePart }, cfg: { [string]: any })
-	parts[1].Size = Vector3.new(PART_HEIGHT, cfg.arcRadius * 2, cfg.arcRadius * 2)
+	local r = cfg.arcRadius
+	for _, p in parts do
+		p.Size = Vector3.new(p.Size.X, r * 2, r * 2)
+	end
 end
 
-local RESIZERS = {
+local RESIZERS: { [string]: (({ BasePart }, { [string]: any }) -> ())? } = {
 	cone = resizeCone,
-	circle = resizeCircle,
+	circle = nil, -- posUpdateCircle에서 처리
 	line = resizeLine,
 	arc = resizeArc,
 }
+
+-- ─── 내부 유틸 ───────────────────────────────────────────────────────────────
+
+local function applyTransparency(entry: ShapeEntry)
+	local final = math.max(entry.baseT, entry.effectT)
+	for _, p in entry.parts do
+		p.Transparency = final
+	end
+end
 
 -- ─── 공개 API ────────────────────────────────────────────────────────────────
 
@@ -243,164 +332,182 @@ local DynamicIndicator = {}
 DynamicIndicator.__index = DynamicIndicator
 
 --[=[
-	내부: shape의 최종 투명도를 적용합니다.
-	final = math.max(_baseT[shape], _effectT[shape])
-]=]
-function DynamicIndicator:_applyTransparency(shapeName: string)
-	local shapeData = self._shapes[shapeName]
-	if not shapeData then
-		return
-	end
-	local base = self._baseT[shapeName] or 1
-	local effect = self._effectT[shapeName] or 0
-	local final = math.max(base, effect)
-	for _, p in shapeData.parts do
-		p.Transparency = final
-	end
-end
+	인디케이터를 생성합니다.
 
-function DynamicIndicator.new(shapes: { string }?): DynamicIndicator
+	@param shapeMap { [string]: string }
+	  key   = shape id (임의 이름)
+	  value = shape 종류 ("cone" | "circle" | "line" | "arc")
+
+	예)
+	  DynamicIndicator.new({
+	      innerCone  = "cone",
+	      outerCone  = "cone",
+	      baseCircle = "circle",
+	  })
+]=]
+function DynamicIndicator.new(shapeMap: { [string]: string }): DynamicIndicator
 	local self = setmetatable({} :: any, DynamicIndicator)
 	local folder = getFolder()
+	self._entries = {}
 
-	self._baseT = {}
-	self._effectT = {}
-
-	local shapeList: { string } = shapes or ALL_SHAPES
-	self._shapes = {}
-	self._activeShape = shapeList[1]
-	self._origin = Vector3.zero
-	self._direction = Vector3.new(0, 0, -1)
-
-	for _, shapeName in shapeList do
-		local defaults = DEFAULTS[shapeName]
-		assert(defaults, "DynamicIndicator: unknown shape '" .. shapeName .. "'")
+	for id, shape in shapeMap do
+		local defaults = DEFAULTS[shape]
+		assert(defaults, "DynamicIndicator: unknown shape '" .. shape .. "'")
 
 		local cfg: { [string]: any } = {}
 		for k, v in defaults do
 			cfg[k] = v
 		end
 
-		local parts = CREATORS[shapeName](folder, cfg)
-		self._shapes[shapeName] = { parts = parts, config = cfg }
-
-		-- 모든 shape 초기 숨김
-		self._baseT[shapeName] = 1
-		self._effectT[shapeName] = 0
-		-- makePart에서 이미 Transparency=1로 생성됨
-	end
-
-	-- activeShape는 기본 투명도로 표시
-	local activeData = self._shapes[self._activeShape]
-	if activeData then
-		self._baseT[self._activeShape] = activeData.config.transparency
-		self:_applyTransparency(self._activeShape)
+		local entry: ShapeEntry = {
+			shape = shape,
+			parts = CREATORS[shape](folder, cfg),
+			config = cfg,
+			origin = Vector3.zero,
+			direction = Vector3.new(0, 0, -1),
+			baseT = 1,
+			effectT = 0,
+		}
+		self._entries[id] = entry
 	end
 
 	return self :: DynamicIndicator
 end
 
 --[=[
-	인디케이터를 업데이트합니다.
-	params의 nil 필드는 현재 config 값을 유지합니다.
+	특정 id의 shape를 업데이트합니다.
+	nil 필드는 현재 값 유지.
+
+	@param id     string
+	@param params { [string]: any }
 ]=]
-function DynamicIndicator:update(params: any)
-	-- shape 전환
-	if params.shape and params.shape ~= self._activeShape then
-		local oldName = self._activeShape
-		-- 이전 shape 숨김 + effect 리셋
-		self._baseT[oldName] = 1
-		self._effectT[oldName] = 0
-		self:_applyTransparency(oldName)
-
-		self._activeShape = params.shape
-		local new = self._shapes[self._activeShape]
-		if new then
-			self._baseT[self._activeShape] = new.config.transparency
-			self:_applyTransparency(self._activeShape)
-		end
-	end
-
-	local shapeData = self._shapes[self._activeShape]
-	if not shapeData then
+function DynamicIndicator:update(id: string, params: { [string]: any })
+	local entry = self._entries[id]
+	if not entry then
+		warn("[DynamicIndicator] update: unknown id '" .. id .. "'")
 		return
 	end
 
-	local cfg = shapeData.config
-	local parts = shapeData.parts
+	local cfg = entry.config
 
-	-- origin / direction
 	if params.origin then
-		self._origin = params.origin
+		entry.origin = params.origin
 	end
 	if params.direction then
-		self._direction = params.direction
+		entry.direction = params.direction
 	end
 
 	-- 색상
 	if params.color then
 		cfg.color = params.color
-		for _, p in parts do
+		for _, p in entry.parts do
 			p.Color = cfg.color
 		end
 	end
 
-	-- 투명도 오버라이드 (effectT)
-	-- 0 → effectT=0 → math.max(base, 0) = base → 자연스럽게 baseT로 복귀
+	-- 투명도 오버라이드
 	if params.transparency ~= nil then
-		self._effectT[self._activeShape] = params.transparency
-		self:_applyTransparency(self._activeShape)
+		entry.effectT = params.transparency
+		applyTransparency(entry)
 	end
 
-	-- 크기 관련
+	-- 크기 필드
 	local needResize = false
-	local sizeFields = { "range", "angle", "width", "radius", "maxRange", "speed", "gravity", "arcRadius" }
-	for _, field in sizeFields do
+	for _, field in SIZE_FIELDS[entry.shape] do
 		if params[field] ~= nil then
 			cfg[field] = params[field]
 			needResize = true
 		end
 	end
 	if needResize then
-		RESIZERS[self._activeShape](parts, cfg)
-	end
-
-	-- 위치
-	POS_UPDATERS[self._activeShape](parts, self._origin, self._direction, cfg)
-end
-
---[=[
-	활성 shape의 Parts를 표시합니다.
-]=]
-function DynamicIndicator:show()
-	local shapeData = self._shapes[self._activeShape]
-	if not shapeData then
-		return
-	end
-	self._baseT[self._activeShape] = shapeData.config.transparency
-	self:_applyTransparency(self._activeShape)
-end
-
---[=[
-	모든 shape의 Parts를 숨깁니다.
-]=]
-function DynamicIndicator:hide()
-	for shapeName in self._shapes do
-		self._baseT[shapeName] = 1
-		self:_applyTransparency(shapeName)
-	end
-end
-
---[=[
-	모든 Parts를 Destroy합니다.
-]=]
-function DynamicIndicator:destroy()
-	for _, shapeData in self._shapes do
-		for _, p in shapeData.parts do
-			p:Destroy()
+		local resizer = RESIZERS[entry.shape]
+		if resizer then
+			resizer(entry.parts, cfg)
 		end
 	end
-	self._shapes = {}
+
+	-- 위치 갱신
+	POS_UPDATERS[entry.shape](entry.parts, entry.origin, entry.direction, cfg)
+end
+
+--[=[
+	특정 id의 shape를 표시합니다.
+]=]
+function DynamicIndicator:show(id: string)
+	local entry = self._entries[id]
+	if not entry then
+		return
+	end
+	entry.baseT = entry.config.transparency
+	applyTransparency(entry)
+end
+
+--[=[
+	특정 id의 shape를 숨깁니다.
+]=]
+function DynamicIndicator:hide(id: string)
+	local entry = self._entries[id]
+	if not entry then
+		return
+	end
+	entry.baseT = 1
+	applyTransparency(entry)
+end
+
+--[=[
+	모든 shape에 동일한 params를 적용합니다.
+	색상/투명도 일괄 변경 등에 사용.
+]=]
+function DynamicIndicator:updateAll(params: { [string]: any })
+	for id in self._entries do
+		self:update(id, params)
+	end
+end
+
+--[=[
+	모든 shape를 표시합니다.
+]=]
+function DynamicIndicator:showAll()
+	for _, entry in self._entries do
+		entry.baseT = entry.config.transparency
+		applyTransparency(entry)
+	end
+end
+
+--[=[
+	모든 shape를 숨깁니다.
+]=]
+function DynamicIndicator:hideAll()
+	for _, entry in self._entries do
+		entry.baseT = 1
+		applyTransparency(entry)
+	end
+end
+
+--[=[
+	shape를 파괴합니다.
+	id 없이 호출하면 전체 파괴.
+
+	@param id string? (nil이면 전체)
+]=]
+function DynamicIndicator:destroy(id: string?)
+	if id then
+		local entry = self._entries[id]
+		if not entry then
+			return
+		end
+		for _, p in entry.parts do
+			p:Destroy()
+		end
+		self._entries[id] = nil
+	else
+		for _, entry in self._entries do
+			for _, p in entry.parts do
+				p:Destroy()
+			end
+		end
+		self._entries = {}
+	end
 end
 
 return DynamicIndicator

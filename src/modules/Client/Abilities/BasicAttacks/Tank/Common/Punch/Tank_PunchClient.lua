@@ -26,11 +26,12 @@ local ANGLE_MAX = 360
 local ANGLE_EXPAND_TIME = 3.0 -- 10→360 까지 걸리는 시간 (초)
 
 return {
-	shapes = { "cone" },
+	-- id = "cone" 으로 DynamicIndicator에 전달
+	shapes = { cone = "cone" },
 
 	onAimStart = {
 		function(state: BasicAttackState)
-			state.indicator:update({ angle = ANGLE_MIN })
+			state.indicator:update("cone", { angleMin = -ANGLE_MIN / 2, angleMax = ANGLE_MIN / 2 })
 		end,
 	},
 
@@ -42,13 +43,14 @@ return {
 			if canFire then
 				local t = math.clamp(state.effectiveAimTime / ANGLE_EXPAND_TIME, 0, 1)
 				local angle = ANGLE_MIN + (ANGLE_MAX - ANGLE_MIN) * t
-				state.indicator:update({
+				state.indicator:update("cone", {
 					origin = state.origin,
 					direction = state.direction,
-					angle = angle,
+					angleMin = -angle / 2,
+					angleMax = angle / 2,
 				})
 			else
-				state.indicator:update({
+				state.indicator:update("cone", {
 					origin = state.origin,
 					direction = state.direction,
 				})
@@ -59,7 +61,7 @@ return {
 	onFire = {
 		function(state: BasicAttackState)
 			-- 각도 리셋
-			state.indicator:update({ angle = ANGLE_MIN })
+			state.indicator:update("cone", { angleMin = -ANGLE_MIN / 2, angleMax = ANGLE_MIN / 2 })
 
 			if state.idleTime >= IDLE_COMBO_RESET then
 				state.fireComboCount = 0

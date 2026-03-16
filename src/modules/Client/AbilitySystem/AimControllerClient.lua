@@ -13,7 +13,7 @@
 	- 새 조준 요청 시 기존 조준 취소 후 전환
 	- 우클릭(MouseButton2) → 현재 조준 취소
 	- 좌클릭(MouseButton1) 해제 → confirm (발사)
-	- 매 프레임 onAim 배열 실행 → IndicatorUpdateParams 병합 → indicator:update()
+	- 매 프레임 onAim 배열 실행 (origin/direction은 abilityState에 세팅 후 모듈이 직접 indicator 업데이트)
 
 	ShiftLock 연동:
 	- ShiftLock 비활성: HRP LookVector 수평 성분 사용
@@ -31,7 +31,7 @@
 	- OnAimStart: { (abilityState) -> () }?  조준 시작 1회
 	- OnAim:      { (abilityState) -> () }?  매 프레임, abilityState.indicator 직접 업데이트
 	- OnFire:     { (abilityState) -> () }?  발사 확정 후 — onFireServer 콜백 내부에서 호출됨
-	취소 시: indicator hide만 (onCancel 없음)
+	취소 시: indicator hideAll만 (onCancel 없음)
 ]=]
 
 local require = require(script.Parent.loader).load(script)
@@ -188,7 +188,7 @@ function AimControllerClient:StartAim(
 		postFireDuration = postFireDuration or 0,
 	}
 
-	abilityState.indicator:show()
+	abilityState.indicator:showAll()
 	AbilityExecutor.OnAimStart(clientModule, abilityState)
 end
 
@@ -295,7 +295,7 @@ function AimControllerClient:_confirm()
 	abilityState.direction = direction
 	abilityState.origin = origin or Vector3.zero
 
-	abilityState.indicator:hide()
+	abilityState.indicator:hideAll()
 
 	local onFireServer = state.onFireServer
 	local postFireDuration = state.postFireDuration
@@ -345,7 +345,7 @@ function AimControllerClient:_cancelInternal()
 		return
 	end
 
-	state.abilityState.indicator:hide()
+	state.abilityState.indicator:hideAll()
 	state.maid:Destroy()
 	self._aimState = nil
 
@@ -381,7 +381,8 @@ function AimControllerClient:_onRenderStep()
 	abilityState.direction = direction
 	abilityState.origin = origin
 
-	abilityState.indicator:update({ origin = origin, direction = direction })
+	-- origin/direction은 abilityState에만 세팅.
+	-- indicator 업데이트는 각 모듈의 onAim에서 담당.
 	AbilityExecutor.OnAim(state.clientModule, abilityState)
 end
 
