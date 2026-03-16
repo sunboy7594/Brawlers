@@ -3,20 +3,32 @@
 	@class InstantHit
 
 	범위 판정 유틸리티. 서버 전용.
-	실제 데미지 적용(TakeDamage)은 서버에서만 호출할 것.
+
+	변경 이력:
+	- applyEffects: humanoid:TakeDamage() → HpService:ApplyDamage() 위임.
+	  Player 캐릭터면 HpService, NPC면 기존 TakeDamage 유지.
+	- init(hpService): HpService 인스턴스 주입. HpService.Init에서 단 1회 호출.
+
+	HpService 주입 이유:
+	InstantHit은 ServiceBag 외부 유틸 모듈이므로 GetService를 쓸 수 없음.
+	HpService가 자신의 Init에서 InstantHit.init(self)를 호출하여 인스턴스를 전달.
 
 	지원 shape:
 	- "cone":   부채꼴 (range, angle 필요)
 	- "circle": 원형 (range 필요)
 	- "line":   직선 (range, width 필요)
 
-	apply() 변경사항:
+	apply() 반환값:
 	- 항상 취소함수 () -> () 반환 (delay 없어도 동일)
 	- onHit 콜백: 판정 완료 시점에 호출 (delay 있든 없든)
-	  → delay가 있어도 HitChecked 타이밍이 판정 완료와 일치함
 ]=]
 
+local Players = game:GetService("Players")
+
 local InstantHit = {}
+
+-- HpService 인스턴스 (HpService.Init에서 주입됨)
+local _hpService: any = nil
 
 -- ─── 타입 정의 ───────────────────────────────────────────────────────────────
 
@@ -29,6 +41,16 @@ export type HitConfig = {
 	knockback: number?,
 	delay: number?, -- 생략 시 0 (즉시 판정)
 }
+
+-- ─── 주입 API ────────────────────────────────────────────────────────────────
+
+--[=[
+	HpService 인스턴스를 주입합니다.
+	HpService.Init에서 단 1회 호출. 그 외에서는 호출하지 말 것.
+]=]
+function InstantHit.init(hpService: any)
+	_hpService = hpService
+end
 
 -- ─── 내부 유틸 ───────────────────────────────────────────────────────────────
 
@@ -140,14 +162,23 @@ local function filterLine(
 	return result
 end
 
--- 데미지 및 넉백을 적용합니다.
+-- 대미지 및 넉백을 적용합니다.
+-- Player 캐릭터 → HpService:ApplyDamage (HP 시스템 통합)
+-- NPC           → humanoid:TakeDamage   (기존 방식 유지)
 local function applyEffects(attacker: Model, hits: { Model }, config: HitConfig)
 	for _, char in hits do
-		local humanoid = char:FindFirstChildOfClass("Humanoid")
-		if humanoid then
-			humanoid:TakeDamage(config.damage)
+		-- HP 처리
+		local player = Players:GetPlayerFromCharacter(char)
+		if player and _hpService then
+			_hpService:ApplyDamage(player, config.damage)
+		else
+			local humanoid = char:FindFirstChildOfClass("Humanoid")
+			if humanoid then
+				humanoid:TakeDamage(config.damage)
+			end
 		end
 
+		-- 넉백
 		local knockback = config.knockback
 		if knockback and knockback > 0 then
 			local rootPart = char:FindFirstChild("HumanoidRootPart") :: BasePart?

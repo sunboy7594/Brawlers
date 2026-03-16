@@ -4,12 +4,17 @@
 
 	서버 권한 이동 시스템.
 
+	변경 이력:
+	- RequestClassChange 처리 및 클래스 상태 소유권을 ClassService로 이관.
+	- ClassService.ClassChanged 구독 → WalkSpeed 기준만 갱신.
+	- _setPlayerClass 메서드 제거.
+	- BasicAttackService 의존 제거 (CancelCombatState는 ClassService가 호출).
+
 	Anti-exploit 구조:
 	- WalkSpeed는 오직 이 서비스만 설정합니다. 클라이언트는 절대 직접 변경 불가.
 	- RemoteEvent 레이트 리밋: 플레이어당 최소 0.08초 간격 강제.
 	- 속도 검증: 클라이언트가 보고한 상태와 실제 Velocity를 비교.
 	  지속적으로 불일치하면 위반 카운트 증가 → 속도 동결.
-	- 클래스 데이터는 서버에서만 관리. 클라이언트가 클래스를 주장해도 무시.
 
 	관성 구조:
 	- Heartbeat마다 currentSpeed를 targetSpeed 방향으로 지수 감쇠 Lerp.
@@ -21,9 +26,8 @@ local require = require(script.Parent.loader).load(script)
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 
-local BasicAttackService = require("BasicAttackService")
 local BasicMovementConfig = require("BasicMovementConfig")
-local ClassRemoting = require("ClassRemoting")
+local ClassService = require("ClassService")
 local Maid = require("Maid")
 local MovementRemoting = require("MovementRemoting")
 local ServiceBag = require("ServiceBag")
@@ -32,6 +36,7 @@ local BasicMovementService = {}
 BasicMovementService.ServiceName = "BasicMovementService"
 
 -- ─── 상수 ───────────────────────────────────────
+
 local RATE_LIMIT_INTERVAL = 0.08
 local MAX_VIOLATIONS = 10
 local VIOLATION_DECAY_RATE = 0.5
@@ -59,6 +64,7 @@ export type BasicMovementService = typeof(setmetatable(
 	{} :: {
 		_serviceBag: ServiceBag.ServiceBag,
 		_maid: any,
+		_classService: any,
 		_playerStates: { [number]: PlayerState },
 		_playerMaids: { [number]: any },
 	},
@@ -71,22 +77,12 @@ function BasicMovementService.Init(self: BasicMovementService, serviceBag: Servi
 	assert(not (self :: any)._serviceBag, "Already initialized")
 	self._serviceBag = assert(serviceBag, "No serviceBag")
 	self._maid = Maid.new()
+	self._classService = serviceBag:GetService(ClassService)
 	self._playerStates = {}
 	self._playerMaids = {}
 
 	self._maid:GiveTask(MovementRemoting.IsRunning:Connect(function(player: Player, isRunning: unknown)
 		self:_onMovementStateReceived(player, isRunning)
-	end))
-
-	self._maid:GiveTask(ClassRemoting.RequestClassChange:Bind(function(player: Player, className: unknown)
-		if type(className) ~= "string" then
-			return false, "Invalid class name"
-		end
-		if not BasicMovementConfig.Classes[className] then
-			return false, "Unknown class: " .. className
-		end
-		self:_setPlayerClass(player, className)
-		return true, className
 	end))
 end
 
@@ -103,6 +99,18 @@ function BasicMovementService.Start(self: BasicMovementService): ()
 	self._maid:GiveTask(RunService.Heartbeat:Connect(function(dt)
 		self:_updateInertia(dt)
 	end))
+
+	-- 클래스 변경 시 WalkSpeed 기준 갱신
+	self._maid:GiveTask(self._classService.ClassChanged:Connect(function(player: Player, className: string)
+		local state = self._playerStates[player.UserId]
+		if not state then
+			return
+		end
+		local config = BasicMovementConfig.GetConfig(className)
+		state.className = className
+		state.targetSpeed = if state.isRunning then config.runSpeed else config.walkSpeed
+		-- currentSpeed는 관성으로 서서히 따라감
+	end))
 end
 
 -- ─── 플레이어 라이프사이클 ────────────────────────
@@ -115,8 +123,8 @@ function BasicMovementService:_onPlayerAdded(player: Player)
 		local humanoid = char:WaitForChild("Humanoid") :: Humanoid
 		local rootPart = char:WaitForChild("HumanoidRootPart") :: BasePart
 
-		local existingState = self._playerStates[player.UserId]
-		local className = if existingState then existingState.className else "Default"
+		-- 현재 클래스 조회 (ClassService 위임)
+		local className = self._classService:GetClass(player)
 		local config = BasicMovementConfig.GetConfig(className)
 
 		self._playerStates[player.UserId] = {
@@ -200,12 +208,13 @@ function BasicMovementService:_onMovementStateReceived(player: Player, isRunning
 	end
 end
 
+-- ─── Violation ────────────────────────────────────
+
 function BasicMovementService:_recordViolation(state: PlayerState, reason: string)
 	local now = os.clock()
 	local elapsed = now - state.lastViolationDecay
 	state.violations = math.max(0, state.violations - elapsed * VIOLATION_DECAY_RATE)
 	state.lastViolationDecay = now
-
 	state.violations += 1
 
 	if state.violations >= MAX_VIOLATIONS then
@@ -246,28 +255,7 @@ function BasicMovementService:_updateInertia(dt: number)
 	end
 end
 
--- ─── 내부 ────────────────────────────────────────────
-
--- 클래스 변경 확정 및 클라이언트 통보
--- RequestClassChange 핸들러에서만 호출
-function BasicMovementService:_setPlayerClass(player: Player, className: string)
-	local state = self._playerStates[player.UserId]
-	if not state then
-		return
-	end
-
-	-- 클래스 교체 전 전투 상태 강제 초기화 (예약 발사, onHit 클로저 등 캔슬)
-	self._serviceBag:GetService(BasicAttackService):CancelCombatState(player)
-
-	local config = BasicMovementConfig.GetConfig(className)
-	state.className = className
-	state.targetSpeed = if state.isRunning then config.runSpeed else config.walkSpeed
-	-- currentSpeed는 관성으로 서서히 따라감
-
-	ClassRemoting.ClassChanged:FireClient(player, className)
-end
-
--- ─── 공개 API (다른 서비스에서 호출) ────────────────
+-- ─── 공개 API ────────────────────────────────────
 
 --[=[
 	플레이어 이동을 외부에서 강제로 잠급니다. (예: 스킬 시전 중)

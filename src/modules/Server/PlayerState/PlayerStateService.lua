@@ -7,8 +7,12 @@
 	담당:
 	- ChangePlayerState       : 단발 effect 적용
 	- RepeatChangePlayerState : 동일 effect를 일정 간격으로 반복 적용
-	- RemoveEffect            : id로 특정 effect 제거
+	- RemoveEffect            : instanceId로 특정 effect 제거
 	- Cleanse                 : force=false인 effect 전체 제거
+
+	변경 이력:
+	- _applyDamage: humanoid:TakeDamage() → HpService:ApplyDamage() 위임.
+	  multiplier 계산(receiveDamageMult, dealDamageMult)은 여기서 완료 후 최종 값만 전달.
 
 	보호 처리:
 	- 대상에 ignoreCC 활성     → force=false effect의 cc계열 component 무시
@@ -28,6 +32,7 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 
 local BasicMovementService = require("BasicMovementService")
+local HpService = require("HpService")
 local Maid = require("Maid")
 local PlayerStateDefs = require("PlayerStateDefs")
 local PlayerStateRemoting = require("PlayerStateRemoting")
@@ -35,6 +40,8 @@ local ServiceBag = require("ServiceBag")
 
 local CC_TYPES = PlayerStateDefs.CC_TYPES
 local ComponentType = PlayerStateDefs.ComponentType
+
+-- ─── 내부 타입 ───────────────────────────────────────────────────────────────
 
 type EffectInstance = {
 	instanceId: string,
@@ -63,12 +70,15 @@ export type PlayerStateService = typeof(setmetatable(
 		_serviceBag: ServiceBag.ServiceBag,
 		_maid: any,
 		_movementService: any,
+		_hpService: any,
 		_runtimes: { [number]: PlayerRuntime },
 		_playerMaids: { [number]: any },
 		_idCounter: number,
 	},
 	{} :: typeof({ __index = {} })
 ))
+
+-- ─── 서비스 ──────────────────────────────────────────────────────────────────
 
 local PlayerStateService = {}
 PlayerStateService.ServiceName = "PlayerStateService"
@@ -79,6 +89,7 @@ function PlayerStateService.Init(self: PlayerStateService, serviceBag: ServiceBa
 	self._serviceBag = serviceBag
 	self._maid = Maid.new()
 	self._movementService = serviceBag:GetService(BasicMovementService)
+	self._hpService = serviceBag:GetService(HpService)
 	self._runtimes = {}
 	self._playerMaids = {}
 	self._idCounter = 0
@@ -98,6 +109,8 @@ function PlayerStateService.Start(self: PlayerStateService): ()
 		self:_onHeartbeat(dt)
 	end))
 end
+
+-- ─── 플레이어 라이프사이클 ────────────────────────────────────────────────────
 
 function PlayerStateService:_onPlayerAdded(player: Player)
 	local pMaid = Maid.new()
@@ -149,6 +162,53 @@ function PlayerStateService:_onPlayerRemoving(player: Player)
 	end
 end
 
+-- ─── Heartbeat ───────────────────────────────────────────────────────────────
+
+function PlayerStateService:_onHeartbeat(_dt: number)
+	local now = os.clock()
+	for userId, runtime in self._runtimes do
+		local player = Players:GetPlayerByUserId(userId)
+		if not player then
+			continue
+		end
+		local dirty = false
+		local expiredPayloads: { [string]: boolean } = {}
+		local i = 1
+		while i <= #runtime.effects do
+			local inst = runtime.effects[i]
+			if inst.expiresAt and now >= inst.expiresAt then
+				expiredPayloads[inst.payloadId] = true
+				table.remove(runtime.effects, i)
+				dirty = true
+			else
+				i += 1
+			end
+		end
+		for pid in expiredPayloads do
+			local hasMore = false
+			for _, inst in runtime.effects do
+				if inst.payloadId == pid then
+					hasMore = true
+					break
+				end
+			end
+			if not hasMore then
+				PlayerStateRemoting.EffectRemoved:FireClient(player, pid)
+			end
+		end
+		if dirty then
+			self:_rebuildCache(runtime)
+			self:_syncMovement(player, runtime)
+		end
+	end
+end
+
+-- ─── 공개 API ────────────────────────────────────────────────────────────────
+
+--[=[
+	단발 effect를 즉시 적용합니다.
+	@return string payloadId (RemoveEffect 호출 시 사용)
+]=]
 function PlayerStateService:ChangePlayerState(target: Player, effectDef: PlayerStateDefs.EffectDef): string
 	local runtime = self._runtimes[target.UserId]
 	if not runtime then
@@ -159,6 +219,11 @@ function PlayerStateService:ChangePlayerState(target: Player, effectDef: PlayerS
 	return payloadId
 end
 
+--[=[
+	동일 effect를 일정 간격으로 count회 반복 적용합니다.
+	interval = totalDuration / count 자동 계산.
+	@return () -> ()  취소 함수
+]=]
 function PlayerStateService:RepeatChangePlayerState(
 	target: Player,
 	effectDef: PlayerStateDefs.EffectDef,
@@ -168,6 +233,7 @@ function PlayerStateService:RepeatChangePlayerState(
 	local interval = totalDuration / count
 	local fired = 0
 	local cancelled = false
+
 	local function tick()
 		if cancelled then
 			return
@@ -183,35 +249,17 @@ function PlayerStateService:RepeatChangePlayerState(
 			task.delay(interval, tick)
 		end
 	end
+
 	task.delay(0, tick)
+
 	return function()
 		cancelled = true
 	end
 end
 
-function PlayerStateService:Cleanse(target: Player)
-	local runtime = self._runtimes[target.UserId]
-	if not runtime then
-		return
-	end
-	local removedPayloads: { [string]: boolean } = {}
-	local toRemove: { EffectInstance } = {}
-	for _, inst in runtime.effects do
-		if not inst.effectDef.force then
-			table.insert(toRemove, inst)
-			removedPayloads[inst.payloadId] = true
-		end
-	end
-	for _, inst in toRemove do
-		self:_removeEffectInstance(runtime, inst.instanceId)
-	end
-	for pid in removedPayloads do
-		PlayerStateRemoting.EffectRemoved:FireClient(target, pid)
-	end
-	self:_rebuildCache(runtime)
-	self:_syncMovement(target, runtime)
-end
-
+--[=[
+	instanceId로 특정 effect를 제거합니다.
+]=]
 function PlayerStateService:RemoveEffect(target: Player, instanceId: string)
 	local runtime = self._runtimes[target.UserId]
 	if not runtime then
@@ -241,20 +289,57 @@ function PlayerStateService:RemoveEffect(target: Player, instanceId: string)
 	self:_syncMovement(target, runtime)
 end
 
+--[=[
+	force=false인 모든 effect를 제거합니다.
+]=]
+function PlayerStateService:Cleanse(target: Player)
+	local runtime = self._runtimes[target.UserId]
+	if not runtime then
+		return
+	end
+	local removedPayloads: { [string]: boolean } = {}
+	local toRemove: { EffectInstance } = {}
+	for _, inst in runtime.effects do
+		if not inst.effectDef.force then
+			table.insert(toRemove, inst)
+			removedPayloads[inst.payloadId] = true
+		end
+	end
+	for _, inst in toRemove do
+		self:_removeEffectInstance(runtime, inst.instanceId)
+	end
+	for pid in removedPayloads do
+		PlayerStateRemoting.EffectRemoved:FireClient(target, pid)
+	end
+	self:_rebuildCache(runtime)
+	self:_syncMovement(target, runtime)
+end
+
+--[=[
+	대미지 수신 배율을 반환합니다. (기본 1.0)
+]=]
 function PlayerStateService:GetReceiveDamageMult(target: Player): number
 	local runtime = self._runtimes[target.UserId]
 	return if runtime then runtime.receiveDamageMult else 1.0
 end
 
+--[=[
+	대미지 딜 배율을 반환합니다. (기본 1.0)
+]=]
 function PlayerStateService:GetDealDamageMult(player: Player): number
 	local runtime = self._runtimes[player.UserId]
 	return if runtime then runtime.dealDamageMult else 1.0
 end
 
+--[=[
+	공격 잠금 여부를 반환합니다.
+]=]
 function PlayerStateService:IsAttackLocked(player: Player): boolean
 	local runtime = self._runtimes[player.UserId]
 	return if runtime then runtime.isAttackLocked else false
 end
+
+-- ─── 내부: Effect 적용 ────────────────────────────────────────────────────────
 
 function PlayerStateService:_applyEffectDef(
 	target: Player,
@@ -324,16 +409,17 @@ function PlayerStateService:_registerInstance(
 	return instanceId
 end
 
+--[=[
+	대미지 component 처리.
+	multiplier 계산을 여기서 완료한 뒤 최종 값을 HpService에 위임.
+]=]
 function PlayerStateService:_applyDamage(
 	target: Player,
 	runtime: PlayerRuntime,
 	effectDef: PlayerStateDefs.EffectDef,
 	comp: any
 )
-	local humanoid = runtime.humanoid
-	if not humanoid then
-		return
-	end
+	-- multiplier 계산 (receiveDamageMult, dealDamageMult)
 	local amount = comp.amount * runtime.receiveDamageMult
 	if effectDef.source then
 		local sourceRuntime = self._runtimes[effectDef.source.UserId]
@@ -341,10 +427,14 @@ function PlayerStateService:_applyDamage(
 			amount *= sourceRuntime.dealDamageMult
 		end
 	end
-	humanoid:TakeDamage(amount)
-	if amount > 0 then
-		self:_checkVulnerable(target, runtime, effectDef)
+
+	if amount <= 0 then
+		return
 	end
+
+	-- HpService에 위임 (humanoid:TakeDamage 직접 호출 금지)
+	self._hpService:ApplyDamage(target, amount)
+	self:_checkVulnerable(target, runtime, effectDef)
 end
 
 function PlayerStateService:_applyKnockback(runtime: PlayerRuntime, comp: any)
@@ -449,45 +539,6 @@ function PlayerStateService:_clearAllEffects(target: Player, runtime: PlayerRunt
 	table.clear(runtime.effects)
 	self:_rebuildCache(runtime)
 	self:_syncMovement(target, runtime)
-end
-
-function PlayerStateService:_onHeartbeat(_dt: number)
-	local now = os.clock()
-	for userId, runtime in self._runtimes do
-		local player = Players:GetPlayerByUserId(userId)
-		if not player then
-			continue
-		end
-		local dirty = false
-		local expiredPayloads: { [string]: boolean } = {}
-		local i = 1
-		while i <= #runtime.effects do
-			local inst = runtime.effects[i]
-			if inst.expiresAt and now >= inst.expiresAt then
-				expiredPayloads[inst.payloadId] = true
-				table.remove(runtime.effects, i)
-				dirty = true
-			else
-				i += 1
-			end
-		end
-		for pid in expiredPayloads do
-			local hasMore = false
-			for _, inst in runtime.effects do
-				if inst.payloadId == pid then
-					hasMore = true
-					break
-				end
-			end
-			if not hasMore then
-				PlayerStateRemoting.EffectRemoved:FireClient(player, pid)
-			end
-		end
-		if dirty then
-			self:_rebuildCache(runtime)
-			self:_syncMovement(player, runtime)
-		end
-	end
 end
 
 function PlayerStateService.Destroy(self: PlayerStateService)

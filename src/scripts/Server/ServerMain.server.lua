@@ -10,10 +10,22 @@ local loader = ServerScriptService.Brawlers:FindFirstChild("LoaderUtils", true).
 local require = require(loader).bootstrapGame(ServerScriptService.Brawlers)
 
 local serviceBag = require("ServiceBag").new()
+
+-- ─── Core ────────────────────────────────────────
+-- ClassService는 BasicAttackService를 GetService하므로 먼저 등록
+-- HpService는 ClassService를 GetService하므로 ClassService 다음에 등록
+-- PlayerStateService는 HpService를 GetService하므로 HpService 다음에 등록
 serviceBag:GetService(require("BrawlersService"))
 serviceBag:GetService(require("TagService"))
-serviceBag:GetService(require("BasicMovementService"))
 serviceBag:GetService(require("BasicAttackService"))
+serviceBag:GetService(require("ClassService"))
+serviceBag:GetService(require("HpService"))
+
+-- ─── Movement ────────────────────────────────────
+-- BasicMovementService는 ClassService를 GetService
+serviceBag:GetService(require("BasicMovementService"))
+
+-- ─── Ability System ──────────────────────────────
 serviceBag:GetService(require("PassiveService"))
 serviceBag:GetService(require("SkillService"))
 serviceBag:GetService(require("UltimateService"))
