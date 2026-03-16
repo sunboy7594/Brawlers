@@ -18,15 +18,15 @@ local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 
 local AnimationControllerClient = require("AnimationControllerClient")
-local BasicCameraAnimDef = require("BasicCameraAnimDef")
 local BasicMovementAnimDef = require("BasicMovementAnimDef")
+local BasicMovementCameraAnimDef = require("BasicMovementCameraAnimDef")
+local BasicMovementConfig = require("BasicMovementConfig")
 local CameraAnimator = require("CameraAnimator")
 local CameraControllerClient = require("CameraControllerClient")
 local ClassRemoting = require("ClassRemoting")
 local EntityAnimator = require("EntityAnimator")
 local KeybindConfig = require("KeybindConfig")
 local Maid = require("Maid")
-local MovementConfig = require("MovementConfig")
 local MovementRemoting = require("MovementRemoting")
 local PlayerBinderClient = require("PlayerBinderClient")
 local ServiceBag = require("ServiceBag")
@@ -63,7 +63,7 @@ function BasicMovementClient.Init(self: BasicMovementClient, serviceBag: Service
 
 	-- CameraAnimator 직접 생성 (캐릭터 생명주기와 무관하게 항상 존재)
 	local cameraController = serviceBag:GetService(CameraControllerClient)
-	local camAnimator = CameraAnimator.new("BasicMovement", BasicCameraAnimDef, cameraController)
+	local camAnimator = CameraAnimator.new("BasicMovement", BasicMovementCameraAnimDef, cameraController)
 	self._cameraAnimator = camAnimator
 	self._maid:GiveTask(function()
 		camAnimator:Destroy()
@@ -158,7 +158,7 @@ function BasicMovementClient:_playAnim(animKey: string, play: boolean)
 	if not self._animator then
 		return
 	end
-	local config = MovementConfig.GetConfig(self._currentClass)
+	local config = BasicMovementConfig.GetConfig(self._currentClass)
 	local animName = (config.animations :: any)[animKey] :: string
 	if play then
 		self._animator:PlayAnimation(animName)

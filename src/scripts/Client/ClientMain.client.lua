@@ -23,7 +23,7 @@ serviceBag:GetService(require("BasicMovementClient"))
 -- AimControllerClient는 BasicAttackClient보다 먼저 등록해야 Init에서 GetService 가능
 serviceBag:GetService(require("AimControllerClient"))
 serviceBag:GetService(require("BasicAttackClient"))
-serviceBag:GetService(require("HitReactionClient"))
+serviceBag:GetService(require("PlayerStateClient"))
 serviceBag:GetService(require("PassiveClient"))
 serviceBag:GetService(require("SkillClient"))
 serviceBag:GetService(require("UltimateClient"))

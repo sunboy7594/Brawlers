@@ -1,6 +1,6 @@
 --!strict
 --[=[
-	@class MovementConfig
+	@class BasicMovementConfig
 	직업별 이동 파라미터 정의. 서버/클라이언트 공유.
 	속도 값은 서버에서만 실제로 사용되며, 클라이언트는 애니메이션 정보만 참조합니다.
 
@@ -14,7 +14,7 @@
 	- ARTILLERY   투척수     : 느리고 둔함
 ]=]
 
-local MovementConfig = {}
+local BasicMovementConfig = {}
 
 export type AnimationSet = {
 	Idle: string,
@@ -39,7 +39,7 @@ export type ClassConfig = {
 
 -- ─────────────────────────────────────────────────────────────────────────────
 
-MovementConfig.Classes = {
+BasicMovementConfig.Classes = {
 	-- Fallback (클래스 미지정 시)
 	Default = {
 		walkSpeed = 16,
@@ -155,8 +155,8 @@ MovementConfig.Classes = {
 	} :: ClassConfig,
 }
 
-function MovementConfig.GetConfig(className: string): ClassConfig
-	return MovementConfig.Classes[className] or MovementConfig.Classes.Default
+function BasicMovementConfig.GetConfig(className: string): ClassConfig
+	return BasicMovementConfig.Classes[className] or BasicMovementConfig.Classes.Default
 end
 
-return MovementConfig
+return BasicMovementConfig

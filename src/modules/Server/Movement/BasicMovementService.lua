@@ -22,9 +22,9 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 
 local BasicAttackService = require("BasicAttackService")
+local BasicMovementConfig = require("BasicMovementConfig")
 local ClassRemoting = require("ClassRemoting")
 local Maid = require("Maid")
-local MovementConfig = require("MovementConfig")
 local MovementRemoting = require("MovementRemoting")
 local ServiceBag = require("ServiceBag")
 
@@ -82,7 +82,7 @@ function BasicMovementService.Init(self: BasicMovementService, serviceBag: Servi
 		if type(className) ~= "string" then
 			return false, "Invalid class name"
 		end
-		if not MovementConfig.Classes[className] then
+		if not BasicMovementConfig.Classes[className] then
 			return false, "Unknown class: " .. className
 		end
 		self:_setPlayerClass(player, className)
@@ -117,7 +117,7 @@ function BasicMovementService:_onPlayerAdded(player: Player)
 
 		local existingState = self._playerStates[player.UserId]
 		local className = if existingState then existingState.className else "Default"
-		local config = MovementConfig.GetConfig(className)
+		local config = BasicMovementConfig.GetConfig(className)
 
 		self._playerStates[player.UserId] = {
 			className = className,
@@ -187,7 +187,7 @@ function BasicMovementService:_onMovementStateReceived(player: Player, isRunning
 	end
 
 	state.isRunning = isRunning
-	local config = MovementConfig.GetConfig(state.className)
+	local config = BasicMovementConfig.GetConfig(state.className)
 	state.targetSpeed = if isRunning then config.runSpeed else config.walkSpeed
 
 	if state.rootPart then
@@ -233,7 +233,7 @@ function BasicMovementService:_updateInertia(dt: number)
 			continue
 		end
 
-		local config = MovementConfig.GetConfig(state.className)
+		local config = BasicMovementConfig.GetConfig(state.className)
 		local lerpStrength = if state.currentSpeed < state.targetSpeed then config.acceleration else config.deceleration
 		local alpha = 1 - math.exp(-lerpStrength * dt)
 		state.currentSpeed = state.currentSpeed + (state.targetSpeed - state.currentSpeed) * alpha
@@ -259,7 +259,7 @@ function BasicMovementService:_setPlayerClass(player: Player, className: string)
 	-- 클래스 교체 전 전투 상태 강제 초기화 (예약 발사, onHit 클로저 등 캔슬)
 	self._serviceBag:GetService(BasicAttackService):CancelCombatState(player)
 
-	local config = MovementConfig.GetConfig(className)
+	local config = BasicMovementConfig.GetConfig(className)
 	state.className = className
 	state.targetSpeed = if state.isRunning then config.runSpeed else config.walkSpeed
 	-- currentSpeed는 관성으로 서서히 따라감
@@ -283,7 +283,7 @@ function BasicMovementService:SetMovementLocked(player: Player, locked: boolean)
 	if locked then
 		state.targetSpeed = 0
 	else
-		local config = MovementConfig.GetConfig(state.className)
+		local config = BasicMovementConfig.GetConfig(state.className)
 		state.targetSpeed = if state.isRunning then config.runSpeed else config.walkSpeed
 	end
 end

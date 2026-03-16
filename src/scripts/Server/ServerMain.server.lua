@@ -18,6 +18,7 @@ serviceBag:GetService(require("PassiveService"))
 serviceBag:GetService(require("SkillService"))
 serviceBag:GetService(require("UltimateService"))
 serviceBag:GetService(require("AnimReplicationService"))
+serviceBag:GetService(require("PlayerStateService"))
 
 serviceBag:Init()
 serviceBag:Start()
