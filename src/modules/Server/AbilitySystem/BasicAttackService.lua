@@ -31,7 +31,8 @@
 	스냅샷:
 	- Fire 시점에 table.clone(state)으로 생성
 	- onHit 콜백 및 onHitChecked 훅에 전달
-	- snapshot.playerStateService: onHitChecked에서 ChangePlayerState 호출용으로 주입됨
+	- snapshot.playerStateController : onHitChecked에서 Play / PlayPlayerState 호출용
+	- snapshot.attackerStates         : fire 시점 공격자의 active effect 스냅샷
 
 	예약 발사 (pendingFireCancel):
 	- postDelay 잔여 비율 ≤ POST_DELAY_QUEUE_THRESHOLD(80%) 일 때 공격 시도 시
@@ -50,7 +51,7 @@ local BasicAttackRemoting = require("BasicAttackRemoting")
 local ClassService = require("ClassService")
 local LoadoutRemoting = require("LoadoutRemoting")
 local Maid = require("Maid")
-local PlayerStateService = require("PlayerStateService")
+local PlayerStateControllerService = require("PlayerStateControllerService")
 local ServiceBag = require("ServiceBag")
 local cancellableDelay = require("cancellableDelay")
 
@@ -106,8 +107,11 @@ export type BasicAttackState = {
 	-- 예약 발사 취소 함수
 	pendingFireCancel: (() -> ())?,
 
-	-- onHitChecked에서 피격 반응 적용용 (snapshot에만 주입됨)
-	playerStateService: any?,
+	-- onHitChecked에서 Play / PlayPlayerState 호출용 (snapshot에만 주입됨)
+	playerStateController: any?,
+
+	-- fire 시점 공격자의 active effect 스냅샷 (snapshot에만 주입됨)
+	attackerStates: { any }?,
 }
 
 type AttackModule = {
@@ -136,7 +140,7 @@ export type BasicAttackService = typeof(setmetatable(
 	{} :: {
 		_serviceBag: ServiceBag.ServiceBag,
 		_maid: any,
-		_playerStateService: any,
+		_playerStateController: any,
 		_classService: any,
 		_playerStates: { [number]: BasicAttackState },
 		_playerMaids: { [number]: any },
@@ -154,7 +158,7 @@ function BasicAttackService.Init(self: BasicAttackService, serviceBag: ServiceBa
 	assert(not (self :: any)._serviceBag, "Already initialized")
 	self._serviceBag = serviceBag
 	self._maid = Maid.new()
-	self._playerStateService = serviceBag:GetService(PlayerStateService)
+	self._playerStateController = serviceBag:GetService(PlayerStateControllerService)
 	self._classService = serviceBag:GetService(ClassService)
 	self._playerStates = {}
 	self._playerMaids = {}
@@ -231,7 +235,8 @@ function BasicAttackService:_onPlayerAdded(player: Player)
 		victims = nil,
 		onHit = nil,
 		pendingFireCancel = nil,
-		playerStateService = nil,
+		playerStateController = nil,
+		attackerStates = nil,
 	}
 	self._playerStates[player.UserId] = state
 
@@ -379,8 +384,9 @@ function BasicAttackService:_executeFire(player: Player, state: BasicAttackState
 	snapshot.victims = nil
 	snapshot.onHit = nil
 	snapshot.pendingFireCancel = nil
-	-- onHitChecked에서 ChangePlayerState 호출용으로 주입
-	snapshot.playerStateService = self._playerStateService
+	-- psc 및 공격자 상태 주입
+	snapshot.playerStateController = self._playerStateController
+	snapshot.attackerStates = self._playerStateController:GetActiveEffects(player)
 
 	state.onHit = function(victims: { Model })
 		if #victims > 0 then

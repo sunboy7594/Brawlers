@@ -10,9 +10,9 @@
 	- 3콤보:   damage 40, cone range 10 / angle 120
 
 	onHitChecked:
-	- snapshot.playerStateService로 ChangePlayerState 호출
-	- 1,2콤보: anim_hit + cam_shake (intensity 낮게)
-	- 3콤보:   knockback component (실제 물리 넉백) + anim_knockback + cam_knockback
+	- snapshot.playerStateController + PlayerStateUtils 사용
+	- 1,2콤보: damage effect (anim_hit + screen_hit_red)
+	- 3콤보:   knockback effect (anim_knockback + cam_knockback)
 	           knockback 방향 = attacker → victim 수평 방향으로 계산
 ]=]
 
@@ -21,6 +21,7 @@ local require = require(script.Parent.loader).load(script)
 local Players = game:GetService("Players")
 
 local InstantHit = require("InstantHit")
+local PlayerStateUtils = require("PlayerStateUtils")
 
 type BasicAttackState = {
 	equippedAttackId: string?,
@@ -46,7 +47,8 @@ type BasicAttackState = {
 	victims: { Model }?,
 	onHit: ((victims: { Model }) -> ())?,
 	pendingFireCancel: (() -> ())?,
-	playerStateService: any?,
+	playerStateController: any?,
+	attackerStates: { any }?,
 }
 
 local IDLE_COMBO_RESET = 3.0
@@ -71,7 +73,7 @@ return {
 					range = 10,
 					angle = 120,
 					damage = 40,
-					knockback = 0, -- 물리 넉백은 onHitChecked의 knockback component가 담당
+					knockback = 0, -- 물리 넉백은 onHitChecked의 knockback effect가 담당
 				}, state.onHit)
 			else
 				-- 1, 2콤보: 기본 펀치
@@ -93,8 +95,8 @@ return {
 				return
 			end
 
-			local pss = snapshot.playerStateService
-			if not pss then
+			local psc = snapshot.playerStateController
+			if not psc then
 				return
 			end
 
@@ -109,8 +111,7 @@ return {
 				end
 
 				if isHeavy then
-					-- 3콤보: 실제 물리 넉백 + 넉백 애니메이션
-					-- 공격자 → 피격자 수평 방향 계산
+					-- 3콤보: 물리 넉백 + 넉백 애니메이션
 					local knockbackDir = Vector3.new(0, 0, -1)
 					if attacker then
 						local attackerRoot = attacker:FindFirstChild("HumanoidRootPart") :: BasePart?
@@ -124,27 +125,19 @@ return {
 						end
 					end
 
-					pss:ChangePlayerState(victimPlayer, {
-						source = attackerPlayer,
-						force = false,
-						tags = {
-							{ name = "anim_knockback", duration = 0.5, intensity = 0.8 },
-							{ name = "cam_knockback", duration = 0.4, intensity = 0.7 },
-						},
-						components = {
-							{ type = "knockback", direction = knockbackDir, force = 100 },
-						},
+					PlayerStateUtils.PlayPlayerState(psc, victimPlayer, "knockback", {
+						direction      = knockbackDir,
+						knockbackForce = 100,
+						source         = attackerPlayer,
+						intensity      = 0.8,
 					})
 				else
-					-- 1, 2콤보: 약한 피격 반응만 (대미지는 InstantHit에서 처리)
-					pss:ChangePlayerState(victimPlayer, {
-						source = attackerPlayer,
-						force = false,
-						tags = {
-							{ name = "anim_hit", duration = 0.25, intensity = 0.2 },
-							{ name = "cam_shake", duration = 0.2, intensity = 0.15 },
-						},
-						components = {},
+					-- 1, 2콤보: 약한 피격 반응 (대미지는 InstantHit에서 처리)
+					PlayerStateUtils.PlayPlayerState(psc, victimPlayer, "damage", {
+						amount    = 0, -- InstantHit이 이미 처리, 연출만
+						source    = attackerPlayer,
+						intensity = 0.2,
+						duration  = 0.25,
 					})
 				end
 			end

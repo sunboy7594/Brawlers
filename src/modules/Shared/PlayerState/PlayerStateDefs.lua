@@ -7,16 +7,16 @@
 	─── 함수 구조 ──────────────────────────────────────────────
 
 	[단발]
-	PlayerStateService:ChangePlayerState(target, effectDef)
+	PlayerStateControllerService:Play(target, effectDef)
 	  effectDef의 각 component를 1회 적용.
 	  component duration = 해당 효과가 지속되는 시간.
 
 	[반복]
-	PlayerStateService:RepeatChangePlayerState(target, effectDef, totalDuration, count)
+	PlayerStateControllerService:PlayRepeat(target, effectDef, totalDuration, count)
 	  effectDef를 count회, totalDuration 동안 반복 적용.
 	  interval = totalDuration / count (자동 계산)
 	  예) 0.5초 스턴을 10초 동안 6회 반복:
-	      RepeatChangePlayerState(target, {
+	      PlayRepeat(target, {
 	          components = {
 	              { type = "moveLock",   duration = 0.5 },
 	              { type = "attackLock", duration = 0.5 },
@@ -30,7 +30,7 @@
 	─── EffectDef 구조 ─────────────────────────────────────────────
 	{
 	    force      = false,          -- true면 ignoreCC/ignoreDamage 무시 강제 적용
-	    source     = player,         -- 효과 출잘. nil이면 환경/자해
+	    source     = player,         -- 효과 출처. nil이면 환경/자해
 	    tags       = { TagEntry },   -- 클라이언트 연출 힌트. 없으면 아무 연출 없음
 	    components = { Component },  -- 실제 효과 목록
 	}
@@ -46,15 +46,15 @@
 	                        -- vfx:    파티클 밀도/크기
 	}
 
-	─── id 규칙 (damage, vulnerable component에만 의미있음) ─────────
-	  id=nil   → 항상 새 인스턴스 (중첩)
-	  id="foo" → 같은 id 재호출 시 duration만 리셋 (연장)
-
 	─── 보호 처리 ────────────────────────────────────────────────────────
 	  대상에 ignoreCC     → force=false effect의 cc계열 component 무시
 	  대상에 ignoreDamage → force=false effect의 damage component 무시
 	  force=true          → 위 두 경우 모두 뚫고 강제 적용
 	  cc계열: slow, moveLock, attackLock, knockback, cameraLock
+
+	─── effect 열람 ────────────────────────────────────────────────
+	  GetActiveEffects(target) → { ActiveEffectView }
+	  HasEffect(target, componentType) → boolean
 
 	─── 연출 def 파일 분리 ────────────────────────────────────────────
 	  PlayerStateAnimDef         → 캐릭터 애니메이션 (anim_*)
@@ -125,7 +125,7 @@ export type TagEntry = {
 }
 
 export type Component =
-	{ type: "damage", id: string?, amount: number, duration: number? }
+	{ type: "damage", amount: number, duration: number? }
 	| { type: "slow", multiplier: number, duration: number? }
 	| { type: "moveLock", duration: number? }
 	| { type: "attackLock", duration: number? }
@@ -136,13 +136,29 @@ export type Component =
 	| { type: "ignoreDamage", duration: number? }
 	| { type: "cleanse", duration: number? }
 	| { type: "cameraLock", duration: number? }
-	| { type: "vulnerable", id: string?, onHit: EffectDef, duration: number? }
+	| { type: "vulnerable", onHit: EffectDef, duration: number? }
 
 export type EffectDef = {
 	force: boolean?,
 	source: Player?,
 	tags: { TagEntry }?,
 	components: { Component }?,
+}
+
+--[=[
+	GetActiveEffects가 반환하는 effect 열람 뷰.
+	instanceId : Stop 호출 시 사용
+	componentType : PlayerStateDefs.ComponentType 값
+	expiresAt  : 만료 절대시각 (nil = 영구)
+	remaining  : 남은 시간(초) (nil = 영구)
+	effectDef  : 원본 effectDef (source 등 참조용)
+]=]
+export type ActiveEffectView = {
+	instanceId: string,
+	componentType: string,
+	expiresAt: number?,
+	remaining: number?,
+	effectDef: EffectDef,
 }
 
 export type RepeatParams = {
