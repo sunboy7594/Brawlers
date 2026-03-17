@@ -9,9 +9,9 @@
 	-- 단발
 	PlayerStateUtils.PlayPlayerState(psc, target, "stun", {
 	    duration  = 2.0,
-	    source    = attackerPlayer,   -- optional
-	    force     = false,            -- optional (기본 false)
-	    intensity = 0.8,              -- optional (기본 0.7)
+	    source    = attackerPlayer,
+	    force     = false,
+	    intensity = 0.8,
 	})
 
 	-- 반복 (burn, poison 등 도트 피해)
@@ -21,6 +21,10 @@
 	    count         = 6,
 	    source        = attackerPlayer,
 	})
+
+	-- builder 이름으로 현재 적용된 effect 조회
+	local applied = PlayerStateUtils.GetAppliedBuilders(psc, target)
+	-- → { { builderName="burn", id="ps_3", remaining=7.2 }, ... }
 
 	─── 지원 effect ─────────────────────────────────────────────────────────────
 	"stun"              moveLock + attackLock  /  anim_stun, screen_stun, vfx_stun_stars
@@ -53,13 +57,13 @@ export type Params = {
 	duration: number?,
 	force: boolean?,
 	source: Player?,
-	intensity: number?,       -- tag 연출 강도 0~1 (기본 0.7)
+	intensity: number?,
 
 	-- effect별
-	multiplier: number?,      -- slow / receiveDamageMult / dealDamageMult
-	amount: number?,          -- damage / burn / poison
-	direction: Vector3?,      -- knockback
-	knockbackForce: number?,  -- knockback
+	multiplier: number?,
+	amount: number?,
+	direction: Vector3?,
+	knockbackForce: number?,
 
 	-- PlayPlayerStateRepeat 전용
 	totalDuration: number?,
@@ -83,14 +87,15 @@ local BUILDERS: { [string]: Builder } = {
 		local dur = p.duration or 1.0
 		local i = p.intensity or DEFAULT_INTENSITY
 		return {
-			force = p.force, source = p.source,
+			force = p.force,
+			source = p.source,
 			components = {
-				{ type = "moveLock",   duration = dur },
+				{ type = "moveLock", duration = dur },
 				{ type = "attackLock", duration = dur },
 			},
 			tags = {
-				{ name = Tag.AnimStun,     duration = dur, intensity = i },
-				{ name = Tag.ScreenStun,   duration = dur, intensity = i },
+				{ name = Tag.AnimStun, duration = dur, intensity = i },
+				{ name = Tag.ScreenStun, duration = dur, intensity = i },
 				{ name = Tag.VfxStunStars, duration = dur, intensity = i },
 			},
 		}
@@ -101,13 +106,16 @@ local BUILDERS: { [string]: Builder } = {
 		local i = p.intensity or DEFAULT_INTENSITY
 		local mult = p.multiplier or 0.5
 		return {
-			force = p.force, source = p.source,
+			force = p.force,
+			source = p.source,
 			components = {
 				{ type = "slow", multiplier = mult, duration = dur },
 			},
-			tags = if dur then {
-				{ name = Tag.VfxSlow, duration = dur, intensity = i },
-			} else nil,
+			tags = if dur
+				then {
+					{ name = Tag.VfxSlow, duration = dur, intensity = i },
+				}
+				else nil,
 		}
 	end,
 
@@ -117,13 +125,14 @@ local BUILDERS: { [string]: Builder } = {
 		local dir = p.direction or Vector3.new(0, 0, -1)
 		local force = p.knockbackForce or 50
 		return {
-			force = p.force, source = p.source,
+			force = p.force,
+			source = p.source,
 			components = {
 				{ type = "knockback", direction = dir, force = force },
 			},
 			tags = {
 				{ name = Tag.AnimKnockback, duration = dur, intensity = i },
-				{ name = Tag.CamKnockback,  duration = dur, intensity = i },
+				{ name = Tag.CamKnockback, duration = dur, intensity = i },
 			},
 		}
 	end,
@@ -132,9 +141,10 @@ local BUILDERS: { [string]: Builder } = {
 		local dur = p.duration or 1.0
 		local i = p.intensity or DEFAULT_INTENSITY
 		return {
-			force = p.force, source = p.source,
+			force = p.force,
+			source = p.source,
 			components = {
-				{ type = "moveLock",   duration = dur },
+				{ type = "moveLock", duration = dur },
 				{ type = "attackLock", duration = dur },
 			},
 			tags = {
@@ -147,32 +157,32 @@ local BUILDERS: { [string]: Builder } = {
 		local dur = p.duration or 2.0
 		local i = p.intensity or DEFAULT_INTENSITY
 		return {
-			force = p.force, source = p.source,
+			force = p.force,
+			source = p.source,
 			components = {
-				{ type = "moveLock",   duration = dur },
+				{ type = "moveLock", duration = dur },
 				{ type = "attackLock", duration = dur },
 			},
 			tags = {
-				{ name = Tag.AnimFreeze,   duration = dur, intensity = i },
+				{ name = Tag.AnimFreeze, duration = dur, intensity = i },
 				{ name = Tag.ScreenFreeze, duration = dur, intensity = i },
-				{ name = Tag.VfxFreeze,    duration = dur, intensity = i },
+				{ name = Tag.VfxFreeze, duration = dur, intensity = i },
 			},
 		}
 	end,
 
-	-- burn / poison: 반복 도트용. PlayPlayerStateRepeat과 함께 사용.
-	-- duration = 한 tick의 연출 지속시간 (interval 길이와 맞추는 것을 권장)
 	burn = function(p)
 		local dur = p.duration or 0.5
 		local i = p.intensity or DEFAULT_INTENSITY
 		local amount = p.amount or 5
 		return {
-			force = p.force, source = p.source,
+			force = p.force,
+			source = p.source,
 			components = {
 				{ type = "damage", amount = amount },
 			},
 			tags = {
-				{ name = Tag.VfxBurn,    duration = dur, intensity = i },
+				{ name = Tag.VfxBurn, duration = dur, intensity = i },
 				{ name = Tag.ScreenBurn, duration = dur, intensity = i },
 			},
 		}
@@ -183,12 +193,13 @@ local BUILDERS: { [string]: Builder } = {
 		local i = p.intensity or DEFAULT_INTENSITY
 		local amount = p.amount or 3
 		return {
-			force = p.force, source = p.source,
+			force = p.force,
+			source = p.source,
 			components = {
 				{ type = "damage", amount = amount },
 			},
 			tags = {
-				{ name = Tag.VfxPoison,    duration = dur, intensity = i },
+				{ name = Tag.VfxPoison, duration = dur, intensity = i },
 				{ name = Tag.ScreenPoison, duration = dur, intensity = i },
 			},
 		}
@@ -199,12 +210,13 @@ local BUILDERS: { [string]: Builder } = {
 		local i = p.intensity or DEFAULT_INTENSITY
 		local amount = p.amount or 10
 		return {
-			force = p.force, source = p.source,
+			force = p.force,
+			source = p.source,
 			components = {
 				{ type = "damage", amount = amount },
 			},
 			tags = {
-				{ name = Tag.AnimHit,      duration = dur, intensity = i },
+				{ name = Tag.AnimHit, duration = dur, intensity = i },
 				{ name = Tag.ScreenHitRed, duration = dur, intensity = i },
 			},
 		}
@@ -214,19 +226,23 @@ local BUILDERS: { [string]: Builder } = {
 		local dur = p.duration
 		local i = p.intensity or DEFAULT_INTENSITY
 		return {
-			force = p.force, source = p.source,
+			force = p.force,
+			source = p.source,
 			components = {
 				{ type = "ignoreCC", duration = dur },
 			},
-			tags = if dur then {
-				{ name = Tag.VfxHyperArmor, duration = dur, intensity = i },
-			} else nil,
+			tags = if dur
+				then {
+					{ name = Tag.VfxHyperArmor, duration = dur, intensity = i },
+				}
+				else nil,
 		}
 	end,
 
 	ignoreDamage = function(p)
 		return {
-			force = p.force, source = p.source,
+			force = p.force,
+			source = p.source,
 			components = {
 				{ type = "ignoreDamage", duration = p.duration },
 			},
@@ -235,7 +251,8 @@ local BUILDERS: { [string]: Builder } = {
 
 	receiveDamageMult = function(p)
 		return {
-			force = p.force, source = p.source,
+			force = p.force,
+			source = p.source,
 			components = {
 				{ type = "receiveDamageMult", multiplier = p.multiplier or 1.5, duration = p.duration },
 			},
@@ -244,7 +261,8 @@ local BUILDERS: { [string]: Builder } = {
 
 	dealDamageMult = function(p)
 		return {
-			force = p.force, source = p.source,
+			force = p.force,
+			source = p.source,
 			components = {
 				{ type = "dealDamageMult", multiplier = p.multiplier or 1.5, duration = p.duration },
 			},
@@ -253,7 +271,8 @@ local BUILDERS: { [string]: Builder } = {
 
 	cleanse = function(p)
 		return {
-			force = p.force, source = p.source,
+			force = p.force,
+			source = p.source,
 			components = { { type = "cleanse" } },
 		}
 	end,
@@ -262,13 +281,16 @@ local BUILDERS: { [string]: Builder } = {
 		local dur = p.duration
 		local i = p.intensity or DEFAULT_INTENSITY
 		return {
-			force = p.force, source = p.source,
+			force = p.force,
+			source = p.source,
 			components = {
 				{ type = "vulnerable", onHit = p.onHit or {}, duration = dur },
 			},
-			tags = if dur then {
-				{ name = Tag.VfxVulnerable, duration = dur, intensity = i },
-			} else nil,
+			tags = if dur
+				then {
+					{ name = Tag.VfxVulnerable, duration = dur, intensity = i },
+				}
+				else nil,
 		}
 	end,
 }
@@ -279,7 +301,8 @@ local PlayerStateUtils = {}
 
 --[=[
 	단발 effect 적용.
-	@return string payloadId
+	builderName을 effectDef에 메타데이터로 첨부 (GetAppliedBuilders 역추적용).
+	@return string id
 ]=]
 function PlayerStateUtils.PlayPlayerState(
 	service: PlayerStateControllerService.PlayerStateControllerService,
@@ -290,7 +313,9 @@ function PlayerStateUtils.PlayPlayerState(
 	local p: Params = params or {}
 	local builder = BUILDERS[effect]
 	assert(builder, "[PlayerStateUtils] Unknown effect: " .. tostring(effect))
-	return service:Play(target, builder(p))
+	local effectDef = builder(p);
+	(effectDef :: any)._builderName = effect
+	return service:Play(target, effectDef)
 end
 
 --[=[
@@ -307,9 +332,39 @@ function PlayerStateUtils.PlayPlayerStateRepeat(
 	local p: Params = params or {}
 	local builder = BUILDERS[effect]
 	assert(builder, "[PlayerStateUtils] Unknown effect: " .. tostring(effect))
+	local effectDef = builder(p);
+	(effectDef :: any)._builderName = effect
 	local totalDuration = p.totalDuration or 5.0
 	local count = p.count or 5
-	return service:PlayRepeat(target, builder(p), totalDuration, count)
+	return service:PlayRepeat(target, effectDef, totalDuration, count)
+end
+
+--[=[
+	현재 대상에게 적용된 effect를 builder 이름으로 반환합니다.
+	effectDef에 첨부된 _builderName 메타데이터를 읽습니다.
+	PlayPlayerState/PlayPlayerStateRepeat으로 적용된 effect만 인식됩니다.
+
+	@return { { builderName: string, id: string, remaining: number? } }
+]=]
+function PlayerStateUtils.GetAppliedBuilders(
+	service: PlayerStateControllerService.PlayerStateControllerService,
+	target: Player
+): { { builderName: string, id: string, remaining: number? } }
+	local activeEffects = service:GetActiveEffects(target)
+	local result: { { builderName: string, id: string, remaining: number? } } = {}
+
+	for _, view in activeEffects do
+		local builderName = (view.effectDef :: any)._builderName
+		if builderName and type(builderName) == "string" then
+			table.insert(result, {
+				builderName = builderName,
+				id = view.id,
+				remaining = view.remaining,
+			})
+		end
+	end
+
+	return result
 end
 
 return PlayerStateUtils

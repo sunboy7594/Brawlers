@@ -10,13 +10,10 @@
 	resolve(tagName, intensity):
 	  intensity 구간에 따라 사용할 animKey와 loop 여부를 반환.
 
-	loop = true:
-	  EntityAnimator:PlayAnimation(animKey, duration) 형태로 호출하면
-	  duration 동안 반복 재생 후 자동 종료.
-
-	intensity 전달 방식:
-	  AnimFactory의 세 번째 인자 ac = { ac: AnimationControllerClient, intensity: number }
-	  factory 내부에서 ac.intensity로 강도 스케일링.
+	params 전달 방식:
+	  factory(joint, defaultC0, ac, params?)
+	  params.intensity로 강도 스케일링.
+	  ac는 AnimationControllerClient (spring, GetMoveDir 등 메서드 제공).
 
 	─── 애니메이션 목록 ─────────────────────────────────────────────
 	  HitStagger   : 일반 피격 (intensity 무시)
@@ -36,13 +33,22 @@ local Layer = {
 
 -- ─── 타입 ────────────────────────────────────────────────────────────────────
 
-type AC = { ac: any, intensity: number }
+type AnimParams = {
+	intensity: number?,
+	direction: Vector3?,
+}
+
 type OnUpdate = (joint: Motor6D, dt: number) -> ()
-type AnimFactory = (joint: Motor6D, defaultC0: CFrame, ac: AC) -> OnUpdate
+type AnimFactory = (joint: Motor6D, defaultC0: CFrame, ac: any, params: AnimParams?) -> OnUpdate
 
 type AnimDef =
 	{ type: "anim", layer: number, duration: number, force: boolean?, joints: { [string]: AnimFactory } }
-	| { type: "modify", joints: { [string]: (joint: Motor6D, defaultC0: CFrame, ac: AC) -> (CFrame, number) -> CFrame } }
+	| {
+		type: "modify",
+		joints: {
+			[string]: (joint: Motor6D, defaultC0: CFrame, ac: any, params: AnimParams?) -> (CFrame, number) -> CFrame,
+		},
+	}
 
 -- ─── 내부 매핑 타입 ──────────────────────────────────────────────────────────
 
@@ -68,7 +74,7 @@ export type ResolvedAnim = {
 local Anims: { [string]: AnimDef } = {}
 
 -- ============================================================
--- HitStagger: 일반 피격
+-- HitStagger: 일반 피격 (intensity 무시)
 -- ============================================================
 Anims["HitStagger"] = {
 	type = "anim",
@@ -76,7 +82,7 @@ Anims["HitStagger"] = {
 	duration = 0.3,
 	force = true,
 	joints = {
-		Waist = function(_j: Motor6D, defaultC0: CFrame, ac: AC): OnUpdate
+		Waist = function(_j: Motor6D, defaultC0: CFrame, ac: any, _params: AnimParams?): OnUpdate
 			local t = 0
 			return function(joint: Motor6D, dt: number)
 				t += dt
@@ -85,7 +91,7 @@ Anims["HitStagger"] = {
 				ac:spring(joint, defaultC0 * CFrame.Angles(angle, 0, 0), 25, 1.0, dt)
 			end
 		end,
-		Neck = function(_j: Motor6D, defaultC0: CFrame, ac: AC): OnUpdate
+		Neck = function(_j: Motor6D, defaultC0: CFrame, ac: any, _params: AnimParams?): OnUpdate
 			local t = 0
 			return function(joint: Motor6D, dt: number)
 				t += dt
@@ -98,7 +104,7 @@ Anims["HitStagger"] = {
 }
 
 -- ============================================================
--- HitKnockback: 강한 피격
+-- HitKnockback: 강한 피격 (intensity 무시)
 -- ============================================================
 Anims["HitKnockback"] = {
 	type = "anim",
@@ -106,7 +112,7 @@ Anims["HitKnockback"] = {
 	duration = 0.4,
 	force = true,
 	joints = {
-		Waist = function(_j: Motor6D, defaultC0: CFrame, ac: AC): OnUpdate
+		Waist = function(_j: Motor6D, defaultC0: CFrame, ac: any, _params: AnimParams?): OnUpdate
 			local t = 0
 			return function(joint: Motor6D, dt: number)
 				t += dt
@@ -115,7 +121,7 @@ Anims["HitKnockback"] = {
 				ac:spring(joint, defaultC0 * CFrame.Angles(angle, 0, 0), 20, 1.0, dt)
 			end
 		end,
-		Neck = function(_j: Motor6D, defaultC0: CFrame, ac: AC): OnUpdate
+		Neck = function(_j: Motor6D, defaultC0: CFrame, ac: any, _params: AnimParams?): OnUpdate
 			local t = 0
 			return function(joint: Motor6D, dt: number)
 				t += dt
@@ -124,7 +130,7 @@ Anims["HitKnockback"] = {
 				ac:spring(joint, defaultC0 * CFrame.Angles(angle, 0, 0), 18, 1.0, dt)
 			end
 		end,
-		RightShoulder = function(_j: Motor6D, defaultC0: CFrame, ac: AC): OnUpdate
+		RightShoulder = function(_j: Motor6D, defaultC0: CFrame, ac: any, _params: AnimParams?): OnUpdate
 			local t = 0
 			return function(joint: Motor6D, dt: number)
 				t += dt
@@ -133,7 +139,7 @@ Anims["HitKnockback"] = {
 				ac:spring(joint, defaultC0 * CFrame.Angles(0, 0, angle), 18, 1.0, dt)
 			end
 		end,
-		LeftShoulder = function(_j: Motor6D, defaultC0: CFrame, ac: AC): OnUpdate
+		LeftShoulder = function(_j: Motor6D, defaultC0: CFrame, ac: any, _params: AnimParams?): OnUpdate
 			local t = 0
 			return function(joint: Motor6D, dt: number)
 				t += dt
@@ -154,38 +160,42 @@ Anims["Knockback"] = {
 	duration = 0.5,
 	force = true,
 	joints = {
-		Waist = function(_j: Motor6D, defaultC0: CFrame, ac: AC): OnUpdate
+		Waist = function(_j: Motor6D, defaultC0: CFrame, ac: any, params: AnimParams?): OnUpdate
+			local intensity = (params and params.intensity) or 0.5
 			local t = 0
-			local maxAngle = math.rad(10 + ac.intensity * 25)
-			local speed = 15 + ac.intensity * 10
+			local maxAngle = math.rad(10 + intensity * 25)
+			local speed = 15 + intensity * 10
 			return function(joint: Motor6D, dt: number)
 				t += dt
 				local p = math.min(t / 0.5, 1)
 				ac:spring(joint, defaultC0 * CFrame.Angles(math.sin(p * math.pi) * -maxAngle, 0, 0), speed, 1.0, dt)
 			end
 		end,
-		Neck = function(_j: Motor6D, defaultC0: CFrame, ac: AC): OnUpdate
+		Neck = function(_j: Motor6D, defaultC0: CFrame, ac: any, params: AnimParams?): OnUpdate
+			local intensity = (params and params.intensity) or 0.5
 			local t = 0
-			local maxAngle = math.rad(8 + ac.intensity * 18)
-			local speed = 14 + ac.intensity * 8
+			local maxAngle = math.rad(8 + intensity * 18)
+			local speed = 14 + intensity * 8
 			return function(joint: Motor6D, dt: number)
 				t += dt
 				local p = math.min(t / 0.5, 1)
 				ac:spring(joint, defaultC0 * CFrame.Angles(math.sin(p * math.pi) * -maxAngle, 0, 0), speed, 1.0, dt)
 			end
 		end,
-		RightShoulder = function(_j: Motor6D, defaultC0: CFrame, ac: AC): OnUpdate
+		RightShoulder = function(_j: Motor6D, defaultC0: CFrame, ac: any, params: AnimParams?): OnUpdate
+			local intensity = (params and params.intensity) or 0.5
 			local t = 0
-			local maxAngle = math.rad(15 + ac.intensity * 25)
+			local maxAngle = math.rad(15 + intensity * 25)
 			return function(joint: Motor6D, dt: number)
 				t += dt
 				local p = math.min(t / 0.5, 1)
 				ac:spring(joint, defaultC0 * CFrame.Angles(0, 0, math.sin(p * math.pi) * maxAngle), 16, 1.0, dt)
 			end
 		end,
-		LeftShoulder = function(_j: Motor6D, defaultC0: CFrame, ac: AC): OnUpdate
+		LeftShoulder = function(_j: Motor6D, defaultC0: CFrame, ac: any, params: AnimParams?): OnUpdate
+			local intensity = (params and params.intensity) or 0.5
 			local t = 0
-			local maxAngle = math.rad(15 + ac.intensity * 25)
+			local maxAngle = math.rad(15 + intensity * 25)
 			return function(joint: Motor6D, dt: number)
 				t += dt
 				local p = math.min(t / 0.5, 1)
@@ -204,22 +214,24 @@ Anims["Stun"] = {
 	duration = math.huge,
 	force = true,
 	joints = {
-		Waist = function(_j: Motor6D, defaultC0: CFrame, ac: AC): OnUpdate
+		Waist = function(_j: Motor6D, defaultC0: CFrame, ac: any, params: AnimParams?): OnUpdate
+			local intensity = (params and params.intensity) or 0.5
 			local t = 0
-			local freq = 1.5 + ac.intensity * 1.5
-			local amp = math.rad(3 + ac.intensity * 6)
-			local droop = math.rad(8 + ac.intensity * 10)
+			local freq = 1.5 + intensity * 1.5
+			local amp = math.rad(3 + intensity * 6)
+			local droop = math.rad(8 + intensity * 10)
 			return function(joint: Motor6D, dt: number)
 				t += dt
 				local sway = math.sin(t * freq * math.pi * 2) * amp
 				ac:spring(joint, defaultC0 * CFrame.Angles(droop, sway, 0), 8, 0.9, dt)
 			end
 		end,
-		Neck = function(_j: Motor6D, defaultC0: CFrame, ac: AC): OnUpdate
+		Neck = function(_j: Motor6D, defaultC0: CFrame, ac: any, params: AnimParams?): OnUpdate
+			local intensity = (params and params.intensity) or 0.5
 			local t = 0
-			local freq = 1.5 + ac.intensity * 1.5
-			local amp = math.rad(5 + ac.intensity * 8)
-			local droop = math.rad(12 + ac.intensity * 12)
+			local freq = 1.5 + intensity * 1.5
+			local amp = math.rad(5 + intensity * 8)
+			local droop = math.rad(12 + intensity * 12)
 			return function(joint: Motor6D, dt: number)
 				t += dt
 				local sway = math.sin(t * freq * math.pi * 2 + 0.5) * amp
@@ -238,27 +250,30 @@ Anims["Airborne"] = {
 	duration = math.huge,
 	force = true,
 	joints = {
-		Waist = function(_j: Motor6D, defaultC0: CFrame, ac: AC): OnUpdate
+		Waist = function(_j: Motor6D, defaultC0: CFrame, ac: any, params: AnimParams?): OnUpdate
+			local intensity = (params and params.intensity) or 0.5
 			local t = 0
-			local targetAngle = math.rad(-(10 + ac.intensity * 20))
+			local targetAngle = math.rad(-(10 + intensity * 20))
 			return function(joint: Motor6D, dt: number)
 				t += dt
-				local wobble = math.sin(t * 4) * math.rad(2 + ac.intensity * 4)
+				local wobble = math.sin(t * 4) * math.rad(2 + intensity * 4)
 				ac:spring(joint, defaultC0 * CFrame.Angles(targetAngle + wobble, 0, 0), 10, 0.9, dt)
 			end
 		end,
-		RightShoulder = function(_j: Motor6D, defaultC0: CFrame, ac: AC): OnUpdate
+		RightShoulder = function(_j: Motor6D, defaultC0: CFrame, ac: any, params: AnimParams?): OnUpdate
+			local intensity = (params and params.intensity) or 0.5
 			local t = 0
-			local spread = math.rad(25 + ac.intensity * 35)
+			local spread = math.rad(25 + intensity * 35)
 			return function(joint: Motor6D, dt: number)
 				t += dt
 				local wobble = math.sin(t * 3 + 0.3) * math.rad(3)
 				ac:spring(joint, defaultC0 * CFrame.Angles(0, 0, spread + wobble), 8, 0.85, dt)
 			end
 		end,
-		LeftShoulder = function(_j: Motor6D, defaultC0: CFrame, ac: AC): OnUpdate
+		LeftShoulder = function(_j: Motor6D, defaultC0: CFrame, ac: any, params: AnimParams?): OnUpdate
+			local intensity = (params and params.intensity) or 0.5
 			local t = 0
-			local spread = math.rad(25 + ac.intensity * 35)
+			local spread = math.rad(25 + intensity * 35)
 			return function(joint: Motor6D, dt: number)
 				t += dt
 				local wobble = math.sin(t * 3 - 0.3) * math.rad(3)
@@ -277,21 +292,23 @@ Anims["Freeze"] = {
 	duration = math.huge,
 	force = true,
 	joints = {
-		Waist = function(_j: Motor6D, defaultC0: CFrame, ac: AC): OnUpdate
+		Waist = function(_j: Motor6D, defaultC0: CFrame, ac: any, params: AnimParams?): OnUpdate
+			local intensity = (params and params.intensity) or 0.5
 			local t = 0
-			local frozenAngle = math.rad(5 + ac.intensity * 10)
+			local frozenAngle = math.rad(5 + intensity * 10)
 			return function(joint: Motor6D, dt: number)
 				t += dt
-				local tremble = math.sin(t * 18) * math.rad(0.3 + ac.intensity * 0.7)
+				local tremble = math.sin(t * 18) * math.rad(0.3 + intensity * 0.7)
 				ac:spring(joint, defaultC0 * CFrame.Angles(frozenAngle + tremble, 0, 0), 30, 1.0, dt)
 			end
 		end,
-		Neck = function(_j: Motor6D, defaultC0: CFrame, ac: AC): OnUpdate
+		Neck = function(_j: Motor6D, defaultC0: CFrame, ac: any, params: AnimParams?): OnUpdate
+			local intensity = (params and params.intensity) or 0.5
 			local t = 0
-			local frozenAngle = math.rad(3 + ac.intensity * 7)
+			local frozenAngle = math.rad(3 + intensity * 7)
 			return function(joint: Motor6D, dt: number)
 				t += dt
-				local tremble = math.sin(t * 20 + 0.5) * math.rad(0.2 + ac.intensity * 0.5)
+				local tremble = math.sin(t * 20 + 0.5) * math.rad(0.2 + intensity * 0.5)
 				ac:spring(joint, defaultC0 * CFrame.Angles(frozenAngle + tremble, 0, 0), 28, 1.0, dt)
 			end
 		end,
@@ -307,22 +324,24 @@ Anims["Exhausted"] = {
 	duration = math.huge,
 	force = true,
 	joints = {
-		Waist = function(_j: Motor6D, defaultC0: CFrame, ac: AC): OnUpdate
+		Waist = function(_j: Motor6D, defaultC0: CFrame, ac: any, params: AnimParams?): OnUpdate
+			local intensity = (params and params.intensity) or 0.5
 			local t = 0
-			local freq = 0.8 + ac.intensity * 0.8
-			local droop = math.rad(12 + ac.intensity * 18)
-			local amp = math.rad(4 + ac.intensity * 6)
+			local freq = 0.8 + intensity * 0.8
+			local droop = math.rad(12 + intensity * 18)
+			local amp = math.rad(4 + intensity * 6)
 			return function(joint: Motor6D, dt: number)
 				t += dt
 				local breath = math.sin(t * freq * math.pi * 2) * amp
 				ac:spring(joint, defaultC0 * CFrame.Angles(droop + breath, 0, 0), 5, 0.8, dt)
 			end
 		end,
-		Neck = function(_j: Motor6D, defaultC0: CFrame, ac: AC): OnUpdate
+		Neck = function(_j: Motor6D, defaultC0: CFrame, ac: any, params: AnimParams?): OnUpdate
+			local intensity = (params and params.intensity) or 0.5
 			local t = 0
-			local freq = 0.8 + ac.intensity * 0.8
-			local droop = math.rad(15 + ac.intensity * 20)
-			local amp = math.rad(3 + ac.intensity * 5)
+			local freq = 0.8 + intensity * 0.8
+			local droop = math.rad(15 + intensity * 20)
+			local amp = math.rad(3 + intensity * 5)
 			return function(joint: Motor6D, dt: number)
 				t += dt
 				local breath = math.sin(t * freq * math.pi * 2 + 0.3) * amp
@@ -336,7 +355,6 @@ Anims["Exhausted"] = {
 
 local MAPPING: { [string]: AnimMapping } = {
 
-	-- 0~0.5: 일반 피격, 0.5~1: 강한 피격
 	["anim_hit"] = {
 		variants = {
 			{ threshold = 0.0, animKey = "HitStagger" },
@@ -344,7 +362,6 @@ local MAPPING: { [string]: AnimMapping } = {
 		},
 	},
 
-	-- intensity → 스턴 루프 속도/크기
 	["anim_stun"] = {
 		variants = {
 			{ threshold = 0.0, animKey = "Stun", loop = true },
@@ -369,7 +386,6 @@ local MAPPING: { [string]: AnimMapping } = {
 		},
 	},
 
-	-- intensity → 넉백 각도/속도 스케일링
 	["anim_knockback"] = {
 		variants = {
 			{ threshold = 0.0, animKey = "Knockback" },

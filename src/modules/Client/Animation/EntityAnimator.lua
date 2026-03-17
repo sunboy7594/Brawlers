@@ -9,9 +9,11 @@
 	  "anim"   → layer 기반 재생. 같은 layer의 기존 anim을 교체.
 	  "modify" → 이름 기반 modifier 등록. 여러 개 동시 등록 가능.
 
-	AnimFactory 호출 시 AnimationControllerClient에서 defaultC0를 조회하여
-	함께 넘겨줍니다. factory는 이 값을 base로 사용해야 하며,
-	절대로 joint.C0를 capture 시점에 base로 써서는 안 됩니다.
+	params:
+	  { intensity: number?, direction: Vector3? }
+	  factory 호출 시 전달. intensity는 애니메이션 강도, direction은 방향 기반 연출용.
+	  서버 복제 시에도 params가 함께 전송되어 서버에서도 동일하게 적용됩니다.
+	  BasicMovementAnimDef처럼 CycleRef 참조 공유가 필요한 경우 params 없이 nil 전달.
 
 	서버 복제:
 	  PlayAnimation/StopAnimation 시 AnimReplicationRemoting으로 서버에 알림.
@@ -29,12 +31,23 @@ local BaseObject = require("BaseObject")
 
 -- ─── 타입 ────────────────────────────────────────────────────────────────────
 
-export type AnimFactory = (joint: Motor6D, defaultC0: CFrame, animController: any) -> (joint: Motor6D, dt: number) -> ()
+export type AnimParams = {
+	intensity: number?,
+	direction: Vector3?,
+}
+
+export type AnimFactory = (
+	joint: Motor6D,
+	defaultC0: CFrame,
+	animController: any,
+	params: AnimParams?
+) -> (joint: Motor6D, dt: number) -> ()
 
 export type ModifyFactory = (
 	joint: Motor6D,
 	defaultC0: CFrame,
-	animController: any
+	animController: any,
+	params: AnimParams?
 ) -> (current: CFrame, dt: number) -> CFrame
 
 export type AnimDef =
@@ -42,7 +55,7 @@ export type AnimDef =
 		type: "anim",
 		layer: number,
 		joints: { [string]: AnimFactory },
-		replicates: boolean?, -- false면 서버 복제 안 함 (기본 true)
+		replicates: boolean?,
 	}
 	| {
 		type: "modify",
@@ -100,13 +113,6 @@ EntityAnimator.__index = EntityAnimator
 
 -- ─── 생성자 ──────────────────────────────────────────────────────────────────
 
---[=[
-	@param owner            string                  식별자 (예: "BasicMovement")
-	@param animDefModuleName string                  AnimDef 모듈 이름 (복제 시 서버가 require에 사용)
-	@param joints           { [string]: Motor6D }
-	@param animDefs         AnimDefs
-	@param animController   AnimationControllerClient
-]=]
 function EntityAnimator.new(
 	owner: string,
 	animDefModuleName: string,
@@ -133,7 +139,17 @@ end
 
 -- ─── 공개 API ────────────────────────────────────────────────────────────────
 
-function EntityAnimator:PlayAnimation(name: string, duration: number?, onFinish: (() -> ())?, force: boolean?)
+--[=[
+	@param params AnimParams?  { intensity, direction } — factory에 전달.
+	                           BasicMovementAnimDef처럼 참조 공유가 필요하면 nil 전달.
+]=]
+function EntityAnimator:PlayAnimation(
+	name: string,
+	duration: number?,
+	onFinish: (() -> ())?,
+	force: boolean?,
+	params: AnimParams?
+)
 	local def = self._animDefs[name]
 	if not def then
 		warn(string.format("[EntityAnimator] '%s' 에 애니메이션 정의 '%s' 없음", self._owner, name))
@@ -141,15 +157,13 @@ function EntityAnimator:PlayAnimation(name: string, duration: number?, onFinish:
 	end
 
 	if def.type == "anim" then
-		-- force=true면 같은 이름이라도 재시작
 		if self._activeAnims[name] then
 			if not force then
 				return
 			end
-			self:_stopAnim(name) -- 기존 것 먼저 정지
+			self:_stopAnim(name)
 		end
 
-		-- 같은 layer의 기존 anim 교체
 		for activeName, active in self._activeAnims do
 			if active.layer == def.layer then
 				self:_stopAnim(activeName)
@@ -157,7 +171,6 @@ function EntityAnimator:PlayAnimation(name: string, duration: number?, onFinish:
 			end
 		end
 
-		-- 새 anim 등록 + defaultC0Map 수집 (복제용)
 		local joints: { Motor6D } = {}
 		local defaultC0Map: { [string]: CFrame } = {}
 
@@ -168,7 +181,7 @@ function EntityAnimator:PlayAnimation(name: string, duration: number?, onFinish:
 			end
 
 			local defaultC0 = self._animController:GetDefaultC0(joint)
-			local onUpdate = factory(joint, defaultC0, self._animController)
+			local onUpdate = factory(joint, defaultC0, self._animController, params)
 			self._animController:Play(self._owner, def.layer, joint, onUpdate, duration, onFinish)
 			table.insert(joints, joint)
 			defaultC0Map[jointName] = defaultC0
@@ -176,7 +189,6 @@ function EntityAnimator:PlayAnimation(name: string, duration: number?, onFinish:
 
 		self._activeAnims[name] = { layer = def.layer, joints = joints }
 
-		-- 서버 복제 전송 (클라이언트에서만, replicates = false 제외)
 		if RunService:IsClient() and def.replicates ~= false then
 			AnimReplicationRemoting.AnimChanged:FireServer(
 				self._animDefModuleName,
@@ -184,7 +196,8 @@ function EntityAnimator:PlayAnimation(name: string, duration: number?, onFinish:
 				"anim",
 				def.layer,
 				duration or math.huge,
-				defaultC0Map
+				defaultC0Map,
+				params
 			)
 		end
 	elseif def.type == "modify" then
@@ -203,7 +216,7 @@ function EntityAnimator:PlayAnimation(name: string, duration: number?, onFinish:
 			end
 
 			local defaultC0 = self._animController:GetDefaultC0(joint)
-			local callback = factory(joint, defaultC0, self._animController)
+			local callback = factory(joint, defaultC0, self._animController, params)
 			self._animController:SetModifier(modKey, joint, callback)
 			table.insert(joints, joint)
 			defaultC0Map[jointName] = defaultC0
@@ -211,9 +224,15 @@ function EntityAnimator:PlayAnimation(name: string, duration: number?, onFinish:
 
 		self._activeModifiers[name] = { joints = joints }
 
-		-- 서버 복제 전송
 		if RunService:IsClient() and def.replicates ~= false then
-			AnimReplicationRemoting.AnimChanged:FireServer(self._animDefModuleName, name, "modify", nil, defaultC0Map)
+			AnimReplicationRemoting.AnimChanged:FireServer(
+				self._animDefModuleName,
+				name,
+				"modify",
+				nil,
+				defaultC0Map,
+				params
+			)
 		end
 	end
 end
@@ -283,7 +302,6 @@ function EntityAnimator:_stopAnim(name: string)
 	self._animController:StopAll(self._owner, active.joints)
 	self._activeAnims[name] = nil
 
-	-- 서버 복제 정지 전송
 	local def = self._animDefs[name]
 	if RunService:IsClient() and def and def.replicates ~= false then
 		AnimReplicationRemoting.AnimStopped:FireServer(self._animDefModuleName, name)
@@ -302,7 +320,6 @@ function EntityAnimator:_stopModifier(name: string)
 	end
 	self._activeModifiers[name] = nil
 
-	-- 서버 복제 정지 전송
 	local def = self._animDefs[name]
 	if RunService:IsClient() and def and def.replicates ~= false then
 		AnimReplicationRemoting.AnimStopped:FireServer(self._animDefModuleName, name)

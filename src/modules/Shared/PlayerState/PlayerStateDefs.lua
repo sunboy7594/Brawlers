@@ -15,35 +15,15 @@
 	PlayerStateControllerService:PlayRepeat(target, effectDef, totalDuration, count)
 	  effectDef를 count회, totalDuration 동안 반복 적용.
 	  interval = totalDuration / count (자동 계산)
-	  예) 0.5초 스턴을 10초 동안 6회 반복:
-	      PlayRepeat(target, {
-	          components = {
-	              { type = "moveLock",   duration = 0.5 },
-	              { type = "attackLock", duration = 0.5 },
-	          },
-	          tags = {
-	              { name = "anim_stun", duration = 0.5, intensity = 0.7 },
-	          },
-	      }, 10.0, 6)
-	      → interval = 10/6 ≈ 1.67초마다 한 번씩 0.5초 스턴
+	  EffectApplied는 최초 1회 (tag duration = totalDuration으로 확장하여 전송).
+	  EffectRemoved는 totalDuration 만료 또는 cancel 시 1회.
 
 	─── EffectDef 구조 ─────────────────────────────────────────────
 	{
-	    force      = false,          -- true면 ignoreCC/ignoreDamage 무시 강제 적용
-	    source     = player,         -- 효과 출처. nil이면 환경/자해
-	    tags       = { TagEntry },   -- 클라이언트 연출 힌트. 없으면 아무 연출 없음
-	    components = { Component },  -- 실제 효과 목록
-	}
-
-	─── TagEntry 구조 ──────────────────────────────────────────────
-	{
-	    name:      string,  -- tag 식별자
-	    duration:  number,  -- 연출 지속시간 (필수)
-	    intensity: number,  -- 연출 강도 0~1 (필수)
-	                        -- anim:   모션 크기/속도
-	                        -- cam:    흔들림/밀림 강도
-	                        -- screen: 화면 효과 강도
-	                        -- vfx:    파티클 밀도/크기
+	    force      = false,
+	    source     = player,
+	    tags       = { TagEntry },
+	    components = { Component },
 	}
 
 	─── 보호 처리 ────────────────────────────────────────────────────────
@@ -53,8 +33,10 @@
 	  cc계열: slow, moveLock, attackLock, knockback, cameraLock
 
 	─── effect 열람 ────────────────────────────────────────────────
-	  GetActiveEffects(target) → { ActiveEffectView }
+	  GetActiveEffects(target) → { ActiveEffectView }  (instance 단위)
+	  GetActiveTags(target) → { ActiveTagView }
 	  HasEffect(target, componentType) → boolean
+	  HasTag(target, tagName) → boolean
 
 	─── 연출 def 파일 분리 ────────────────────────────────────────────
 	  PlayerStateAnimDef         → 캐릭터 애니메이션 (anim_*)
@@ -118,6 +100,20 @@ PlayerStateDefs.Tag = {
 	VfxVulnerable = "vfx_vulnerable",
 }
 
+--[=[
+	단발(one-shot) 태그 목록.
+	PlayerStateClient에서 중첩 방지 슬롯 관리를 건너뛰고 즉시 재생합니다.
+	짧은 duration의 피격/넉백 연출이 해당됩니다.
+]=]
+PlayerStateDefs.ONESHOT_TAGS = {
+	[PlayerStateDefs.Tag.AnimHit] = true,
+	[PlayerStateDefs.Tag.AnimKnockback] = true,
+	[PlayerStateDefs.Tag.CamShake] = true,
+	[PlayerStateDefs.Tag.CamRecoil] = true,
+	[PlayerStateDefs.Tag.CamKnockback] = true,
+	[PlayerStateDefs.Tag.ScreenHitRed] = true,
+}
+
 export type TagEntry = {
 	name: string,
 	duration: number,
@@ -146,24 +142,58 @@ export type EffectDef = {
 }
 
 --[=[
-	GetActiveEffects가 반환하는 effect 열람 뷰.
-	instanceId : Stop 호출 시 사용
-	componentType : PlayerStateDefs.ComponentType 값
-	expiresAt  : 만료 절대시각 (nil = 영구)
-	remaining  : 남은 시간(초) (nil = 영구)
-	effectDef  : 원본 effectDef (source 등 참조용)
+	EffectInstance 내부에서 각 component를 추적하는 상태.
+	expiresAt = nil    → 영구 (명시적 제거 필요)
+	expiresAt = 생성시각 → 즉시 처리된 컴포넌트 (damage, knockback, cleanse)
 ]=]
-export type ActiveEffectView = {
-	instanceId: string,
-	componentType: string,
+export type ComponentState = {
+	component: Component,
 	expiresAt: number?,
-	remaining: number?,
-	effectDef: EffectDef,
 }
 
-export type RepeatParams = {
+--[=[
+	EffectInstance 내부에서 각 tag를 추적하는 상태.
+]=]
+export type TagState = {
+	tag: TagEntry,
+	expiresAt: number,
+}
+
+--[=[
+	PlayRepeat 시 생성되는 반복 상태.
+	fired: 현재까지 발사된 tick 수.
+]=]
+export type RepeatState = {
 	totalDuration: number,
 	count: number,
+	interval: number,
+	fired: number,
+	startedAt: number,
+	expiresAt: number,
+}
+
+--[=[
+	GetActiveEffects가 반환하는 instance 단위 열람 뷰.
+	id        : EffectApplied/EffectRemoved 클라이언트 통신용 식별자
+	remaining : nil이면 영구 또는 repeat (repeatState.expiresAt 참조)
+]=]
+export type ActiveEffectView = {
+	id: string,
+	effectDef: EffectDef,
+	components: { ComponentState },
+	tags: { TagState },
+	startedAt: number,
+	remaining: number?,
+	repeatState: RepeatState?,
+}
+
+--[=[
+	GetActiveTags가 반환하는 tag 열람 뷰.
+]=]
+export type ActiveTagView = {
+	name: string,
+	expiresAt: number,
+	remaining: number,
 }
 
 return PlayerStateDefs

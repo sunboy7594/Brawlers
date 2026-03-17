@@ -10,17 +10,9 @@
 	  "offset"   → SetOffsetModifier / RemoveOffsetModifier (여러 개 동시 등록 가능)
 	  "override" → SetOverride / ClearOverride              (하나만 유지, 새 등록 시 기존 교체)
 
-	사용 예:
-	  local anim = CameraAnimator.new("MyOwner", BasicCameraAnimDefs, cameraController)
-	  anim:PlayAnimation("RunFOV")               -- 무한 재생
-	  anim:PlayAnimation("RunBob")               -- RunFOV와 동시 재생
-	  anim:PlayAnimation("HitShake", 0.3)        -- 0.3초 후 자동 정지
-	  anim:PlayAnimation("HitShake", 0.3, nil, true) -- force=true: 재생 중이어도 처음부터 재시작
-	  anim:Stop("RunFOV")                        -- 이름으로 정지
-	  anim:Stop()                                -- 전부 정지
-	  anim:StopAllEffects()                      -- effect만 전부 정지
-	  anim:StopAllOffsets()                      -- offset만 전부 정지
-	  anim:StopAllOverrides()                    -- override 정지
+	params: { intensity: number?, direction: Vector3? }
+	  PlayAnimation 호출 시 factory에 전달. intensity로 흔들림 강도 등 스케일링.
+	  direction은 방향 기반 카메라 연출(cam_knockback 등)에 사용.
 ]=]
 
 local require = require(script.Parent.loader).load(script)
@@ -44,7 +36,12 @@ type CameraController = {
 
 export type CameraAnimLayer = "effect" | "offset" | "override"
 
-export type CameraAnimFactory = (controller: CameraController) -> any
+export type CameraAnimParams = {
+	intensity: number?,
+	direction: Vector3?,
+}
+
+export type CameraAnimFactory = (controller: CameraController, params: CameraAnimParams?) -> any
 
 export type CameraAnimDef = {
 	layer: CameraAnimLayer,
@@ -60,12 +57,11 @@ type ActiveAnim = {
 
 export type CameraAnimator = typeof(setmetatable(
 	{} :: {
-		_maid: any, -- BaseObject에서 자동 제공
+		_maid: any,
 		_owner: string,
 		_animDefs: CameraAnimDefs,
 		_controller: CameraController,
 		_activeAnims: { [string]: ActiveAnim },
-		-- override는 하나만 유지
 		_currentOverride: string?,
 	},
 	{} :: typeof({ __index = BaseObject })
@@ -98,31 +94,35 @@ end
 
 	force=true이면 이미 재생 중인 경우 기존 것을 정지하고 처음부터 재시작합니다.
 	force=false(기본): 이미 재생 중이면 무시합니다.
+
+	@param params CameraAnimParams?  { intensity, direction } — factory에 전달.
 ]=]
-function CameraAnimator:PlayAnimation(name: string, duration: number?, onFinish: (() -> ())?, force: boolean?)
+function CameraAnimator:PlayAnimation(
+	name: string,
+	duration: number?,
+	onFinish: (() -> ())?,
+	force: boolean?,
+	params: CameraAnimParams?
+)
 	local def = self._animDefs[name]
 	if not def then
 		warn(string.format("[CameraAnimator] '%s' 에 카메라 애니메이션 정의 '%s' 없음", self._owner, name))
 		return
 	end
 
-	-- 이미 재생 중일 때
 	if self._activeAnims[name] then
 		if not force then
 			return
 		end
-		-- force=true: 기존 것 정지 후 재시작
 		self:_stopByName(name)
 	end
 
-	-- override는 기존 거 교체
 	if def.layer == "override" and self._currentOverride then
 		self:_stopByName(self._currentOverride)
 	end
 
-	-- Controller에 등록
 	local modKey = self._owner .. "_" .. name
-	local result = def.factory(self._controller)
+	local result = def.factory(self._controller, params)
 
 	if def.layer == "effect" then
 		self._controller:SetEffectModifier(modKey, result)
@@ -133,17 +133,13 @@ function CameraAnimator:PlayAnimation(name: string, duration: number?, onFinish:
 		self._currentOverride = name
 	end
 
-	-- duration 타이머
 	local durationThread: thread? = nil
 	if duration then
 		durationThread = task.delay(duration, function()
-			-- 이 타이머가 현재 activeAnims에 등록된 것과 동일한지 확인
-			-- force=true로 재시작됐거나 이미 Stop()됐으면 stale 타이머이므로 무시
 			local active = self._activeAnims[name]
 			if not active or active.durationThread ~= durationThread then
 				return
 			end
-			-- durationThread를 nil로 먼저 제거 → _stopByName이 자기 자신을 cancel 시도하지 않도록
 			active.durationThread = nil
 			self:_stopByName(name)
 			if onFinish then
@@ -179,9 +175,6 @@ function CameraAnimator:Stop(name: string?)
 	end
 end
 
---[=[
-	effect layer 전부 정지합니다.
-]=]
 function CameraAnimator:StopAllEffects()
 	local names: { string } = {}
 	for n, active in self._activeAnims do
@@ -194,9 +187,6 @@ function CameraAnimator:StopAllEffects()
 	end
 end
 
---[=[
-	offset layer 전부 정지합니다.
-]=]
 function CameraAnimator:StopAllOffsets()
 	local names: { string } = {}
 	for n, active in self._activeAnims do
@@ -209,9 +199,6 @@ function CameraAnimator:StopAllOffsets()
 	end
 end
 
---[=[
-	override를 정지합니다.
-]=]
 function CameraAnimator:StopAllOverrides()
 	if self._currentOverride then
 		self:_stopByName(self._currentOverride)

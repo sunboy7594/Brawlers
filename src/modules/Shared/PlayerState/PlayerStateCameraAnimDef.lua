@@ -7,9 +7,11 @@
 
 	CameraAnimator에 주입되며, PlayerStateClient가 직접 require합니다.
 
-	intensity 전달 방식:
-	  factory = function(cc, intensity: number) → (cf, dt) → CFrame
-	  PlayerStateClient가 tag.intensity를 factory 호출 시 전달.
+	params 전달 방식:
+	  factory = function(cc, params) → modifier
+	  params.intensity : 흔들림/밀림 강도 (0~1)
+	  params.direction : 넉백 방향 (cam_knockback)
+	  params가 nil이면 기본값(intensity=0.5) 사용.
 
 	─── 애니메이션 목록 ─────────────────────────────────────────────
 	  HitShake      : 일반 피격 흔들림 (intensity → 흔들림 크기)
@@ -21,19 +23,23 @@
 
 type CameraController = any
 
+type CameraParams = {
+	intensity: number?,
+	direction: Vector3?,
+}
+
 type CameraAnimDef = {
 	layer: "effect" | "offset" | "override",
 	duration: number,
 	force: boolean?,
-	-- intensity를 함께 받는 factory 시그니처
-	factory: (cc: CameraController, intensity: number) -> (CFrame, number) -> CFrame,
+	factory: (cc: CameraController, params: CameraParams?) -> (CFrame, number) -> CFrame,
 }
 
 -- ─── 내부 매핑 타입 ──────────────────────────────────────────────────────────
 
 type CameraMapping = {
-	animKey: string, -- CameraAnimDef 키
-	knockbackRef: boolean?, -- knockback component direction 참조 여부
+	animKey: string,
+	knockbackRef: boolean?,
 }
 
 -- ─── CameraAnimDef 구현 ───────────────────────────────────────────────────────
@@ -47,7 +53,8 @@ Anims["HitShake"] = {
 	layer = "effect",
 	duration = 0.3,
 	force = true,
-	factory = function(_cc, intensity: number)
+	factory = function(_cc, params: CameraParams?)
+		local intensity = (params and params.intensity) or 0.5
 		local t = 0
 		local freq = 22
 		local decay = 8
@@ -69,7 +76,8 @@ Anims["HitRecoil"] = {
 	layer = "effect",
 	duration = 0.4,
 	force = true,
-	factory = function(_cc, intensity: number)
+	factory = function(_cc, params: CameraParams?)
+		local intensity = (params and params.intensity) or 0.5
 		local t = 0
 		local decay = 6
 		local amp = 0.04 + intensity * 0.06 -- 0.04~0.10
@@ -90,7 +98,8 @@ Anims["MotionSickness"] = {
 	layer = "effect",
 	duration = math.huge,
 	force = false,
-	factory = function(_cc, intensity: number)
+	factory = function(_cc, params: CameraParams?)
+		local intensity = (params and params.intensity) or 0.5
 		local t = 0
 		local freq = 0.4 + intensity * 0.4
 		local amp = 0.01 + intensity * 0.04

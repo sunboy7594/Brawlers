@@ -10,17 +10,18 @@
 	- component에서 cameraLock 수신 → 카메라 방향 고정
 	- tag special="ragdoll" → 래그돌 처리
 
-	tag 처리 흐름:
-	  anim_*   → PlayerStateAnimDef.resolve() → EntityAnimator
-	             loop=true이면 duration 동안 반복 재생
-	  cam_*    → PlayerStateCameraAnimDef.resolve() → CameraAnimator
-	             intensity를 factory에 전달
-	  screen_* → PlayerStateScreenEffectDef → ScreenEffectController (stub)
-	  vfx_*   → PlayerStateVfxDef → VfxController (stub)
+	tag 중첩 방지 (loop성 태그):
+	  _tagSlots[tagName][id] 슬롯 구조로 intensity 스택 관리.
+	  intensity가 가장 높은 슬롯만 실제 연출 재생.
+	  같은 intensity면 duration이 긴 쪽 우선.
+	  현재 재생 중인 슬롯이 제거되면 next best로 교체 (남은 시간 기준).
 
-	intensity 전달:
-	  AnimFactory 호출 시 ac = { ac = animController, intensity = tag.intensity }
-	  CameraAnimDef factory 호출 시 factory(cc, tag.intensity)
+	단발(ONESHOT) 태그:
+	  슬롯 관리 없이 즉시 재생.
+
+	params 전달:
+	  anim_* → PlayAnimation(..., { intensity })
+	  cam_*  → PlayAnimation(..., { intensity, direction })
 ]=]
 
 local require = require(script.Parent.loader).load(script)
@@ -42,11 +43,20 @@ local PlayerStateVfxDef = require("PlayerStateVfxDef")
 local ServiceBag = require("ServiceBag")
 
 local OWNER = "PlayerState"
+local ONESHOT_TAGS = PlayerStateDefs.ONESHOT_TAGS
 
 -- ─── 타입 ────────────────────────────────────────────────────────────────────
 
 type ActiveTagEffect = {
 	stop: () -> (),
+}
+
+type ActiveTagSlot = {
+	id: string,
+	intensity: number,
+	expiresAt: number,
+	stop: () -> (),
+	components: { PlayerStateDefs.Component }?,
 }
 
 export type PlayerStateClient = typeof(setmetatable(
@@ -59,7 +69,10 @@ export type PlayerStateClient = typeof(setmetatable(
 		_joints: { [string]: Motor6D }?,
 		_entityAnimator: any?,
 		_cameraAnimator: any,
-		_activeEffects: { [string]: { [string]: ActiveTagEffect } },
+		-- 루프성 태그 슬롯 관리: [tagName][id] = ActiveTagSlot
+		_tagSlots: { [string]: { [string]: ActiveTagSlot } },
+		-- 역방향 맵: id → { tagName }
+		_idToTags: { [string]: { string } },
 		_cameraLockCancel: (() -> ())?,
 	},
 	{} :: typeof({ __index = {} })
@@ -80,10 +93,10 @@ function PlayerStateClient.Init(self: PlayerStateClient, serviceBag: ServiceBag.
 	self._playerBinder = serviceBag:GetService(PlayerBinderClient)
 	self._joints = nil
 	self._entityAnimator = nil
-	self._activeEffects = {}
+	self._tagSlots = {}
+	self._idToTags = {}
 	self._cameraLockCancel = nil
 
-	-- PlayerStateCameraAnimDef가 CameraAnimDef 구현을 직접 포함
 	self._cameraAnimator = CameraAnimator.new(OWNER, PlayerStateCameraAnimDef, self._cameraController)
 	self._maid:GiveTask(self._cameraAnimator)
 end
@@ -94,12 +107,12 @@ function PlayerStateClient.Start(self: PlayerStateClient): ()
 		self:_rebuildEntityAnimator(joints)
 	end))
 
-	self._maid:GiveTask(PlayerStateRemoting.EffectApplied:Connect(function(effectDef: unknown, payloadId: unknown)
-		self:_onEffectApplied(effectDef :: PlayerStateDefs.EffectDef, payloadId :: string?)
+	self._maid:GiveTask(PlayerStateRemoting.EffectApplied:Connect(function(effectDef: unknown, id: unknown)
+		self:_onEffectApplied(effectDef :: PlayerStateDefs.EffectDef, id :: string)
 	end))
 
-	self._maid:GiveTask(PlayerStateRemoting.EffectRemoved:Connect(function(payloadId: unknown)
-		self:_onEffectRemoved(payloadId :: string)
+	self._maid:GiveTask(PlayerStateRemoting.EffectRemoved:Connect(function(id: unknown)
+		self:_onEffectRemoved(id :: string)
 	end))
 end
 
@@ -114,28 +127,71 @@ function PlayerStateClient:_rebuildEntityAnimator(joints: { [string]: Motor6D }?
 		return
 	end
 
-	-- PlayerStateAnimDef가 AnimDef 구현을 직접 포함
 	self._entityAnimator =
 		EntityAnimator.new(OWNER, "PlayerStateAnimDef", joints, PlayerStateAnimDef, self._animController)
 end
 
 -- ─── EffectApplied 처리 ──────────────────────────────────────────────────────
 
-function PlayerStateClient:_onEffectApplied(effectDef: PlayerStateDefs.EffectDef, payloadId: string?)
+function PlayerStateClient:_onEffectApplied(effectDef: PlayerStateDefs.EffectDef, id: string)
 	local tags = effectDef.tags
 	local components = effectDef.components
-	local pid = payloadId or ("auto_" .. tostring(os.clock()))
-	self._activeEffects[pid] = {}
+	local now = os.clock()
+
+	self._idToTags[id] = {}
 
 	if tags then
 		for _, tag in tags do
-			local activeEffect = self:_playTag(tag, components)
-			if activeEffect then
-				self._activeEffects[pid][tag.name] = activeEffect
+			local tagName = tag.name
+			table.insert(self._idToTags[id], tagName)
+
+			if ONESHOT_TAGS[tagName] then
+				-- 단발: 슬롯 없이 즉시 재생
+				self:_playTagDirect(tag, components)
+				continue
 			end
+
+			-- 루프성: 슬롯 관리
+			if not self._tagSlots[tagName] then
+				self._tagSlots[tagName] = {}
+			end
+
+			local expiresAt = now + tag.duration
+			local prevBest = self:_getBestSlot(tagName)
+
+			local slot: ActiveTagSlot = {
+				id = id,
+				intensity = tag.intensity,
+				expiresAt = expiresAt,
+				stop = function() end,
+				components = components,
+			}
+			self._tagSlots[tagName][id] = slot
+
+			local newBest = self:_getBestSlot(tagName)
+
+			if not prevBest then
+				-- 첫 번째 슬롯: 즉시 재생
+				local activeEffect = self:_playTagDirect(tag, components)
+				if activeEffect then
+					slot.stop = activeEffect.stop
+				end
+			elseif newBest and newBest.id == id then
+				-- 새 슬롯이 best → 이전 best 중단 후 새로 재생
+				prevBest.stop()
+				if self._tagSlots[tagName][prevBest.id] then
+					self._tagSlots[tagName][prevBest.id].stop = function() end
+				end
+				local activeEffect = self:_playTagDirect(tag, components)
+				if activeEffect then
+					slot.stop = activeEffect.stop
+				end
+			end
+			-- else: best가 아님 → 슬롯에만 저장, 재생 안 함
 		end
 	end
 
+	-- cameraLock 처리
 	if components then
 		for _, comp in components do
 			local c = comp :: any
@@ -148,20 +204,87 @@ end
 
 -- ─── EffectRemoved 처리 ──────────────────────────────────────────────────────
 
-function PlayerStateClient:_onEffectRemoved(payloadId: string)
-	local effects = self._activeEffects[payloadId]
-	if not effects then
+function PlayerStateClient:_onEffectRemoved(id: string)
+	local tagNames = self._idToTags[id]
+	if not tagNames then
 		return
 	end
-	for _, activeEffect in effects do
-		activeEffect.stop()
+
+	for _, tagName in tagNames do
+		local slots = self._tagSlots[tagName]
+		if not slots then
+			continue
+		end
+
+		local removedSlot = slots[id]
+		if not removedSlot then
+			continue
+		end
+
+		local wasBest = self:_isBestSlot(tagName, id)
+
+		-- 재생 중단
+		removedSlot.stop()
+		slots[id] = nil
+
+		if wasBest then
+			-- next best로 교체
+			local nextBest = self:_getBestSlot(tagName)
+			if nextBest then
+				local remaining = math.max(0, nextBest.expiresAt - os.clock())
+				local nextTag: PlayerStateDefs.TagEntry = {
+					name = tagName,
+					intensity = nextBest.intensity,
+					duration = remaining,
+				}
+				local activeEffect = self:_playTagDirect(nextTag, nextBest.components)
+				if activeEffect then
+					nextBest.stop = activeEffect.stop
+				end
+			end
+		end
+
+		-- 빈 슬롯 테이블 정리
+		if not next(slots) then
+			self._tagSlots[tagName] = nil
+		end
 	end
-	self._activeEffects[payloadId] = nil
+
+	self._idToTags[id] = nil
 end
 
--- ─── tag 라우터 ──────────────────────────────────────────────────────────────
+-- ─── 슬롯 헬퍼 ──────────────────────────────────────────────────────────────
 
-function PlayerStateClient:_playTag(
+--[=[
+	tagName 슬롯에서 intensity가 가장 높은 (동점이면 duration이 긴) 슬롯 반환.
+]=]
+function PlayerStateClient:_getBestSlot(tagName: string): ActiveTagSlot?
+	local slots = self._tagSlots[tagName]
+	if not slots then
+		return nil
+	end
+
+	local best: ActiveTagSlot? = nil
+	for _, slot in slots do
+		if not best then
+			best = slot
+		elseif slot.intensity > best.intensity then
+			best = slot
+		elseif slot.intensity == best.intensity and slot.expiresAt > best.expiresAt then
+			best = slot
+		end
+	end
+	return best
+end
+
+function PlayerStateClient:_isBestSlot(tagName: string, id: string): boolean
+	local best = self:_getBestSlot(tagName)
+	return best ~= nil and best.id == id
+end
+
+-- ─── tag 라우터 (직접 재생) ──────────────────────────────────────────────────
+
+function PlayerStateClient:_playTagDirect(
 	tag: PlayerStateDefs.TagEntry,
 	components: { PlayerStateDefs.Component }?
 ): ActiveTagEffect?
@@ -200,20 +323,8 @@ function PlayerStateClient:_playAnimTag(tag: PlayerStateDefs.TagEntry): ActiveTa
 		return nil
 	end
 
-	local loop = resolved.loop
-	local stopped = false -- intensity를 AnimFactory에 전달하기 위해 EntityAnimator에 주입
- -- EntityAnimator의 PlayAnimation이 ac 인자를 { ac = animController, intensity = n } 형태로 넘겨야 함
- -- 현재 EntityAnimator는 ac = animController 그대로 넘기므로,
- -- animController에 intensity를 임시 주입하는 방식 사용
-	(self._animController :: any)._currentIntensity = tag.intensity
-
-	if loop then
-		-- duration 동안 반복 재생 (EntityAnimator가 duration 만료 시 자동 종료)
-		entityAnimator:PlayAnimation(animKey, tag.duration, nil, true)
-	else
-		entityAnimator:PlayAnimation(animKey, tag.duration, nil, true)
-	end -- intensity 임시 주입 해제
-	(self._animController :: any)._currentIntensity = nil
+	local stopped = false
+	entityAnimator:PlayAnimation(animKey, tag.duration, nil, true, { intensity = tag.intensity })
 
 	return {
 		stop = function()
@@ -279,21 +390,22 @@ function PlayerStateClient:_playCamTag(
 
 	local animKey = resolved.animKey
 
+	-- direction 추출 (cam_knockback)
+	local direction: Vector3? = nil
 	if resolved.knockbackRef and components then
 		for _, comp in components do
 			local c = comp :: any
 			if c.type == "knockback" and c.direction then
-				-- TODO: direction 기반 카메라 방향 주입 확장
+				direction = c.direction
 				break
 			end
 		end
 	end
 
-	-- intensity를 factory에 전달하기 위해 PlayAnimation 시 intensity 주입
-	-- CameraAnimator.PlayAnimation → factory(cc, intensity) 형태로 확장 필요
-	-- 현재는 force=true로 재생, intensity는 animDef factory에서 캡처 불가
-	-- → CameraAnimator에 intensity 전달 지원 추가 시 여기서 연결
-	self._cameraAnimator:PlayAnimation(animKey, tag.duration, nil, true)
+	self._cameraAnimator:PlayAnimation(animKey, tag.duration, nil, true, {
+		intensity = tag.intensity,
+		direction = direction,
+	})
 
 	return {
 		stop = function()
@@ -367,12 +479,15 @@ end
 -- ─── 소멸 ────────────────────────────────────────────────────────────────────
 
 function PlayerStateClient.Destroy(self: PlayerStateClient)
-	for pid, effects in self._activeEffects do
-		for _, activeEffect in effects do
-			activeEffect.stop()
+	-- 모든 슬롯 정리
+	for tagName, slots in self._tagSlots do
+		for _, slot in slots do
+			slot.stop()
 		end
-		self._activeEffects[pid] = nil
 	end
+	self._tagSlots = {}
+	self._idToTags = {}
+
 	if self._cameraLockCancel then
 		self._cameraLockCancel()
 		self._cameraLockCancel = nil

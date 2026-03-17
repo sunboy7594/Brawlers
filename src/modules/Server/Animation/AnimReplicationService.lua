@@ -7,7 +7,7 @@
 	동작:
 	- 클라이언트로부터 AnimChanged 수신
 	  → animDefModuleName으로 AnimDef require
-	  → factory(joint, defaultC0, serverAC) 실행 → onUpdate 클로저 생성
+	  → factory(joint, defaultC0, serverAC, params) 실행 → onUpdate 클로저 생성
 	  → Heartbeat마다 onUpdate(joint, dt) 실행 → joint.C0 변경 → 자동 복제
 	- AnimStopped 수신 → 해당 애니메이션 클로저 제거
 
@@ -15,6 +15,10 @@
 	- spring(joint, targetC0, speed, damper, dt) : Nevermore Spring 보간
 	- GetMoveDir()                                : humanoid.MoveDirection 로컬 좌표 변환
 	- GetDefaultC0(joint)                         : 전송받은 defaultC0Map에서 반환
+
+	params: { intensity: number?, direction: Vector3? }
+	  클라이언트 PlayAnimation 호출 시 전달된 params를 그대로 factory에 전달.
+	  BasicMovementAnimDef처럼 params를 사용하지 않는 factory는 무시.
 ]=]
 
 local require = require(script.Parent.loader).load(script)
@@ -29,17 +33,21 @@ local Spring = require("Spring")
 
 -- ─── 타입 ────────────────────────────────────────────────────────────────────
 
-type JointEntry = {
-	onUpdate: (joint: Motor6D, dt: number) -> (),
-	posSpring: any, -- Spring<Vector3>
-	rotSpring: any, -- Spring<Vector3>
+type AnimParams = {
+	intensity: number?,
+	direction: Vector3?,
 }
 
--- animDefModuleName_animName → { [jointName]: JointEntry }
+type JointEntry = {
+	onUpdate: (joint: Motor6D, dt: number) -> (),
+	posSpring: any,
+	rotSpring: any,
+}
+
 type AnimEntry = {
 	joints: { [string]: JointEntry },
 	layer: number,
-	duration: number, -- math.huge면 무한
+	duration: number,
 	elapsed: number,
 }
 
@@ -47,7 +55,6 @@ type PlayerAnimState = {
 	anims: { [string]: AnimEntry },
 	joints: { [string]: Motor6D },
 	defaultC0s: { [string]: CFrame },
-	-- joint별 Spring (anim 제거 후에도 유지되어 default 복귀에 사용)
 	jointSprings: { [Motor6D]: { pos: any, rot: any } },
 	humanoid: Humanoid?,
 	rootPart: BasePart?,
@@ -84,9 +91,19 @@ function AnimReplicationService.Init(self: AnimReplicationService, serviceBag: S
 				animType: unknown,
 				layer: unknown,
 				duration: unknown,
-				defaultC0Map: unknown
+				defaultC0Map: unknown,
+				rawParams: unknown
 			)
-				self:_onAnimChanged(player, animDefModuleName, animName, animType, layer, duration, defaultC0Map)
+				self:_onAnimChanged(
+					player,
+					animDefModuleName,
+					animName,
+					animType,
+					layer,
+					duration,
+					defaultC0Map,
+					rawParams
+				)
 			end
 		)
 	)
@@ -170,7 +187,8 @@ function AnimReplicationService:_onAnimChanged(
 	animType: unknown,
 	layer: unknown,
 	duration: unknown,
-	defaultC0Map: unknown
+	defaultC0Map: unknown,
+	rawParams: unknown
 )
 	if type(animDefModuleName) ~= "string" then
 		return
@@ -188,6 +206,20 @@ function AnimReplicationService:_onAnimChanged(
 	local state = self._playerStates[player.UserId]
 	if not state then
 		return
+	end
+
+	-- params 파싱 (보안: 타입 검증)
+	local animParams: AnimParams? = nil
+	if type(rawParams) == "table" then
+		local p = rawParams :: any
+		local parsed: AnimParams = {}
+		if type(p.intensity) == "number" then
+			parsed.intensity = math.clamp(p.intensity, 0, 1)
+		end
+		if typeof(p.direction) == "Vector3" then
+			parsed.direction = p.direction
+		end
+		animParams = parsed
 	end
 
 	-- defaultC0Map 병합
@@ -217,7 +249,6 @@ function AnimReplicationService:_onAnimChanged(
 			return
 		end
 
-		-- 같은 layer의 기존 anim 교체
 		for existingKey, existing in state.anims do
 			if existing.layer == layer then
 				state.anims[existingKey] = nil
@@ -234,7 +265,6 @@ function AnimReplicationService:_onAnimChanged(
 
 			local defaultC0 = state.defaultC0s[jointName] or joint.C0
 
-			-- Spring이 없으면 새로 생성, 있으면 재사용
 			if not state.jointSprings[joint] then
 				local rx0, ry0, rz0 = defaultC0:ToEulerAnglesXYZ()
 				local posSpring = Spring.new(joint.C0.Position)
@@ -249,7 +279,7 @@ function AnimReplicationService:_onAnimChanged(
 			serverAC._springs[joint] = state.jointSprings[joint]
 			serverAC._defaultC0s[joint] = defaultC0
 
-			local onUpdate = factory(joint, defaultC0, serverAC)
+			local onUpdate = factory(joint, defaultC0, serverAC, animParams)
 			jointEntries[jointName] = {
 				onUpdate = onUpdate,
 				posSpring = state.jointSprings[joint].pos,
@@ -264,7 +294,6 @@ function AnimReplicationService:_onAnimChanged(
 			elapsed = 0,
 		}
 	elseif animType == "modify" then
-		-- modifier: onUpdate로 매 프레임 current CFrame에 적용
 		local jointEntries: { [string]: JointEntry } = {}
 		for jointName, factory in def.joints do
 			local joint = state.joints[jointName]
@@ -288,7 +317,7 @@ function AnimReplicationService:_onAnimChanged(
 			serverAC._springs[joint] = state.jointSprings[joint]
 			serverAC._defaultC0s[joint] = defaultC0
 
-			local modCallback = factory(joint, defaultC0, serverAC)
+			local modCallback = factory(joint, defaultC0, serverAC, animParams)
 
 			local function onUpdate(j: Motor6D, _dt: number)
 				j.C0 = modCallback(j.C0, _dt)
@@ -301,11 +330,10 @@ function AnimReplicationService:_onAnimChanged(
 			}
 		end
 
-		-- modifier는 layer 없이 별도 키로 저장 (layer = -1 관례)
 		state.anims[animKey] = {
 			joints = jointEntries,
 			layer = -1,
-			duration = math.huge, -- modifier는 명시적 Stop 전까지 유지
+			duration = math.huge,
 			elapsed = 0,
 		}
 	end
@@ -332,14 +360,12 @@ end
 
 function AnimReplicationService:_update(dt: number)
 	for _, state in self._playerStates do
-		-- 현재 프레임에서 활성화된 joint 목록 수집
 		local activeJoints: { [Motor6D]: boolean } = {}
 
 		local toRemove: { string } = {}
 		for animKey, animEntry in state.anims do
 			animEntry.elapsed += dt
 
-			-- duration 만료 시 제거
 			if animEntry.elapsed >= animEntry.duration then
 				table.insert(toRemove, animKey)
 				continue
@@ -359,7 +385,6 @@ function AnimReplicationService:_update(dt: number)
 			state.anims[animKey] = nil
 		end
 
-		-- 비활성 joint → defaultC0로 spring 복귀
 		for jointName, joint in state.joints do
 			if activeJoints[joint] then
 				continue
@@ -394,10 +419,6 @@ function AnimReplicationService:_makeServerAC(state: PlayerAnimState): any
 		_defaultC0s = {} :: { [Motor6D]: CFrame },
 	}
 
-	--[=[
-		AnimDef factory 안에서 ac:spring() 대신 호출.
-		Nevermore Spring으로 보간 후 joint.C0 변경.
-	]=]
 	function serverAC:spring(joint: Motor6D, targetC0: CFrame, speed: number, damper: number, _dt: number)
 		local springs = self._springs[joint]
 		if not springs then
@@ -418,9 +439,6 @@ function AnimReplicationService:_makeServerAC(state: PlayerAnimState): any
 		joint.C0 = CFrame.new(p) * CFrame.fromEulerAnglesXYZ(r.X, r.Y, r.Z)
 	end
 
-	--[=[
-		이동 방향을 캐릭터 로컬 좌표로 변환하여 반환.
-	]=]
 	function serverAC:GetMoveDir(): Vector3
 		local humanoid = state.humanoid
 		local rootPart = state.rootPart
@@ -435,9 +453,6 @@ function AnimReplicationService:_makeServerAC(state: PlayerAnimState): any
 		return rootPart.CFrame:VectorToObjectSpace(worldDir)
 	end
 
-	--[=[
-		전송받은 defaultC0Map 또는 현재 joint.C0 반환.
-	]=]
 	function serverAC:GetDefaultC0(joint: Motor6D): CFrame
 		return self._defaultC0s[joint] or joint.C0
 	end
