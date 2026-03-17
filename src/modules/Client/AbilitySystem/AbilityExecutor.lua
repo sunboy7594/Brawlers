@@ -6,10 +6,10 @@
 	abilityState를 저장하지 않으며, 실행 시점에 인자로만 받음.
 
 	사용처:
-	- AimControllerClient : OnAimStart, OnAim, OnFire
-	- BasicAttackClient   : OnHitChecked
-	- SkillClient         : OnHitChecked
-	- UltimateClient      : OnHitChecked
+	- AimControllerClient : OnAimStart, OnAim
+	- BasicAttackClient   : OnFire, OnCancel, OnHitChecked
+	- SkillClient         : OnFire, OnCancel, OnHitChecked
+	- UltimateClient      : OnFire, OnCancel, OnHitChecked
 ]=]
 
 local AbilityExecutor = {}
@@ -37,6 +37,14 @@ end
 
 function AbilityExecutor.OnFire(clientModule: any, abilityState: any)
 	AbilityExecutor.Run(clientModule.onFire, abilityState)
+end
+
+--[=[
+	CancelCombatState 시 호출됩니다.
+	fireMaid로 처리 못하는 추가 정리가 필요할 때 모듈에서 구현합니다.
+]=]
+function AbilityExecutor.OnCancel(clientModule: any, abilityState: any)
+	AbilityExecutor.Run(clientModule.onCancel, abilityState)
 end
 
 function AbilityExecutor.OnHitChecked(clientModule: any, abilityState: any)

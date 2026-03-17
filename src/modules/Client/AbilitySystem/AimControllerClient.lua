@@ -2,7 +2,8 @@
 --[=[
 	@class AimControllerClient
 
-	조준 상태를 중앙에서 관리하는 서비스.
+	조준 상태를 중앙에서 관리하는 순수 상태머신 서비스.
+	입력 이벤트를 직접 구독하지 않으며, 각 ability Client가 호출함.
 
 	조준 타입:
 	- BasicAttack: 기본 공격
@@ -10,28 +11,27 @@
 	- Ultimate:    궁극기
 
 	동작:
-	- 새 조준 요청 시 기존 조준 취소 후 전환
-	- 우클릭(MouseButton2) → 현재 조준 취소
-	- 좌클릭(MouseButton1) 해제 → confirm (발사)
-	- 매 프레임 onAim 배열 실행 (origin/direction은 abilityState에 세팅 후 모듈이 직접 indicator 업데이트)
+	- StartAim     : 새 조준 시작 (기존 AimSession 있으면 cancel 후 교체)
+	- ConfirmAim   : 현재 조준 방향 확정 후 세션 종료 → direction 반환
+	- Cancel       : 조준 취소 (우클릭 등 외부에서 호출)
+	- IsAiming     : 조준 중 여부
 
-	ShiftLock 연동:
-	- ShiftLock 비활성: HRP LookVector 수평 성분 사용
+	ShiftLock 연동 (lockYawDuringAim = true 인 경우에만):
 	- ShiftLock 활성: AutoRotate 끄고 카메라 방향으로 캐릭터 회전
 	- 조준 종료 시 AutoRotate 복원
+	- toggle은 lockYawDuringAim = false 로 전달 → 화면 고정 없음
 
-	postFire 회전 잠금:
-	- 발사 확정 시 HRP를 조준방향으로 스냅
-	- postFireDuration 동안 AutoRotate = false 유지
-	- cancellableDelay로 복원 → 새 조준 시작 시 취소 가능
-	- 새 postFire 설정 전 기존 타이머를 반드시 취소
-	  (미취소 시: 구 타이머가 나중에 터지면서 새 잠금의 _postFireYaw를 nil로 덮어 방향 잠금 해제됨)
+	interval 회전 잠금 (stack 전용):
+	- StartIntervalLock(direction, duration): 발사 방향으로 캐릭터 스냅 + duration 동안 AutoRotate=false
+	- CancelIntervalLock: 강제 해제
+	- interval 진행 중 새 StartAim → StartAim 내에서 자동으로 CancelIntervalLock 호출
 
-	클라이언트 공격 모듈 훅 (AbilityExecutor가 실행):
-	- OnAimStart: { (abilityState) -> () }?  조준 시작 1회
-	- OnAim:      { (abilityState) -> () }?  매 프레임, abilityState.indicator 직접 업데이트
-	- OnFire:     { (abilityState) -> () }?  발사 확정 후 — onFireServer 콜백 내부에서 호출됨
-	취소 시: aimTime/effectiveAimTime 리셋 후 indicator hideAll (onCancel 없음)
+	우클릭 취소:
+	- MouseButton2 → Cancel() (전역 조준 취소. Start()에서 구독)
+
+	RenderStep:
+	- 조준 중: lockYawDuringAim이면 ShiftLock 캐릭터 회전 + onAim 훅 실행
+	- 미조준 + interval 잠금 중: yawSpring으로 HRP 방향 유지
 ]=]
 
 local require = require(script.Parent.loader).load(script)
@@ -52,11 +52,10 @@ local cancellableDelay = require("cancellableDelay")
 type AimSession = {
 	abilityType: string,
 	clientModule: any,
-	abilityState: any,
-	onFireServer: (direction: Vector3) -> (),
+	abilityState: any, -- BasicAttackState | SkillState | UltimateState
 	startTime: number,
 	maid: any,
-	postFireDuration: number,
+	lockYawDuringAim: boolean, -- toggle: false, stack/hold: true
 }
 
 export type AimControllerClient = typeof(setmetatable(
@@ -66,8 +65,8 @@ export type AimControllerClient = typeof(setmetatable(
 		_aimSession: AimSession?,
 		_cameraController: any,
 		_yawSpring: any,
-		_postFireCancel: (() -> ())?,
-		_postFireYaw: number?,
+		_intervalLockCancel: (() -> ())?,
+		_intervalLockYaw: number?,
 	},
 	{} :: typeof({ __index = {} })
 ))
@@ -103,8 +102,8 @@ function AimControllerClient.Init(self: AimControllerClient, serviceBag: Service
 	self._maid = Maid.new()
 	self._aimSession = nil
 	self._cameraController = serviceBag:GetService(CameraControllerClient)
-	self._postFireCancel = nil
-	self._postFireYaw = nil
+	self._intervalLockCancel = nil
+	self._intervalLockYaw = nil
 
 	local yawSpring = Spring.new(0)
 	yawSpring.Speed = 10
@@ -113,18 +112,13 @@ function AimControllerClient.Init(self: AimControllerClient, serviceBag: Service
 end
 
 function AimControllerClient.Start(self: AimControllerClient): ()
+	-- 우클릭: 전역 조준 취소
 	self._maid:GiveTask(UserInputService.InputBegan:Connect(function(input: InputObject, processed: boolean)
 		if processed then
 			return
 		end
 		if input.UserInputType == Enum.UserInputType.MouseButton2 then
 			self:Cancel()
-		end
-	end))
-
-	self._maid:GiveTask(UserInputService.InputEnded:Connect(function(input: InputObject, _processed: boolean)
-		if input.UserInputType == Enum.UserInputType.MouseButton1 then
-			self:_confirm()
 		end
 	end))
 
@@ -140,31 +134,33 @@ end
 
 --[=[
 	새 조준을 시작합니다.
+	기존 AimSession이 있으면 cancel 후 교체.
+	interval 잠금이 활성 중이면 해제.
 
-	@param abilityType      string                       AimControllerClient.AbilityType 중 하나
-	@param clientModule     table                        공격 클라이언트 모듈
-	@param abilityState     table                        능력 상태 객체 (BasicAttackState 등)
-	@param onFireServer     (direction: Vector3) -> ()   서버 전송 콜백
-	@param postFireDuration number?                      발사 후 AutoRotate 잠금 시간 (기본 0)
+	@param abilityType      string    AimControllerClient.AbilityType 중 하나
+	@param clientModule     table     공격 클라이언트 모듈
+	@param abilityState     table     능력 상태 객체
+	@param lockYawDuringAim boolean?  ShiftLock 활성 시 캐릭터 방향 고정 여부 (기본 true)
+	                                  toggle: false 전달
 ]=]
 function AimControllerClient:StartAim(
 	abilityType: string,
 	clientModule: any,
 	abilityState: any,
-	onFireServer: (direction: Vector3) -> (),
-	postFireDuration: number?
+	lockYawDuringAim: boolean?
 )
-	local aimSession = self._aimSession
+	local doLock = if lockYawDuringAim == nil then true else lockYawDuringAim
 
-	if aimSession and aimSession.abilityType == abilityType then
-		return
-	end
+	-- 기존 interval 잠금 해제
+	self:CancelIntervalLock()
 
-	if aimSession then
+	-- 기존 AimSession cancel
+	if self._aimSession then
 		self:_cancelInternal()
 	end
 
-	if self._cameraController:IsShiftLocked() then
+	-- ShiftLock 연동
+	if doLock and self._cameraController:IsShiftLocked() then
 		local humanoid = self:_getHumanoid()
 		if humanoid then
 			humanoid.AutoRotate = false
@@ -182,14 +178,52 @@ function AimControllerClient:StartAim(
 		abilityType = abilityType,
 		clientModule = clientModule,
 		abilityState = abilityState,
-		onFireServer = onFireServer,
 		startTime = os.clock(),
 		maid = Maid.new(),
-		postFireDuration = postFireDuration or 0,
+		lockYawDuringAim = doLock,
 	}
 
 	abilityState.indicator:showAll()
 	AbilityExecutor.OnAimStart(clientModule, abilityState)
+end
+
+--[=[
+	현재 조준을 확정합니다. direction을 반환하고 AimSession을 종료합니다.
+	방향을 구할 수 없으면 nil 반환 후 _cancelInternal 호출.
+
+	@return Vector3? 확정된 direction (단위벡터)
+]=]
+function AimControllerClient:ConfirmAim(): Vector3?
+	local aimSession = self._aimSession
+	if not aimSession then
+		return nil
+	end
+
+	local origin, direction = self:_getAimDirection()
+	if not direction then
+		self:_cancelInternal()
+		return nil
+	end
+
+	local abilityState = aimSession.abilityState
+	abilityState.aimTime = os.clock() - aimSession.startTime
+	abilityState.direction = direction
+	abilityState.origin = origin or Vector3.zero
+
+	abilityState.indicator:hideAll()
+
+	-- AutoRotate 복원 (lockYawDuringAim인 경우)
+	if aimSession.lockYawDuringAim then
+		local humanoid = self:_getHumanoid()
+		if humanoid then
+			humanoid.AutoRotate = true
+		end
+	end
+
+	aimSession.maid:Destroy()
+	self._aimSession = nil
+
+	return direction
 end
 
 --[=[
@@ -203,15 +237,57 @@ function AimControllerClient:Cancel()
 end
 
 --[=[
-	postFire 회전 잠금을 즉시 해제합니다.
-	무기 교체 등 외부에서 전투 상태를 초기화할 때 호출합니다.
+	stack 전용: 발사 방향으로 캐릭터를 스냅하고 duration 동안 AutoRotate=false 유지.
+	duration 만료 시 자동 복원.
 ]=]
-function AimControllerClient:CancelPostFire()
-	if self._postFireCancel then
-		self._postFireCancel()
-		self._postFireCancel = nil
+function AimControllerClient:StartIntervalLock(direction: Vector3, duration: number)
+	-- 기존 잠금 교체
+	if self._intervalLockCancel then
+		self._intervalLockCancel()
+		self._intervalLockCancel = nil
 	end
-	self._postFireYaw = nil
+
+	local humanoid = self:_getHumanoid()
+	local hrp = self:_getHRP()
+	if not humanoid or not hrp then
+		return
+	end
+
+	humanoid.AutoRotate = false
+
+	local rawYaw = math.atan2(-direction.X, -direction.Z)
+	local currentLook = hrp.CFrame.LookVector
+	local currentYaw = math.atan2(-currentLook.X, -currentLook.Z)
+	local targetYaw = currentYaw + normalizeAngleDelta(currentYaw, rawYaw)
+
+	self._yawSpring.Position = currentYaw
+	self._yawSpring.Target = targetYaw
+	self._intervalLockYaw = targetYaw
+
+	if duration > 0 then
+		self._intervalLockCancel = cancellableDelay(duration, function()
+			self._intervalLockCancel = nil
+			self._intervalLockYaw = nil
+			if humanoid and humanoid.Parent then
+				humanoid.AutoRotate = true
+			end
+		end)
+	else
+		self._intervalLockYaw = nil
+		humanoid.AutoRotate = true
+	end
+end
+
+--[=[
+	interval 회전 잠금을 즉시 해제합니다.
+	능력 교체, CancelCombatState 등 외부 초기화 시 호출합니다.
+]=]
+function AimControllerClient:CancelIntervalLock()
+	if self._intervalLockCancel then
+		self._intervalLockCancel()
+		self._intervalLockCancel = nil
+	end
+	self._intervalLockYaw = nil
 	local humanoid = self:_getHumanoid()
 	if humanoid and humanoid.Parent then
 		humanoid.AutoRotate = true
@@ -278,67 +354,6 @@ function AimControllerClient:_updateCharacterRotation()
 	hrp.CFrame = CFrame.new(hrp.Position) * CFrame.Angles(0, self._yawSpring.Position, 0)
 end
 
-function AimControllerClient:_confirm()
-	local aimSession = self._aimSession
-	if not aimSession then
-		return
-	end
-
-	local origin, direction = self:_getAimDirection()
-	if not direction then
-		self:_cancelInternal()
-		return
-	end
-
-	local abilityState = aimSession.abilityState
-	abilityState.aimTime = os.clock() - aimSession.startTime
-	abilityState.direction = direction
-	abilityState.origin = origin or Vector3.zero
-
-	abilityState.indicator:hideAll()
-
-	local onFireServer = aimSession.onFireServer
-	local postFireDuration = aimSession.postFireDuration
-
-	aimSession.maid:Destroy()
-	self._aimSession = nil
-
-	local isFired = onFireServer(direction)
-
-	local humanoid = self:_getHumanoid()
-	local hrp = self:_getHRP()
-
-	if isFired and humanoid and hrp then
-		humanoid.AutoRotate = false
-
-		local rawYaw = math.atan2(-direction.X, -direction.Z)
-		local currentLook = hrp.CFrame.LookVector
-		local currentYaw = math.atan2(-currentLook.X, -currentLook.Z)
-		local targetYaw = currentYaw + normalizeAngleDelta(currentYaw, rawYaw)
-
-		self._yawSpring.Position = currentYaw
-		self._yawSpring.Target = targetYaw
-		self._postFireYaw = targetYaw
-
-		if postFireDuration > 0 then
-			if self._postFireCancel then
-				self._postFireCancel()
-				self._postFireCancel = nil
-			end
-			self._postFireCancel = cancellableDelay(postFireDuration, function()
-				self._postFireCancel = nil
-				self._postFireYaw = nil
-				if humanoid and humanoid.Parent then
-					humanoid.AutoRotate = true
-				end
-			end)
-		else
-			self._postFireYaw = nil
-			humanoid.AutoRotate = true
-		end
-	end
-end
-
 function AimControllerClient:_cancelInternal()
 	local aimSession = self._aimSession
 	if not aimSession then
@@ -350,19 +365,23 @@ function AimControllerClient:_cancelInternal()
 	abilityState.aimTime = 0
 	abilityState.effectiveAimTime = 0
 
+	if aimSession.lockYawDuringAim then
+		local humanoid = self:_getHumanoid()
+		if humanoid then
+			humanoid.AutoRotate = true
+		end
+	end
+
 	aimSession.maid:Destroy()
 	self._aimSession = nil
-
-	local humanoid = self:_getHumanoid()
-	if humanoid then
-		humanoid.AutoRotate = true
-	end
 end
 
 function AimControllerClient:_onRenderStep()
 	local aimSession = self._aimSession
+
+	-- [미조준 상태] interval 잠금 유지
 	if not aimSession then
-		if self._postFireCancel and self._postFireYaw then
+		if self._intervalLockCancel and self._intervalLockYaw then
 			local hrp = self:_getHRP()
 			if hrp then
 				hrp.CFrame = CFrame.new(hrp.Position) * CFrame.Angles(0, self._yawSpring.Position, 0)
@@ -371,7 +390,8 @@ function AimControllerClient:_onRenderStep()
 		return
 	end
 
-	if self._cameraController:IsShiftLocked() then
+	-- [조준 상태] ShiftLock 연동
+	if aimSession.lockYawDuringAim and self._cameraController:IsShiftLocked() then
 		self:_updateCharacterRotation()
 	end
 
@@ -385,16 +405,13 @@ function AimControllerClient:_onRenderStep()
 	abilityState.direction = direction
 	abilityState.origin = origin
 
-	-- origin/direction은 abilityState에만 세팅.
-	-- indicator 업데이트는 각 모듈의 onAim에서 담당.
+	-- effectiveAimTime은 BasicAttackClient의 Heartbeat에서 관리
+	-- onAim 훅 실행
 	AbilityExecutor.OnAim(aimSession.clientModule, abilityState)
 end
 
 function AimControllerClient.Destroy(self: AimControllerClient)
-	if self._postFireCancel then
-		self._postFireCancel()
-		self._postFireCancel = nil
-	end
+	self:CancelIntervalLock()
 	if self._aimSession then
 		self:_cancelInternal()
 	end

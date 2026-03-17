@@ -22,11 +22,14 @@ serviceBag:GetService(require("BasicMovementClient"))
 -- ─── Ability System ──────────────────────────────
 -- AimControllerClient는 BasicAttackClient보다 먼저 등록
 serviceBag:GetService(require("AimControllerClient"))
-serviceBag:GetService(require("BasicAttackClient"))
-serviceBag:GetService(require("PlayerStateClient"))
+serviceBag:GetService(require("AbilityCoordinator"))
+
 serviceBag:GetService(require("PassiveClient"))
 serviceBag:GetService(require("SkillClient"))
 serviceBag:GetService(require("UltimateClient"))
+serviceBag:GetService(require("BasicAttackClient"))
+
+serviceBag:GetService(require("PlayerStateClient"))
 
 -- ─── PlayerState ─────────────────────────────────
 serviceBag:GetService(require("HpClient"))

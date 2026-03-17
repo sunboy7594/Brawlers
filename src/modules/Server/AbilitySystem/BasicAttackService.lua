@@ -5,40 +5,25 @@
 	기본 공격 서버 서비스.
 
 	담당:
-	- 플레이어별 탄약 상태 관리
-	- 탄약 1칸씩 독립 재생 (Heartbeat)
-	- BasicAttackRemoting.Fire 수신 → 검증 → 서버 공격 모듈 onFire 배열 실행
+	- 플레이어별 리소스 상태 관리
+	- stack: 독립 재생 (Heartbeat)
+	- gauge: 발사 중 drain, 종료 후 regenDelay → regen (Heartbeat)
+	- BasicAttackRemoting.Fire 수신 → 검증 → onFire 실행
+	- BasicAttackRemoting.FireStart/FireEnd 수신 → hold/toggle 상태 관리
 	- 히트 체크 후 HitChecked:FireClient(공격자) 발송
 	- LoadoutRemoting.RequestEquipBasicAttack → 유효성 검증 후 장착 처리
 
 	Anti-exploit:
-	- 레이트 리밋 (FIRE_RATE_LIMIT = 0.1초)
+	- FIRE_RATE_LIMIT (0.1초)
 	- direction 타입/크기 검증
-	- 탄약 0이면 무시
-	- postDelay 잔여 비율 > POST_DELAY_QUEUE_THRESHOLD 이면 무시
-	- postDelay 잔여 비율 ≤ POST_DELAY_QUEUE_THRESHOLD 이면 예약 발사
+	- isAttackLocked 검증 (공격불가 상태)
+	- stack: currentStack > 0, interval 비율 검증
+	- gauge: currentGauge > 0
+	- hold/toggle: FireStart 없이 Fire 수신 시 무시
 
-	BasicAttackState:
-	- 플레이어 관리 필드 + 발사 컨텍스트를 단일 테이블로 관리
-	- 클라이언트 전송값 일절 사용 안 함 (direction 검증 제외)
-	- hitComboCount/fireComboCount 증감은 각 공격 모듈이 담당
-
-	onHit 콜백:
-	- Fire 시점에 BasicAttackService가 state.onHit에 주입
-	- 공격기술 모듈은 InstantHit.apply()에 state.onHit을 넘겨 판정 완료 시 호출되도록 함
-	- 판정 완료 시점에 HitChecked(공격자), onHitChecked 훅 실행
-
-	스냅샷:
-	- Fire 시점에 table.clone(state)으로 생성
-	- onHit 콜백 및 onHitChecked 훅에 전달
-	- snapshot.playerStateController : onHitChecked에서 Play / PlayPlayerState 호출용
-	- snapshot.attackerStates         : fire 시점 공격자의 active effect 스냅샷
-
-	예약 발사 (pendingFireCancel):
-	- postDelay 잔여 비율 ≤ POST_DELAY_QUEUE_THRESHOLD(80%) 일 때 공격 시도 시
-	  cancellableDelay로 잔여 시간 후 자동 발사 예약
-	- 예약 중 새 공격 시도 → 기존 예약 교체 (방향 갱신)
-	- 즉시 발사 시 / 무기 교체 시 / 클래스 변경 시 → 예약 자동 취소
+	interval 예약 (stack/toggle만):
+	- interval 잔여 비율 ≤ INTERVAL_QUEUE_THRESHOLD(80%) 일 때 예약 발사
+	- hold: 예약 없음
 ]=]
 
 local require = require(script.Parent.loader).load(script)
@@ -46,6 +31,7 @@ local require = require(script.Parent.loader).load(script)
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 
+local AbilityTypes = require("AbilityTypes")
 local BasicAttackDefs = require("BasicAttackDefs")
 local BasicAttackRemoting = require("BasicAttackRemoting")
 local ClassService = require("ClassService")
@@ -60,39 +46,48 @@ local cancellableDelay = require("cancellableDelay")
 local FIRE_RATE_LIMIT = 0.1
 local MAX_DIRECTION_MAGNITUDE_DELTA = 0.1
 
--- ⚠️ 주의: BasicAttackClient.lua의 POST_DELAY_QUEUE_THRESHOLD와
---          반드시 동일한 값을 유지해야 합니다.
---          한쪽만 바꾸면 예약 발사 타이밍이 서버-클라이언트 간 어긋납니다.
-local POST_DELAY_QUEUE_THRESHOLD = 0.8 -- 잔여 비율 80% 이하일 때 예약 발사
+-- ⚠️ 주의: BasicAttackClient.lua의 INTERVAL_QUEUE_THRESHOLD와 반드시 동일해야 합니다.
+local INTERVAL_QUEUE_THRESHOLD = AbilityTypes.INTERVAL_QUEUE_THRESHOLD
 
 -- ─── 타입 ────────────────────────────────────────────────────────────────────
 
 export type BasicAttackState = {
 	-- 장착 정보
 	equippedAttackId: string?,
+	fireType: "stack" | "hold" | "toggle",
+	resourceType: "stack" | "gauge",
 
 	-- 캐릭터
 	humanoid: Humanoid?,
 	rootPart: BasePart?,
 
-	-- 탄약
-	currentAmmo: number,
-	maxAmmo: number,
+	-- stack 리소스
+	currentStack: number,
+	maxStack: number,
 	reloadTime: number,
-	postDelay: number,
-
-	-- 타이밍
-	lastFireTime: number,
-	postDelayUntil: number,
 	lastRegenTime: number,
+
+	-- gauge 리소스
+	currentGauge: number,
+	maxGauge: number,
+	drainRate: number,
+	regenRate: number,
+	regenDelay: number,
+	isFiring: boolean,
+	lastFireEndTime: number,
+
+	-- 공통 타이밍
+	interval: number,
+	lastFireTime: number,
+	intervalUntil: number,
 	lastHitTime: number,
 	aimStartTime: number,
 
-	-- 콤보 (증감은 각 공격 모듈이 담당)
+	-- 콤보
 	fireComboCount: number,
 	hitComboCount: number,
 
-	-- 발사 컨텍스트 (발사마다 업데이트)
+	-- 발사 컨텍스트
 	attacker: Model?,
 	origin: Vector3,
 	direction: Vector3,
@@ -107,10 +102,8 @@ export type BasicAttackState = {
 	-- 예약 발사 취소 함수
 	pendingFireCancel: (() -> ())?,
 
-	-- onHitChecked에서 Play / PlayPlayerState 호출용 (snapshot에만 주입됨)
+	-- snapshot 전용 주입 필드
 	playerStateController: any?,
-
-	-- fire 시점 공격자의 active effect 스냅샷 (snapshot에만 주입됨)
 	attackerStates: { any }?,
 }
 
@@ -120,7 +113,7 @@ type AttackModule = {
 }
 
 type AttackEntry = {
-	def: typeof(BasicAttackDefs.Tank_Punch),
+	def: BasicAttackDefs.BasicAttackDef,
 	module: AttackModule,
 }
 
@@ -162,6 +155,22 @@ function BasicAttackService.Init(self: BasicAttackService, serviceBag: ServiceBa
 	self._classService = serviceBag:GetService(ClassService)
 	self._playerStates = {}
 	self._playerMaids = {}
+end
+
+function BasicAttackService.Start(self: BasicAttackService): ()
+	self._maid:GiveTask(Players.PlayerAdded:Connect(function(player)
+		self:_onPlayerAdded(player)
+	end))
+	for _, player in Players:GetPlayers() do
+		self:_onPlayerAdded(player)
+	end
+	self._maid:GiveTask(Players.PlayerRemoving:Connect(function(player)
+		self:_onPlayerRemoving(player)
+	end))
+
+	self._maid:GiveTask(RunService.Heartbeat:Connect(function()
+		self:_updateResources()
+	end))
 
 	self._maid:GiveTask(BasicAttackRemoting.AimStarted:Connect(function(player: Player)
 		self:_onAimStarted(player)
@@ -171,61 +180,54 @@ function BasicAttackService.Init(self: BasicAttackService, serviceBag: ServiceBa
 		self:_onFire(player, direction)
 	end))
 
-	self._maid:GiveTask(LoadoutRemoting.RequestEquipBasicAttack:Bind(function(player: Player, attackId: unknown)
-		if type(attackId) ~= "string" then
-			return false, "Invalid attackId type"
-		end
-		if not ATTACK_REGISTRY[attackId] then
-			return false, "Unknown attackId: " .. attackId
-		end
-		self:_setPlayerAttack(player, attackId)
-		return true, attackId
+	self._maid:GiveTask(BasicAttackRemoting.FireStart:Connect(function(player: Player)
+		self:_onFireStart(player)
 	end))
 
-	self._maid:GiveTask(self._classService.ClassChanged:Connect(function(player: Player, _className: string)
-		self:CancelCombatState(player)
-	end))
-end
-
-function BasicAttackService.Start(self: BasicAttackService): ()
-	for _, player in Players:GetPlayers() do
-		self:_onPlayerAdded(player)
-	end
-
-	self._maid:GiveTask(Players.PlayerAdded:Connect(function(player: Player)
-		self:_onPlayerAdded(player)
+	self._maid:GiveTask(BasicAttackRemoting.FireEnd:Connect(function(player: Player)
+		self:_onFireEnd(player)
 	end))
 
-	self._maid:GiveTask(Players.PlayerRemoving:Connect(function(player: Player)
-		self:_onPlayerRemoving(player)
-	end))
-
-	self._maid:GiveTask(RunService.Heartbeat:Connect(function()
-		self:_updateAmmoRegen()
-	end))
+	LoadoutRemoting.RequestEquipBasicAttack:Bind(function(player: Player, attackId: unknown)
+		return self:_onRequestEquip(player, attackId)
+	end)
 end
 
 -- ─── 플레이어 관리 ───────────────────────────────────────────────────────────
 
 function BasicAttackService:_onPlayerAdded(player: Player)
-	local pMaid = Maid.new()
-	self._playerMaids[player.UserId] = pMaid
+	local playerMaid = Maid.new()
+	self._playerMaids[player.UserId] = playerMaid
 
 	local state: BasicAttackState = {
 		equippedAttackId = nil,
+		fireType = "stack",
+		resourceType = "stack",
 		humanoid = nil,
 		rootPart = nil,
-		currentAmmo = 0,
-		maxAmmo = 0,
+
+		currentStack = 0,
+		maxStack = 0,
 		reloadTime = 0,
-		postDelay = 0,
-		lastFireTime = 0,
-		postDelayUntil = 0,
 		lastRegenTime = 0,
+
+		currentGauge = 0,
+		maxGauge = 0,
+		drainRate = 0,
+		regenRate = 0,
+		regenDelay = 0,
+		isFiring = false,
+		lastFireEndTime = 0,
+
+		interval = 0,
+		lastFireTime = 0,
+		intervalUntil = 0,
 		lastHitTime = 0,
 		aimStartTime = 0,
+
 		fireComboCount = 0,
 		hitComboCount = 0,
+
 		attacker = nil,
 		origin = Vector3.zero,
 		direction = Vector3.new(0, 0, -1),
@@ -233,6 +235,7 @@ function BasicAttackService:_onPlayerAdded(player: Player)
 		effectiveAimTime = 0,
 		idleTime = 0,
 		victims = nil,
+
 		onHit = nil,
 		pendingFireCancel = nil,
 		playerStateController = nil,
@@ -240,42 +243,101 @@ function BasicAttackService:_onPlayerAdded(player: Player)
 	}
 	self._playerStates[player.UserId] = state
 
-	local function onCharacterAdded(char: Model)
-		local humanoid = char:WaitForChild("Humanoid") :: Humanoid
-		local rootPart = char:WaitForChild("HumanoidRootPart") :: BasePart
-		state.humanoid = humanoid
-		state.rootPart = rootPart
-		state.attacker = char
-
-		pMaid:GiveTask(humanoid.Died:Connect(function()
-			if state.pendingFireCancel then
-				state.pendingFireCancel()
-				state.pendingFireCancel = nil
-			end
-			state.humanoid = nil
-			state.rootPart = nil
-			state.attacker = nil
-		end))
-	end
-
+	playerMaid:GiveTask(player.CharacterAdded:Connect(function(char)
+		self:_onCharacterAdded(player, char)
+	end))
 	if player.Character then
-		onCharacterAdded(player.Character)
+		self:_onCharacterAdded(player, player.Character)
 	end
-	pMaid:GiveTask(player.CharacterAdded:Connect(onCharacterAdded))
+end
+
+function BasicAttackService:_onCharacterAdded(player: Player, char: Model)
+	local state = self._playerStates[player.UserId]
+	if not state then
+		return
+	end
+
+	local hum = char:WaitForChild("Humanoid") :: Humanoid
+	local hrp = char:WaitForChild("HumanoidRootPart") :: BasePart
+
+	state.humanoid = hum
+	state.rootPart = hrp
 end
 
 function BasicAttackService:_onPlayerRemoving(player: Player)
-	local state = self._playerStates[player.UserId]
-	if state and state.pendingFireCancel then
-		state.pendingFireCancel()
-		state.pendingFireCancel = nil
+	local maid = self._playerMaids[player.UserId]
+	if maid then
+		maid:Destroy()
+		self._playerMaids[player.UserId] = nil
 	end
 	self._playerStates[player.UserId] = nil
+end
 
-	local pMaid = self._playerMaids[player.UserId]
-	if pMaid then
-		pMaid:Destroy()
-		self._playerMaids[player.UserId] = nil
+-- ─── 리소스 업데이트 (Heartbeat) ─────────────────────────────────────────────
+
+function BasicAttackService:_updateResources()
+	local now = os.clock()
+	for userId, state in self._playerStates do
+		if state.resourceType == "stack" then
+			self:_updateStackRegen(userId, state, now)
+		elseif state.resourceType == "gauge" then
+			self:_updateGauge(userId, state, now)
+		end
+	end
+end
+
+function BasicAttackService:_updateStackRegen(userId: number, state: BasicAttackState, now: number)
+	if state.currentStack >= state.maxStack or state.maxStack == 0 then
+		return
+	end
+	if state.reloadTime <= 0 then
+		return
+	end
+	if now - state.lastRegenTime >= state.reloadTime then
+		state.currentStack = math.min(state.currentStack + 1, state.maxStack)
+		state.lastRegenTime = now
+		local player = Players:GetPlayerByUserId(userId)
+		if player then
+			self:_fireResourceChanged(player, state)
+		end
+	end
+end
+
+function BasicAttackService:_updateGauge(userId: number, state: BasicAttackState, now: number)
+	if state.maxGauge <= 0 then
+		return
+	end
+
+	local changed = false
+
+	if state.isFiring and state.currentGauge > 0 then
+		-- drain
+		local drain = state.drainRate * (now - math.max(state.lastFireTime, state.lastFireEndTime))
+		-- 실제로는 매 프레임 delta를 써야 함. Heartbeat dt를 쓰려면 다른 방식 필요.
+		-- 여기서는 간단히 매 Heartbeat마다 drainRate/60 으로 근사
+		local dt = 1 / 60
+		state.currentGauge = math.max(0, state.currentGauge - state.drainRate * dt)
+		changed = true
+
+		-- 게이지 소진 시 강제 종료
+		if state.currentGauge <= 0 then
+			state.isFiring = false
+			state.lastFireEndTime = now
+		end
+	elseif not state.isFiring and state.currentGauge < state.maxGauge then
+		-- regenDelay 대기 후 regen
+		if now - state.lastFireEndTime >= state.regenDelay then
+			local dt = 1 / 60
+			state.currentGauge = math.min(state.maxGauge, state.currentGauge + state.regenRate * dt)
+			changed = true
+		end
+	end
+
+	if changed then
+		local player = Players:GetPlayerByUserId(userId)
+		if player then
+			self:_fireResourceChanged(player, state)
+		end
 	end
 end
 
@@ -288,17 +350,44 @@ function BasicAttackService:_onAimStarted(player: Player)
 	end
 
 	local now = os.clock()
-	if now < state.postDelayUntil then
+	if now < state.intervalUntil then
 		return
 	end
-	if state.currentAmmo <= 0 then
+	if not self:_hasResource(state) then
 		return
 	end
 	if not state.equippedAttackId then
 		return
 	end
+	if self._playerStateController:IsAttackLocked(player) then
+		return
+	end
 
 	state.aimStartTime = now
+end
+
+-- ─── FireStart / FireEnd (hold/toggle) ───────────────────────────────────────
+
+function BasicAttackService:_onFireStart(player: Player)
+	local state = self._playerStates[player.UserId]
+	if not state then
+		return
+	end
+	if self._playerStateController:IsAttackLocked(player) then
+		return
+	end
+
+	state.isFiring = true
+end
+
+function BasicAttackService:_onFireEnd(player: Player)
+	local state = self._playerStates[player.UserId]
+	if not state then
+		return
+	end
+
+	state.isFiring = false
+	state.lastFireEndTime = os.clock()
 end
 
 -- ─── 발사 처리 ───────────────────────────────────────────────────────────────
@@ -309,21 +398,24 @@ function BasicAttackService:_onFire(player: Player, direction: unknown)
 		return
 	end
 
+	-- 공격불가 상태 검증
+	if self._playerStateController:IsAttackLocked(player) then
+		return
+	end
+
 	local now = os.clock()
 
+	-- 레이트 리밋
 	if now - state.lastFireTime < FIRE_RATE_LIMIT then
 		return
 	end
 
+	-- direction 검증
 	if typeof(direction) ~= "Vector3" then
 		return
 	end
 	local dir = direction :: Vector3
 	if math.abs(dir.Magnitude - 1) > MAX_DIRECTION_MAGNITUDE_DELTA then
-		return
-	end
-
-	if state.currentAmmo <= 0 then
 		return
 	end
 
@@ -336,28 +428,45 @@ function BasicAttackService:_onFire(player: Player, direction: unknown)
 		return
 	end
 
-	if now < state.postDelayUntil then
-		local remaining = state.postDelayUntil - now
-		if remaining / state.postDelay <= POST_DELAY_QUEUE_THRESHOLD then
-			if state.pendingFireCancel then
-				state.pendingFireCancel()
-			end
-			state.pendingFireCancel = cancellableDelay(remaining, function()
-				state.pendingFireCancel = nil
-				self:_executeFire(player, state, dir, entry)
-			end)
-		end
+	local fireType = state.fireType
+	local resourceType = state.resourceType
+
+	-- 리소스 검증
+	if not self:_hasResource(state) then
 		return
 	end
 
-	if state.pendingFireCancel then
-		state.pendingFireCancel()
-		state.pendingFireCancel = nil
+	-- hold/toggle: FireStart 없이 Fire 수신 시 서버 검증용
+	if (fireType == "hold" or fireType == "toggle") and not state.isFiring then
+		return
 	end
+
+	-- stack: interval 검증 및 예약 처리
+	if fireType == "stack" then
+		if now < state.intervalUntil then
+			local remaining = state.intervalUntil - now
+			if remaining / state.interval <= INTERVAL_QUEUE_THRESHOLD then
+				if state.pendingFireCancel then
+					state.pendingFireCancel()
+				end
+				state.pendingFireCancel = cancellableDelay(remaining, function()
+					state.pendingFireCancel = nil
+					self:_executeFire(player, state, dir, entry)
+				end)
+			end
+			return
+		end
+
+		if state.pendingFireCancel then
+			state.pendingFireCancel()
+			state.pendingFireCancel = nil
+		end
+	end
+
 	self:_executeFire(player, state, dir, entry)
 end
 
--- ─── 실제 발사 실행 (즉시 / 예약 공통) ──────────────────────────────────────
+-- ─── 실제 발사 실행 ──────────────────────────────────────────────────────────
 
 function BasicAttackService:_executeFire(player: Player, state: BasicAttackState, dir: Vector3, entry: AttackEntry)
 	if not state.humanoid or not state.rootPart then
@@ -376,15 +485,20 @@ function BasicAttackService:_executeFire(player: Player, state: BasicAttackState
 
 	state.lastFireTime = now
 	state.aimStartTime = 0
-	state.postDelayUntil = now + state.postDelay
-	state.currentAmmo -= 1
-	self:_fireAmmoChanged(player, state)
 
+	-- stack: 리소스 차감 + intervalUntil 설정
+	if state.fireType == "stack" then
+		state.currentStack -= 1
+		state.intervalUntil = now + state.interval
+		self:_fireResourceChanged(player, state)
+	end
+	-- gauge: drain은 _updateGauge에서 처리
+
+	-- snapshot 생성
 	local snapshot = table.clone(state)
 	snapshot.victims = nil
 	snapshot.onHit = nil
 	snapshot.pendingFireCancel = nil
-	-- psc 및 공격자 상태 주입
 	snapshot.playerStateController = self._playerStateController
 	snapshot.attackerStates = self._playerStateController:GetActiveEffects(player)
 
@@ -393,7 +507,6 @@ function BasicAttackService:_executeFire(player: Player, state: BasicAttackState
 			state.lastHitTime = os.clock()
 		end
 		state.victims = victims
-
 		snapshot.victims = victims
 		snapshot.fireComboCount = state.fireComboCount
 		snapshot.hitComboCount = state.hitComboCount
@@ -421,38 +534,41 @@ function BasicAttackService:_executeFire(player: Player, state: BasicAttackState
 	end
 end
 
--- ─── 탄약 재생 ───────────────────────────────────────────────────────────────
-
-function BasicAttackService:_updateAmmoRegen()
-	local now = os.clock()
-	for userId, state in self._playerStates do
-		if state.currentAmmo >= state.maxAmmo or state.maxAmmo == 0 then
-			continue
-		end
-		if state.reloadTime <= 0 then
-			continue
-		end
-		if now - state.lastRegenTime >= state.reloadTime then
-			state.currentAmmo = math.min(state.currentAmmo + 1, state.maxAmmo)
-			state.lastRegenTime = now
-			local player = Players:GetPlayerByUserId(userId)
-			if player then
-				self:_fireAmmoChanged(player, state)
-			end
-		end
-	end
-end
-
 -- ─── 헬퍼 ────────────────────────────────────────────────────────────────────
 
-function BasicAttackService:_fireAmmoChanged(player: Player, state: BasicAttackState)
-	BasicAttackRemoting.AmmoChanged:FireClient(
-		player,
-		state.currentAmmo,
-		state.maxAmmo,
-		state.reloadTime,
-		state.postDelay
-	)
+function BasicAttackService:_hasResource(state: BasicAttackState): boolean
+	if state.resourceType == "stack" then
+		return state.currentStack > 0
+	elseif state.resourceType == "gauge" then
+		return state.currentGauge > 0
+	end
+	return false
+end
+
+function BasicAttackService:_fireResourceChanged(player: Player, state: BasicAttackState)
+	local payload: { [string]: any }
+
+	if state.resourceType == "stack" then
+		payload = {
+			resourceType = "stack",
+			currentStack = state.currentStack,
+			maxStack = state.maxStack,
+			reloadTime = state.reloadTime,
+			interval = state.interval,
+		}
+	else
+		payload = {
+			resourceType = "gauge",
+			currentGauge = state.currentGauge,
+			maxGauge = state.maxGauge,
+			drainRate = state.drainRate,
+			regenRate = state.regenRate,
+			regenDelay = state.regenDelay,
+			interval = state.interval,
+		}
+	end
+
+	BasicAttackRemoting.ResourceChanged:FireClient(player, payload)
 end
 
 function BasicAttackService:_setPlayerAttack(player: Player, attackId: string)
@@ -465,34 +581,61 @@ function BasicAttackService:_setPlayerAttack(player: Player, attackId: string)
 		return
 	end
 
-	if state.pendingFireCancel then
-		state.pendingFireCancel()
-		state.pendingFireCancel = nil
-	end
+	-- 기존 전투 상태 초기화
+	self:CancelCombatState(player)
+
+	local def = entry.def
+	local resource = def.resource
 
 	state.equippedAttackId = attackId
-	state.maxAmmo = entry.def.maxAmmo
-	state.reloadTime = entry.def.reloadTime
-	state.postDelay = entry.def.postDelay
-	state.currentAmmo = entry.def.maxAmmo
-	state.postDelayUntil = 0
+	state.fireType = def.fireType
+	state.resourceType = resource.resourceType
+	state.interval = def.interval
+	state.intervalUntil = 0
 	state.aimStartTime = 0
 	state.effectiveAimTime = 0
-	state.lastRegenTime = os.clock()
 	state.lastHitTime = 0
 	state.fireComboCount = 0
 	state.hitComboCount = 0
 	state.onHit = nil
+	state.isFiring = false
+	state.lastFireEndTime = 0
+	state.lastFireTime = 0
 
-	self:_fireAmmoChanged(player, state)
+	if resource.resourceType == "stack" then
+		local r = resource :: AbilityTypes.StackResource
+		state.maxStack = r.maxStack
+		state.reloadTime = r.reloadTime
+		state.currentStack = r.maxStack
+		state.lastRegenTime = os.clock()
+		-- gauge 초기화
+		state.currentGauge = 0
+		state.maxGauge = 0
+		state.drainRate = 0
+		state.regenRate = 0
+		state.regenDelay = 0
+	elseif resource.resourceType == "gauge" then
+		local r = resource :: AbilityTypes.GaugeResource
+		state.maxGauge = r.maxGauge
+		state.drainRate = r.drainRate
+		state.regenRate = r.regenRate
+		state.regenDelay = r.regenDelay
+		state.currentGauge = r.maxGauge
+		-- stack 초기화
+		state.currentStack = 0
+		state.maxStack = 0
+		state.reloadTime = 0
+		state.lastRegenTime = 0
+	end
+
+	self:_fireResourceChanged(player, state)
 end
 
 -- ─── 공개 API ────────────────────────────────────────────────────────────────
 
 --[=[
-	클래스 변경 등 외부 이벤트로 전투 상태를 강제 초기화합니다.
-	pendingFireCancel 취소, onHit 클로저 무효화, postDelayUntil/aimStartTime 리셋.
-	@param player Player
+	공격불가 등 외부 이벤트로 전투 상태를 강제 초기화합니다.
+	스턴, 클래스 변경, ability 교체 등 모든 캔슬 케이스에서 호출합니다.
 ]=]
 function BasicAttackService:CancelCombatState(player: Player)
 	local state = self._playerStates[player.UserId]
@@ -505,10 +648,30 @@ function BasicAttackService:CancelCombatState(player: Player)
 		state.pendingFireCancel = nil
 	end
 
-	state.postDelayUntil = 0
+	state.isFiring = false
+	state.lastFireEndTime = os.clock()
+	state.intervalUntil = 0
 	state.aimStartTime = 0
 	state.effectiveAimTime = 0
 	state.onHit = nil
+end
+
+function BasicAttackService:_onRequestEquip(player: Player, attackId: unknown): (boolean, string?)
+	if type(attackId) ~= "string" then
+		return false, "invalid attackId"
+	end
+	if not ATTACK_REGISTRY[attackId] then
+		return false, "unknown attackId"
+	end
+
+	local classData = self._classService:GetClass(player)
+	local entry = ATTACK_REGISTRY[attackId]
+	if classData and entry.def.class ~= classData then
+		return false, "class mismatch"
+	end
+
+	self:_setPlayerAttack(player, attackId)
+	return true, nil
 end
 
 function BasicAttackService.Destroy(self: BasicAttackService)

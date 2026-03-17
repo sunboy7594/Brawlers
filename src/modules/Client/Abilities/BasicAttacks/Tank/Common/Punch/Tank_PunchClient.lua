@@ -3,18 +3,19 @@
 	@class Tank_PunchClient
 ]=]
 
+local require = require(script.Parent.loader).load(script)
+
 type BasicAttackState = {
-	currentAmmo: number,
-	postDelayUntil: number,
-	lastHitTime: number,
-	aimTime: number,
+	currentStack: number,
+	intervalUntil: number,
+	effectiveAimTime: number,
+	origin: Vector3,
+	direction: Vector3,
 	idleTime: number,
 	fireComboCount: number,
-	hitComboCount: number,
-	direction: Vector3,
-	origin: Vector3,
 	indicator: any,
 	animator: any?,
+	fireMaid: any?,
 	victims: { any }?,
 }
 
@@ -26,19 +27,18 @@ local ANGLE_MAX = 360
 local ANGLE_EXPAND_TIME = 3.0 -- 10→360 까지 걸리는 시간 (초)
 
 return {
-	-- id = "cone" 으로 DynamicIndicator에 전달
 	shapes = { cone = "cone" },
 
 	onAimStart = {
-		function(state: BasicAttackState)
+		function(state)
 			state.indicator:update("cone", { angleMin = -ANGLE_MIN / 2, angleMax = ANGLE_MIN / 2 })
 		end,
 	},
 
 	onAim = {
-		function(state: BasicAttackState)
+		function(state)
 			local now = os.clock()
-			local canFire = state.currentAmmo > 0 and now >= state.postDelayUntil
+			local canFire = state.currentStack > 0 and now >= state.intervalUntil
 
 			if canFire then
 				local t = math.clamp(state.effectiveAimTime / ANGLE_EXPAND_TIME, 0, 1)
@@ -59,7 +59,7 @@ return {
 	},
 
 	onFire = {
-		function(state: BasicAttackState)
+		function(state)
 			-- 각도 리셋
 			state.indicator:update("cone", { angleMin = -ANGLE_MIN / 2, angleMax = ANGLE_MIN / 2 })
 
@@ -69,8 +69,23 @@ return {
 			state.fireComboCount = (state.fireComboCount % #COMBO_ANIMS) + 1
 
 			if state.animator then
-				state.animator:PlayAnimation(COMBO_ANIMS[state.fireComboCount], 0.4, nil, true)
+				local animName = COMBO_ANIMS[state.fireComboCount]
+				state.animator:PlayAnimation(animName, 0.4, nil, true)
+
+				-- 스턴 등 공격불가 시 애니메이션 중단 등록
+				if state.fireMaid then
+					state.fireMaid:GiveTask(function()
+						state.animator:StopAnimation(animName)
+					end)
+				end
 			end
+		end,
+	},
+
+	onCancel = {
+		function(state)
+			-- 인디케이터 각도 리셋 (조준 취소 시 잔상 방지)
+			state.indicator:update("cone", { angleMin = -ANGLE_MIN / 2, angleMax = ANGLE_MIN / 2 })
 		end,
 	},
 

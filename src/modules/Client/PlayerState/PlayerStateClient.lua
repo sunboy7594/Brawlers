@@ -28,6 +28,7 @@ local require = require(script.Parent.loader).load(script)
 
 local Players = game:GetService("Players")
 
+local AbilityCoordinator = require("AbilityCoordinator")
 local AnimationControllerClient = require("AnimationControllerClient")
 local CameraAnimator = require("CameraAnimator")
 local CameraControllerClient = require("CameraControllerClient")
@@ -88,6 +89,7 @@ function PlayerStateClient.Init(self: PlayerStateClient, serviceBag: ServiceBag.
 	assert(not (self :: any)._serviceBag, "Already initialized")
 	self._serviceBag = serviceBag
 	self._maid = Maid.new()
+	self._abilityCoordinator = serviceBag:GetService(AbilityCoordinator)
 	self._animController = serviceBag:GetService(AnimationControllerClient)
 	self._cameraController = serviceBag:GetService(CameraControllerClient)
 	self._playerBinder = serviceBag:GetService(PlayerBinderClient)
@@ -140,6 +142,18 @@ function PlayerStateClient:_onEffectApplied(effectDef: PlayerStateDefs.EffectDef
 
 	self._idToTags[id] = {}
 
+	-- attackLock component 감지 → 공격불가 상태 → ability 전체 캔슬
+	if components then
+		for _, comp in components do
+			local c = comp :: any
+			if c.type == "attackLock" then
+				self._abilityCoordinator:CancelAll()
+				break
+			end
+		end
+	end
+
+	-- 연출
 	if tags then
 		for _, tag in tags do
 			local tagName = tag.name

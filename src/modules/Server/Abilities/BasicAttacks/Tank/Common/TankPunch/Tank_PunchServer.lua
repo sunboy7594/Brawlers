@@ -24,29 +24,20 @@ local InstantHit = require("InstantHit")
 local PlayerStateUtils = require("PlayerStateUtils")
 
 type BasicAttackState = {
-	equippedAttackId: string?,
-	humanoid: Humanoid?,
-	rootPart: BasePart?,
-	currentAmmo: number,
-	maxAmmo: number,
-	reloadTime: number,
-	postDelay: number,
-	lastFireTime: number,
-	postDelayUntil: number,
-	lastRegenTime: number,
-	lastHitTime: number,
-	aimStartTime: number,
-	fireComboCount: number,
-	hitComboCount: number,
-	attacker: Model?,
+	currentStack: number,
+	intervalUntil: number,
+	effectiveAimTime: number,
 	origin: Vector3,
 	direction: Vector3,
-	aimTime: number,
-	effectiveAimTime: number,
 	idleTime: number,
-	victims: { Model }?,
+	fireComboCount: number,
+	indicator: any,
+	animator: any?,
+	fireMaid: any?,
+	victims: { any }?,
+	-- 서버 모듈만 추가로 필요한 것
+	attacker: Model?,
 	onHit: ((victims: { Model }) -> ())?,
-	pendingFireCancel: (() -> ())?,
 	playerStateController: any?,
 	attackerStates: { any }?,
 }
@@ -55,7 +46,7 @@ local IDLE_COMBO_RESET = 3.0
 
 return {
 	onFire = {
-		function(state: BasicAttackState)
+		function(state)
 			if not state.attacker then
 				return
 			end
@@ -73,7 +64,7 @@ return {
 					range = 10,
 					angle = 120,
 					damage = 40,
-					knockback = 0, -- 물리 넉백은 onHitChecked의 knockback effect가 담당
+					knockback = 0,
 				}, state.onHit)
 			else
 				-- 1, 2콤보: 기본 펀치
@@ -89,7 +80,7 @@ return {
 	},
 
 	onHitChecked = {
-		function(snapshot: BasicAttackState)
+		function(snapshot)
 			local victims = snapshot.victims
 			if not victims or #victims == 0 then
 				return
@@ -126,18 +117,18 @@ return {
 					end
 
 					PlayerStateUtils.PlayPlayerState(psc, victimPlayer, "knockback", {
-						direction      = knockbackDir,
+						direction = knockbackDir,
 						knockbackForce = 100,
-						source         = attackerPlayer,
-						intensity      = 0.8,
+						source = attackerPlayer,
+						intensity = 0.8,
 					})
 				else
-					-- 1, 2콤보: 약한 피격 반응 (대미지는 InstantHit에서 처리)
+					-- 1, 2콤보: 약한 피격 반응
 					PlayerStateUtils.PlayPlayerState(psc, victimPlayer, "damage", {
-						amount    = 0, -- InstantHit이 이미 처리, 연출만
-						source    = attackerPlayer,
+						amount = 0,
+						source = attackerPlayer,
 						intensity = 0.2,
-						duration  = 0.25,
+						duration = 0.25,
 					})
 				end
 			end
