@@ -82,7 +82,7 @@ Anims["HitStagger"] = {
 				t += dt
 				local p = math.min(t / 0.25, 1)
 				local angle = math.sin(p * math.pi) * math.rad(-12)
-				ac.ac:spring(joint, defaultC0 * CFrame.Angles(angle, 0, 0), 25, 1.0, dt)
+				ac:spring(joint, defaultC0 * CFrame.Angles(angle, 0, 0), 25, 1.0, dt)
 			end
 		end,
 		Neck = function(_j: Motor6D, defaultC0: CFrame, ac: AC): OnUpdate
@@ -91,7 +91,7 @@ Anims["HitStagger"] = {
 				t += dt
 				local p = math.min(t / 0.25, 1)
 				local angle = math.sin(p * math.pi) * math.rad(-8)
-				ac.ac:spring(joint, defaultC0 * CFrame.Angles(angle, 0, 0), 20, 1.0, dt)
+				ac:spring(joint, defaultC0 * CFrame.Angles(angle, 0, 0), 20, 1.0, dt)
 			end
 		end,
 	},
@@ -112,7 +112,7 @@ Anims["HitKnockback"] = {
 				t += dt
 				local p = math.min(t / 0.4, 1)
 				local angle = math.sin(p * math.pi) * math.rad(-22)
-				ac.ac:spring(joint, defaultC0 * CFrame.Angles(angle, 0, 0), 20, 1.0, dt)
+				ac:spring(joint, defaultC0 * CFrame.Angles(angle, 0, 0), 20, 1.0, dt)
 			end
 		end,
 		Neck = function(_j: Motor6D, defaultC0: CFrame, ac: AC): OnUpdate
@@ -121,7 +121,7 @@ Anims["HitKnockback"] = {
 				t += dt
 				local p = math.min(t / 0.4, 1)
 				local angle = math.sin(p * math.pi) * math.rad(-15)
-				ac.ac:spring(joint, defaultC0 * CFrame.Angles(angle, 0, 0), 18, 1.0, dt)
+				ac:spring(joint, defaultC0 * CFrame.Angles(angle, 0, 0), 18, 1.0, dt)
 			end
 		end,
 		RightShoulder = function(_j: Motor6D, defaultC0: CFrame, ac: AC): OnUpdate
@@ -130,7 +130,7 @@ Anims["HitKnockback"] = {
 				t += dt
 				local p = math.min(t / 0.4, 1)
 				local angle = math.sin(p * math.pi) * math.rad(30)
-				ac.ac:spring(joint, defaultC0 * CFrame.Angles(0, 0, angle), 18, 1.0, dt)
+				ac:spring(joint, defaultC0 * CFrame.Angles(0, 0, angle), 18, 1.0, dt)
 			end
 		end,
 		LeftShoulder = function(_j: Motor6D, defaultC0: CFrame, ac: AC): OnUpdate
@@ -139,7 +139,7 @@ Anims["HitKnockback"] = {
 				t += dt
 				local p = math.min(t / 0.4, 1)
 				local angle = math.sin(p * math.pi) * math.rad(-30)
-				ac.ac:spring(joint, defaultC0 * CFrame.Angles(0, 0, angle), 18, 1.0, dt)
+				ac:spring(joint, defaultC0 * CFrame.Angles(0, 0, angle), 18, 1.0, dt)
 			end
 		end,
 	},
@@ -161,7 +161,7 @@ Anims["Knockback"] = {
 			return function(joint: Motor6D, dt: number)
 				t += dt
 				local p = math.min(t / 0.5, 1)
-				ac.ac:spring(joint, defaultC0 * CFrame.Angles(math.sin(p * math.pi) * -maxAngle, 0, 0), speed, 1.0, dt)
+				ac:spring(joint, defaultC0 * CFrame.Angles(math.sin(p * math.pi) * -maxAngle, 0, 0), speed, 1.0, dt)
 			end
 		end,
 		Neck = function(_j: Motor6D, defaultC0: CFrame, ac: AC): OnUpdate
@@ -171,7 +171,7 @@ Anims["Knockback"] = {
 			return function(joint: Motor6D, dt: number)
 				t += dt
 				local p = math.min(t / 0.5, 1)
-				ac.ac:spring(joint, defaultC0 * CFrame.Angles(math.sin(p * math.pi) * -maxAngle, 0, 0), speed, 1.0, dt)
+				ac:spring(joint, defaultC0 * CFrame.Angles(math.sin(p * math.pi) * -maxAngle, 0, 0), speed, 1.0, dt)
 			end
 		end,
 		RightShoulder = function(_j: Motor6D, defaultC0: CFrame, ac: AC): OnUpdate
@@ -180,7 +180,7 @@ Anims["Knockback"] = {
 			return function(joint: Motor6D, dt: number)
 				t += dt
 				local p = math.min(t / 0.5, 1)
-				ac.ac:spring(joint, defaultC0 * CFrame.Angles(0, 0, math.sin(p * math.pi) * maxAngle), 16, 1.0, dt)
+				ac:spring(joint, defaultC0 * CFrame.Angles(0, 0, math.sin(p * math.pi) * maxAngle), 16, 1.0, dt)
 			end
 		end,
 		LeftShoulder = function(_j: Motor6D, defaultC0: CFrame, ac: AC): OnUpdate
@@ -189,7 +189,7 @@ Anims["Knockback"] = {
 			return function(joint: Motor6D, dt: number)
 				t += dt
 				local p = math.min(t / 0.5, 1)
-				ac.ac:spring(joint, defaultC0 * CFrame.Angles(0, 0, math.sin(p * math.pi) * -maxAngle), 16, 1.0, dt)
+				ac:spring(joint, defaultC0 * CFrame.Angles(0, 0, math.sin(p * math.pi) * -maxAngle), 16, 1.0, dt)
 			end
 		end,
 	},
@@ -212,7 +212,7 @@ Anims["Stun"] = {
 			return function(joint: Motor6D, dt: number)
 				t += dt
 				local sway = math.sin(t * freq * math.pi * 2) * amp
-				ac.ac:spring(joint, defaultC0 * CFrame.Angles(droop, sway, 0), 8, 0.9, dt)
+				ac:spring(joint, defaultC0 * CFrame.Angles(droop, sway, 0), 8, 0.9, dt)
 			end
 		end,
 		Neck = function(_j: Motor6D, defaultC0: CFrame, ac: AC): OnUpdate
@@ -223,7 +223,7 @@ Anims["Stun"] = {
 			return function(joint: Motor6D, dt: number)
 				t += dt
 				local sway = math.sin(t * freq * math.pi * 2 + 0.5) * amp
-				ac.ac:spring(joint, defaultC0 * CFrame.Angles(droop, sway, 0), 6, 0.85, dt)
+				ac:spring(joint, defaultC0 * CFrame.Angles(droop, sway, 0), 6, 0.85, dt)
 			end
 		end,
 	},
@@ -244,7 +244,7 @@ Anims["Airborne"] = {
 			return function(joint: Motor6D, dt: number)
 				t += dt
 				local wobble = math.sin(t * 4) * math.rad(2 + ac.intensity * 4)
-				ac.ac:spring(joint, defaultC0 * CFrame.Angles(targetAngle + wobble, 0, 0), 10, 0.9, dt)
+				ac:spring(joint, defaultC0 * CFrame.Angles(targetAngle + wobble, 0, 0), 10, 0.9, dt)
 			end
 		end,
 		RightShoulder = function(_j: Motor6D, defaultC0: CFrame, ac: AC): OnUpdate
@@ -253,7 +253,7 @@ Anims["Airborne"] = {
 			return function(joint: Motor6D, dt: number)
 				t += dt
 				local wobble = math.sin(t * 3 + 0.3) * math.rad(3)
-				ac.ac:spring(joint, defaultC0 * CFrame.Angles(0, 0, spread + wobble), 8, 0.85, dt)
+				ac:spring(joint, defaultC0 * CFrame.Angles(0, 0, spread + wobble), 8, 0.85, dt)
 			end
 		end,
 		LeftShoulder = function(_j: Motor6D, defaultC0: CFrame, ac: AC): OnUpdate
@@ -262,7 +262,7 @@ Anims["Airborne"] = {
 			return function(joint: Motor6D, dt: number)
 				t += dt
 				local wobble = math.sin(t * 3 - 0.3) * math.rad(3)
-				ac.ac:spring(joint, defaultC0 * CFrame.Angles(0, 0, -(spread + wobble)), 8, 0.85, dt)
+				ac:spring(joint, defaultC0 * CFrame.Angles(0, 0, -(spread + wobble)), 8, 0.85, dt)
 			end
 		end,
 	},
@@ -283,7 +283,7 @@ Anims["Freeze"] = {
 			return function(joint: Motor6D, dt: number)
 				t += dt
 				local tremble = math.sin(t * 18) * math.rad(0.3 + ac.intensity * 0.7)
-				ac.ac:spring(joint, defaultC0 * CFrame.Angles(frozenAngle + tremble, 0, 0), 30, 1.0, dt)
+				ac:spring(joint, defaultC0 * CFrame.Angles(frozenAngle + tremble, 0, 0), 30, 1.0, dt)
 			end
 		end,
 		Neck = function(_j: Motor6D, defaultC0: CFrame, ac: AC): OnUpdate
@@ -292,7 +292,7 @@ Anims["Freeze"] = {
 			return function(joint: Motor6D, dt: number)
 				t += dt
 				local tremble = math.sin(t * 20 + 0.5) * math.rad(0.2 + ac.intensity * 0.5)
-				ac.ac:spring(joint, defaultC0 * CFrame.Angles(frozenAngle + tremble, 0, 0), 28, 1.0, dt)
+				ac:spring(joint, defaultC0 * CFrame.Angles(frozenAngle + tremble, 0, 0), 28, 1.0, dt)
 			end
 		end,
 	},
@@ -315,7 +315,7 @@ Anims["Exhausted"] = {
 			return function(joint: Motor6D, dt: number)
 				t += dt
 				local breath = math.sin(t * freq * math.pi * 2) * amp
-				ac.ac:spring(joint, defaultC0 * CFrame.Angles(droop + breath, 0, 0), 5, 0.8, dt)
+				ac:spring(joint, defaultC0 * CFrame.Angles(droop + breath, 0, 0), 5, 0.8, dt)
 			end
 		end,
 		Neck = function(_j: Motor6D, defaultC0: CFrame, ac: AC): OnUpdate
@@ -326,7 +326,7 @@ Anims["Exhausted"] = {
 			return function(joint: Motor6D, dt: number)
 				t += dt
 				local breath = math.sin(t * freq * math.pi * 2 + 0.3) * amp
-				ac.ac:spring(joint, defaultC0 * CFrame.Angles(droop + breath, 0, 0), 4, 0.75, dt)
+				ac:spring(joint, defaultC0 * CFrame.Angles(droop + breath, 0, 0), 4, 0.75, dt)
 			end
 		end,
 	},

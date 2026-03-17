@@ -6,48 +6,37 @@
 
 	onFire:
 	- InstantHit.apply()에 state.onHit을 콜백으로 전달
-	- 판정 완료 시 BasicAttackService의 onHit 콜백이 호출됨
-	- 반환값 없음 (HitChecked 타이밍은 InstantHit → onHit 콜백이 담당)
+	- 1,2콤보: damage 20, cone range 8 / angle 90
+	- 3콤보:   damage 40, cone range 10 / angle 120
 
 	onHitChecked:
-	- snapshot(Fire 시점 state 복사본)을 받음
-	- 1, 2콤보: HitShake + HitStagger
-	- 3콤보:    HitRecoil + HitKnockback (넉백 느낌)
+	- snapshot.playerStateService로 ChangePlayerState 호출
+	- 1,2콤보: anim_hit + cam_shake (intensity 낮게)
+	- 3콤보:   knockback component (실제 물리 넉백) + anim_knockback + cam_knockback
+	           knockback 방향 = attacker → victim 수평 방향으로 계산
 ]=]
 
 local require = require(script.Parent.loader).load(script)
 
 local Players = game:GetService("Players")
 
-local BasicAttackRemoting = require("BasicAttackRemoting")
 local InstantHit = require("InstantHit")
 
 type BasicAttackState = {
-	-- 장착 정보
 	equippedAttackId: string?,
-
-	-- 캐릭터
 	humanoid: Humanoid?,
 	rootPart: BasePart?,
-
-	-- 탄약
 	currentAmmo: number,
 	maxAmmo: number,
 	reloadTime: number,
 	postDelay: number,
-
-	-- 타이밍
 	lastFireTime: number,
 	postDelayUntil: number,
 	lastRegenTime: number,
 	lastHitTime: number,
 	aimStartTime: number,
-
-	-- 콤보
 	fireComboCount: number,
 	hitComboCount: number,
-
-	-- 발사 컨텍스트
 	attacker: Model?,
 	origin: Vector3,
 	direction: Vector3,
@@ -55,12 +44,9 @@ type BasicAttackState = {
 	effectiveAimTime: number,
 	idleTime: number,
 	victims: { Model }?,
-
-	-- 판정 콜백
 	onHit: ((victims: { Model }) -> ())?,
-
-	-- 예약 발사 취소 함수
 	pendingFireCancel: (() -> ())?,
+	playerStateService: any?,
 }
 
 local IDLE_COMBO_RESET = 3.0
@@ -79,13 +65,13 @@ return {
 			state.fireComboCount = (state.fireComboCount % 3) + 1
 
 			if state.fireComboCount == 3 then
-				-- 3콤보: 더 넓은 범위
+				-- 3콤보: 더 넓은 범위, 높은 대미지
 				InstantHit.apply(state.attacker, state.origin, state.direction, {
 					shape = "cone",
 					range = 10,
 					angle = 120,
-					damage = 60,
-					knockback = 25,
+					damage = 40,
+					knockback = 0, -- 물리 넉백은 onHitChecked의 knockback component가 담당
 				}, state.onHit)
 			else
 				-- 1, 2콤보: 기본 펀치
@@ -93,8 +79,8 @@ return {
 					shape = "cone",
 					range = 8,
 					angle = 90,
-					damage = 40,
-					knockback = 15,
+					damage = 20,
+					knockback = 0,
 				}, state.onHit)
 			end
 		end,
@@ -107,17 +93,59 @@ return {
 				return
 			end
 
-			-- 콤보에 따라 피격 반응 분기
-			local isHeavy = snapshot.fireComboCount == 3
+			local pss = snapshot.playerStateService
+			if not pss then
+				return
+			end
 
-			local payload = if isHeavy
-				then { animName = "HitKnockback", cameraAnimName = "HitRecoil" }
-				else { animName = "HitStagger", cameraAnimName = "HitShake" }
+			local attacker = snapshot.attacker
+			local attackerPlayer = Players:GetPlayerFromCharacter(attacker)
+			local isHeavy = snapshot.fireComboCount == 3
 
 			for _, victimModel in victims do
 				local victimPlayer = Players:GetPlayerFromCharacter(victimModel)
-				if victimPlayer then
-					BasicAttackRemoting.HitReaction:FireClient(victimPlayer, payload)
+				if not victimPlayer then
+					continue
+				end
+
+				if isHeavy then
+					-- 3콤보: 실제 물리 넉백 + 넉백 애니메이션
+					-- 공격자 → 피격자 수평 방향 계산
+					local knockbackDir = Vector3.new(0, 0, -1)
+					if attacker then
+						local attackerRoot = attacker:FindFirstChild("HumanoidRootPart") :: BasePart?
+						local victimRoot = victimModel:FindFirstChild("HumanoidRootPart") :: BasePart?
+						if attackerRoot and victimRoot then
+							local diff = victimRoot.Position - attackerRoot.Position
+							local horizontal = Vector3.new(diff.X, 0, diff.Z)
+							if horizontal.Magnitude > 0.001 then
+								knockbackDir = horizontal.Unit
+							end
+						end
+					end
+
+					pss:ChangePlayerState(victimPlayer, {
+						source = attackerPlayer,
+						force = false,
+						tags = {
+							{ name = "anim_knockback", duration = 0.5, intensity = 0.8 },
+							{ name = "cam_knockback", duration = 0.4, intensity = 0.7 },
+						},
+						components = {
+							{ type = "knockback", direction = knockbackDir, force = 100 },
+						},
+					})
+				else
+					-- 1, 2콤보: 약한 피격 반응만 (대미지는 InstantHit에서 처리)
+					pss:ChangePlayerState(victimPlayer, {
+						source = attackerPlayer,
+						force = false,
+						tags = {
+							{ name = "anim_hit", duration = 0.25, intensity = 0.2 },
+							{ name = "cam_shake", duration = 0.2, intensity = 0.15 },
+						},
+						components = {},
+					})
 				end
 			end
 		end,

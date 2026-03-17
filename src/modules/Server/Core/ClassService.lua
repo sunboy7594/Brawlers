@@ -24,7 +24,6 @@ local require = require(script.Parent.loader).load(script)
 
 local Players = game:GetService("Players")
 
-local BasicAttackService = require("BasicAttackService")
 local BasicMovementConfig = require("BasicMovementConfig")
 local ClassRemoting = require("ClassRemoting")
 local Maid = require("Maid")
@@ -37,7 +36,6 @@ export type ClassService = typeof(setmetatable(
 	{} :: {
 		_serviceBag: ServiceBag.ServiceBag,
 		_maid: any,
-		_attackService: any,
 		_playerClasses: { [number]: string },
 		ClassChanged: any, -- Signal<Player, string>
 	},
@@ -54,7 +52,6 @@ function ClassService.Init(self: ClassService, serviceBag: ServiceBag.ServiceBag
 	assert(not (self :: any)._serviceBag, "Already initialized")
 	self._serviceBag = serviceBag
 	self._maid = Maid.new()
-	self._attackService = serviceBag:GetService(BasicAttackService)
 	self._playerClasses = {}
 	self.ClassChanged = Signal.new()
 
@@ -94,9 +91,6 @@ end
 
 function ClassService:_applyClass(player: Player, className: string)
 	self._playerClasses[player.UserId] = className
-
-	-- 전투 상태 초기화 (예약 발사, onHit 클로저 등)
-	self._attackService:CancelCombatState(player)
 
 	-- 클라이언트에 확정 알림 (애니메이션 전환 등)
 	ClassRemoting.ClassChanged:FireClient(player, className)

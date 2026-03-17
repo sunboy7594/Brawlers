@@ -31,10 +31,10 @@
 	스냅샷:
 	- Fire 시점에 table.clone(state)으로 생성
 	- onHit 콜백 및 onHitChecked 훅에 전달
-	- delay가 있는 공격에서 state가 다음 Fire로 덮어씌워져도 이 발사의 컨텍스트 보존
+	- snapshot.playerStateService: onHitChecked에서 ChangePlayerState 호출용으로 주입됨
 
 	예약 발사 (pendingFireCancel):
-	- postDelay 잔여 비율 ≤ POST_DELAY_QUEUE_THRESHOLD(30%) 일 때 공격 시도 시
+	- postDelay 잔여 비율 ≤ POST_DELAY_QUEUE_THRESHOLD(80%) 일 때 공격 시도 시
 	  cancellableDelay로 잔여 시간 후 자동 발사 예약
 	- 예약 중 새 공격 시도 → 기존 예약 교체 (방향 갱신)
 	- 즉시 발사 시 / 무기 교체 시 / 클래스 변경 시 → 예약 자동 취소
@@ -47,8 +47,10 @@ local RunService = game:GetService("RunService")
 
 local BasicAttackDefs = require("BasicAttackDefs")
 local BasicAttackRemoting = require("BasicAttackRemoting")
+local ClassService = require("ClassService")
 local LoadoutRemoting = require("LoadoutRemoting")
 local Maid = require("Maid")
+local PlayerStateService = require("PlayerStateService")
 local ServiceBag = require("ServiceBag")
 local cancellableDelay = require("cancellableDelay")
 
@@ -94,7 +96,7 @@ export type BasicAttackState = {
 	origin: Vector3,
 	direction: Vector3,
 	aimTime: number,
-	effectiveAimTime: number, -- 추가
+	effectiveAimTime: number,
 	idleTime: number,
 	victims: { Model }?,
 
@@ -103,6 +105,9 @@ export type BasicAttackState = {
 
 	-- 예약 발사 취소 함수
 	pendingFireCancel: (() -> ())?,
+
+	-- onHitChecked에서 피격 반응 적용용 (snapshot에만 주입됨)
+	playerStateService: any?,
 }
 
 type AttackModule = {
@@ -131,6 +136,8 @@ export type BasicAttackService = typeof(setmetatable(
 	{} :: {
 		_serviceBag: ServiceBag.ServiceBag,
 		_maid: any,
+		_playerStateService: any,
+		_classService: any,
 		_playerStates: { [number]: BasicAttackState },
 		_playerMaids: { [number]: any },
 	},
@@ -147,6 +154,8 @@ function BasicAttackService.Init(self: BasicAttackService, serviceBag: ServiceBa
 	assert(not (self :: any)._serviceBag, "Already initialized")
 	self._serviceBag = serviceBag
 	self._maid = Maid.new()
+	self._playerStateService = serviceBag:GetService(PlayerStateService)
+	self._classService = serviceBag:GetService(ClassService)
 	self._playerStates = {}
 	self._playerMaids = {}
 
@@ -167,6 +176,10 @@ function BasicAttackService.Init(self: BasicAttackService, serviceBag: ServiceBa
 		end
 		self:_setPlayerAttack(player, attackId)
 		return true, attackId
+	end))
+
+	self._maid:GiveTask(self._classService.ClassChanged:Connect(function(player: Player, _className: string)
+		self:CancelCombatState(player)
 	end))
 end
 
@@ -213,11 +226,12 @@ function BasicAttackService:_onPlayerAdded(player: Player)
 		origin = Vector3.zero,
 		direction = Vector3.new(0, 0, -1),
 		aimTime = 0,
-		effectiveAimTime = 0, -- 추가
+		effectiveAimTime = 0,
 		idleTime = 0,
 		victims = nil,
 		onHit = nil,
 		pendingFireCancel = nil,
+		playerStateService = nil,
 	}
 	self._playerStates[player.UserId] = state
 
@@ -352,7 +366,7 @@ function BasicAttackService:_executeFire(player: Player, state: BasicAttackState
 	state.direction = dir
 	state.aimTime = if state.aimStartTime > 0 then now - state.aimStartTime else 0
 	state.idleTime = if state.lastFireTime > 0 then now - state.lastFireTime else 0
-	state.effectiveAimTime = 0 -- 추가
+	state.effectiveAimTime = 0
 	state.victims = nil
 
 	state.lastFireTime = now
@@ -365,6 +379,8 @@ function BasicAttackService:_executeFire(player: Player, state: BasicAttackState
 	snapshot.victims = nil
 	snapshot.onHit = nil
 	snapshot.pendingFireCancel = nil
+	-- onHitChecked에서 ChangePlayerState 호출용으로 주입
+	snapshot.playerStateService = self._playerStateService
 
 	state.onHit = function(victims: { Model })
 		if #victims > 0 then
@@ -455,7 +471,7 @@ function BasicAttackService:_setPlayerAttack(player: Player, attackId: string)
 	state.currentAmmo = entry.def.maxAmmo
 	state.postDelayUntil = 0
 	state.aimStartTime = 0
-	state.effectiveAimTime = 0 -- 추가
+	state.effectiveAimTime = 0
 	state.lastRegenTime = os.clock()
 	state.lastHitTime = 0
 	state.fireComboCount = 0
@@ -485,7 +501,7 @@ function BasicAttackService:CancelCombatState(player: Player)
 
 	state.postDelayUntil = 0
 	state.aimStartTime = 0
-	state.effectiveAimTime = 0 -- 추가
+	state.effectiveAimTime = 0
 	state.onHit = nil
 end
 
