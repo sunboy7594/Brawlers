@@ -17,9 +17,22 @@ export type BrawlersService = typeof(setmetatable(
 	{} :: typeof({ __index = BrawlersService })
 ))
 
+-- BrawlersService.lua
+
+local PhysicsService = game:GetService("PhysicsService")
+
 function BrawlersService.Init(self: BrawlersService, serviceBag: ServiceBag.ServiceBag): ()
 	assert(not (self :: any)._serviceBag, "Already initialized")
 	self._serviceBag = assert(serviceBag, "No serviceBag")
+
+	-- CollisionGroup 초기화
+	pcall(function()
+		PhysicsService:RegisterCollisionGroup("Characters")
+	end)
+	pcall(function()
+		PhysicsService:RegisterCollisionGroup("HitCheck")
+	end)
+	PhysicsService:CollisionGroupSetCollidable("HitCheck", "Characters", false)
 
 	-- External
 	self._serviceBag:GetService(require("CmdrService"))
@@ -27,7 +40,7 @@ function BrawlersService.Init(self: BrawlersService, serviceBag: ServiceBag.Serv
 	-- Internal
 	self._serviceBag:GetService(require("BrawlersTranslator"))
 
-	-- Dev (개발 완료 시 제거)
+	-- Dev
 	self._serviceBag:GetService(require("DevCommandService"))
 end
 

@@ -6,14 +6,12 @@
 
 	onFire:
 	- InstantHit.apply()에 state.onHit을 콜백으로 전달
-	- 1,2콤보: damage 20, cone range 8 / angle 90
-	- 3콤보:   damage 40, cone range 10 / angle 120
+	- 1,2콤보: cone range 8 / angleMin=-45, angleMax=45
+	- 3콤보:   cone range 10 / angleMin=-60, angleMax=60
 
 	onHitChecked:
-	- snapshot.playerStateController + PlayerStateUtils 사용
 	- 1,2콤보: damage effect (anim_hit + screen_hit_red)
 	- 3콤보:   knockback effect (anim_knockback + cam_knockback)
-	           knockback 방향 = attacker → victim 수평 방향으로 계산
 ]=]
 
 local require = require(script.Parent.loader).load(script)
@@ -35,7 +33,6 @@ type BasicAttackState = {
 	animator: any?,
 	fireMaid: any?,
 	victims: { any }?,
-	-- 서버 모듈만 추가로 필요한 것
 	attacker: Model?,
 	onHit: ((victims: { Model }) -> ())?,
 	playerStateController: any?,
@@ -58,22 +55,18 @@ return {
 			state.fireComboCount = (state.fireComboCount % 3) + 1
 
 			if state.fireComboCount == 3 then
-				-- 3콤보: 더 넓은 범위, 높은 대미지
 				InstantHit.apply(state.attacker, state.origin, state.direction, {
 					shape = "cone",
 					range = 10,
-					angle = 120,
-					damage = 40,
-					knockback = 0,
+					angleMin = -60,
+					angleMax = 60,
 				}, state.onHit)
 			else
-				-- 1, 2콤보: 기본 펀치
 				InstantHit.apply(state.attacker, state.origin, state.direction, {
 					shape = "cone",
 					range = 8,
-					angle = 90,
-					damage = 20,
-					knockback = 0,
+					angleMin = -45,
+					angleMax = 45,
 				}, state.onHit)
 			end
 		end,
@@ -102,7 +95,6 @@ return {
 				end
 
 				if isHeavy then
-					-- 3콤보: 물리 넉백 + 넉백 애니메이션
 					local knockbackDir = Vector3.new(0, 0, -1)
 					if attacker then
 						local attackerRoot = attacker:FindFirstChild("HumanoidRootPart") :: BasePart?
@@ -116,6 +108,12 @@ return {
 						end
 					end
 
+					PlayerStateUtils.PlayPlayerState(psc, victimPlayer, "damage", {
+						amount = 40,
+						source = attackerPlayer,
+						intensity = 0.2,
+						duration = 0.25,
+					})
 					PlayerStateUtils.PlayPlayerState(psc, victimPlayer, "knockback", {
 						direction = knockbackDir,
 						knockbackForce = 100,
@@ -123,9 +121,8 @@ return {
 						intensity = 0.8,
 					})
 				else
-					-- 1, 2콤보: 약한 피격 반응
 					PlayerStateUtils.PlayPlayerState(psc, victimPlayer, "damage", {
-						amount = 0,
+						amount = 20,
 						source = attackerPlayer,
 						intensity = 0.2,
 						duration = 0.25,

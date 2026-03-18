@@ -23,10 +23,6 @@
 	  current ≤ 0 → humanoid.Health = 0 (기본 Roblox 사망 처리)
 	              → OnDeath:Fire(player) 발행
 
-	InstantHit 연동:
-	  InstantHit은 ServiceBag 외부 유틸 모듈이므로
-	  Init에서 InstantHit.init(self)로 인스턴스를 직접 주입함.
-
 	팀 시스템 연동:
 	  ApplyDamage(target, amount, source?)
 	  source가 있고 source ≠ target일 때 TeamService:CanDamage 체크.
@@ -41,7 +37,6 @@ local Players = game:GetService("Players")
 local ClassService = require("ClassService")
 local HpConfig = require("HpConfig")
 local HpRemoting = require("HpRemoting")
-local InstantHit = require("InstantHit")
 local Maid = require("Maid")
 local ServiceBag = require("ServiceBag")
 local Signal = require("Signal")
@@ -83,9 +78,6 @@ function HpService.Init(self: HpService, serviceBag: ServiceBag.ServiceBag): ()
 	self._hpData = {}
 	self._playerMaids = {}
 	self.OnDeath = Signal.new()
-
-	-- InstantHit은 ServiceBag 외부 유틸이므로 인스턴스를 직접 주입
-	InstantHit.init(self)
 end
 
 function HpService.Start(self: HpService): ()
@@ -118,9 +110,7 @@ function HpService:_onPlayerAdded(player: Player)
 
 		-- 패시브 등으로 이미 maxHp가 조정된 경우 그 값을 유지
 		local existing = self._hpData[player.UserId]
-		local max = if existing and existing.className == className
-			then existing.max
-			else baseMax
+		local max = if existing and existing.className == className then existing.max else baseMax
 
 		self._hpData[player.UserId] = {
 			current = max,

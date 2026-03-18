@@ -154,6 +154,17 @@ function PlayerStateControllerService:_onPlayerAdded(player: Player)
 			runtime.humanoid = nil
 			runtime.rootPart = nil
 		end))
+
+		for _, part in char:GetDescendants() do -- 캐릭터 그룹으로 지정
+			if part:IsA("BasePart") then
+				part.CollisionGroup = "Characters"
+			end
+		end
+		pMaid:GiveTask(char.DescendantAdded:Connect(function(desc)
+			if desc:IsA("BasePart") then
+				desc.CollisionGroup = "Characters"
+			end
+		end))
 	end
 
 	if player.Character then

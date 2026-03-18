@@ -5,63 +5,80 @@
 	범위 판정 유틸리티. 서버 전용.
 
 	변경 이력:
-	- applyEffects: humanoid:TakeDamage() → HpService:ApplyDamage() 위임.
-	  Player 캐릭터면 HpService, NPC면 기존 TakeDamage 유지.
-	- ApplyDamage에 attacker player를 source로 전달 (팀 체크용).
-	- init(hpService): HpService 인스턴스 주입. HpService.Init에서 단 1회 호출.
-
-	HpService 주입 이유:
-	InstantHit은 ServiceBag 외부 유틸 모듈이므로 GetService를 쓸 수 없음.
-	HpService가 자신의 Init에서 InstantHit.init(self)를 호출하여 인스턴스를 전달.
+	- damage / knockback 제거: 데미지는 onHitChecked에서 직접 처리.
+	- delay 제거: 공격 모듈에서 task.delay + fireMaid로 처리.
+	- HpService 주입 제거: applyEffects 삭제로 불필요.
+	- angle → angleMin / angleMax: DynamicIndicator 동일 기준 (부호 있는 각도).
+	- circle: radius / innerRadius 추가 (도넛 판정 지원).
+	- arc 추가: 착탄 지점(origin + direction * range) 기준 원판 판정.
+	- wallCheck 기본 true: false 지정 시에만 벽 차단 비활성화.
+	  CollisionGroup "HitCheck" 사용 → "Characters" 그룹 파츠 자동 통과.
 
 	지원 shape:
-	- "cone":   부채꼴 (range, angle 필요)
-	- "circle": 원형 (range 필요)
-	- "line":   직선 (range, width 필요)
+	- "cone":   부채꼴 (range, angleMin, angleMax)
+	- "circle": 원/도넛 (radius, innerRadius)
+	- "line":   직선 (range, width)
+	- "arc":    포물선 착탄 (range, arcRadius)
 
-	apply() 반환값:
-	- 항상 취소함수 () -> () 반환 (delay 없어도 동일)
-	- onHit 콜백: 판정 완료 시점에 호출 (delay 있든 없든)
+	wallCheck:
+	- 기본 true: attacker HRP → victim HRP 단일 Ray, 벽에 막히면 판정 제외.
+	- false 지정 시만 비활성화.
+	- CollisionGroup "HitCheck"는 "Characters"와 비충돌로 설정 필요.
+	  (PhysicsService 초기화는 BrawlersService 또는 별도 스크립트에서 수행)
+
+	apply():
+	- 즉시 판정, 반환값 없음.
+	- delay가 필요하면 호출부에서 task.delay + fireMaid 처리.
+	- onHit에는 항상 state.onHit 전달.
 ]=]
-
-local Players = game:GetService("Players")
-
-local InstantHit = {}
-
--- HpService 인스턴스 (HpService.Init에서 주입됨)
-local _hpService: any = nil
 
 -- ─── 타입 정의 ───────────────────────────────────────────────────────────────
 
 export type HitConfig = {
-	shape: "cone" | "circle" | "line",
-	range: number,
-	angle: number?,   -- cone 전용 (도 단위)
-	width: number?,   -- line 전용
-	damage: number,
-	knockback: number?,
-	delay: number?,   -- 생략 시 0 (즉시 판정)
+	shape: "cone" | "circle" | "line" | "arc",
+
+	-- cone / line / arc 공통
+	range: number?,
+
+	-- cone 전용 (도 단위, 전방 기준, 부호 있는 각도)
+	-- 예) 중앙 90도  → angleMin=-45, angleMax=45
+	-- 예) 오른쪽만   → angleMin=0,   angleMax=90
+	-- 예) 전방향     → angleMin=-180, angleMax=180 (기본값)
+	angleMin: number?,
+	angleMax: number?,
+
+	-- line 전용
+	width: number?,
+
+	-- circle 전용
+	radius: number?, -- 원 반지름 (기본 5)
+	innerRadius: number?, -- 도넛 내경 (기본 0, 0이면 꽉 찬 원)
+
+	-- arc 전용: 착탄 지점 = origin + dirH * range 기준 원판
+	arcRadius: number?, -- 착탄 반경 (기본 3)
+
+	-- 벽 차단 (false 지정 시만 비활성화, 기본 true)
+	wallCheck: boolean?,
 }
 
--- ─── 주입 API ────────────────────────────────────────────────────────────────
+-- ─── RaycastParams (모듈 로드 시 1회 생성) ───────────────────────────────────
 
---[=[
-	HpService 인스턴스를 주입합니다.
-	HpService.Init에서 단 1회 호출. 그 외에서는 호출하지 말 것.
-]=]
-function InstantHit.init(hpService: any)
-	_hpService = hpService
-end
+-- "HitCheck" CollisionGroup은 "Characters" 그룹과 비충돌로 설정되어야 함.
+-- 캐릭터 파츠를 자동 통과, 환경(벽 등)만 감지.
+local WALL_CHECK_PARAMS = RaycastParams.new()
+WALL_CHECK_PARAMS.CollisionGroup = "HitCheck"
 
 -- ─── 내부 유틸 ───────────────────────────────────────────────────────────────
 
--- 구 범위 내 캐릭터를 수집합니다. 공격자 자신은 제외합니다.
-local function getCharactersInSphere(origin: Vector3, range: number, attacker: Model): { Model }
+local InstantHit = {}
+
+-- 구 범위 내 생존 캐릭터 수집. 공격자 자신 제외.
+local function getCharactersInSphere(origin: Vector3, searchRadius: number, attacker: Model): { Model }
 	local params = OverlapParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
 	params.FilterDescendantsInstances = { attacker }
 
-	local parts = workspace:GetPartBoundsInRadius(origin, range, params)
+	local parts = workspace:GetPartBoundsInRadius(origin, searchRadius, params)
 	local seen: { [Model]: boolean } = {}
 	local result: { Model } = {}
 
@@ -81,19 +98,23 @@ local function getCharactersInSphere(origin: Vector3, range: number, attacker: M
 end
 
 -- 부채꼴 필터
+-- angleMin~angleMax: 전방 기준 부호 있는 각도 (도). DynamicIndicator 동일 기준.
 local function filterCone(
 	origin: Vector3,
 	direction: Vector3,
 	chars: { Model },
 	range: number,
-	angleDeg: number
+	angleMin: number,
+	angleMax: number
 ): { Model }
-	local halfRad = math.rad(angleDeg / 2)
 	local dirH = Vector3.new(direction.X, 0, direction.Z)
 	if dirH.Magnitude < 0.001 then
 		return chars
 	end
 	dirH = dirH.Unit
+
+	local minRad = math.rad(angleMin)
+	local maxRad = math.rad(angleMax)
 
 	local result: { Model } = {}
 	for _, char in chars do
@@ -110,13 +131,17 @@ local function filterCone(
 		end
 
 		if horizontal.Magnitude < 0.001 then
+			-- origin과 거의 겹침 → 무조건 히트
 			table.insert(result, char)
 			continue
 		end
 
-		local dot = horizontal.Unit:Dot(dirH)
-		local ang = math.acos(math.clamp(dot, -1, 1))
-		if ang <= halfRad then
+		local dot = math.clamp(horizontal.Unit:Dot(dirH), -1, 1)
+		local ang = math.acos(dot)
+		local cross = dirH:Cross(horizontal.Unit)
+		local signedAng = ang * (if cross.Y >= 0 then 1 else -1)
+
+		if signedAng >= minRad and signedAng <= maxRad then
 			table.insert(result, char)
 		end
 	end
@@ -163,72 +188,142 @@ local function filterLine(
 	return result
 end
 
--- 대미지 및 넉백을 적용합니다.
--- Player 캐릭터 → HpService:ApplyDamage(target, amount, source) (팀 체크 포함)
--- NPC           → humanoid:TakeDamage (기존 방식 유지)
-local function applyEffects(attacker: Model, hits: { Model }, config: HitConfig)
-	-- attacker의 Player 인스턴스 (팀 체크 source로 사용)
-	local attackerPlayer = Players:GetPlayerFromCharacter(attacker)
-
-	for _, char in hits do
-		-- HP 처리
-		local targetPlayer = Players:GetPlayerFromCharacter(char)
-		if targetPlayer and _hpService then
-			-- source를 전달하여 HpService에서 팀 체크
-			_hpService:ApplyDamage(targetPlayer, config.damage, attackerPlayer)
-		else
-			-- NPC: 기존 방식 유지
-			local humanoid = char:FindFirstChildOfClass("Humanoid")
-			if humanoid then
-				humanoid:TakeDamage(config.damage)
-			end
+-- 원/도넛 필터
+-- innerRadius > 0 → 도넛 (내경 안쪽 제외)
+local function filterCircle(origin: Vector3, chars: { Model }, radius: number, innerRadius: number): { Model }
+	local result: { Model } = {}
+	for _, char in chars do
+		local rootPart = char:FindFirstChild("HumanoidRootPart") :: BasePart?
+		if not rootPart then
+			continue
 		end
 
-		-- 넉백
-		local knockback = config.knockback
-		if knockback and knockback > 0 then
-			local rootPart = char:FindFirstChild("HumanoidRootPart") :: BasePart?
-			local attackerRoot = attacker:FindFirstChild("HumanoidRootPart") :: BasePart?
-			if rootPart and attackerRoot then
-				local dir = rootPart.Position - attackerRoot.Position
-				local dirH = Vector3.new(dir.X, 0, dir.Z)
-				if dirH.Magnitude > 0.001 then
-					rootPart:ApplyImpulse(dirH.Unit * knockback * rootPart.AssemblyMass)
-				end
-			end
+		local toTarget = rootPart.Position - origin
+		local dist = Vector3.new(toTarget.X, 0, toTarget.Z).Magnitude
+
+		if dist <= radius and dist >= innerRadius then
+			table.insert(result, char)
 		end
 	end
+
+	return result
+end
+
+-- arc 착탄 필터
+-- 착탄 지점 = origin + dirH * range, 그 지점 기준 arcRadius 원판 판정.
+-- DynamicIndicator posUpdateArc의 t=1 착탄 지점과 동일 기준.
+local function filterArc(
+	origin: Vector3,
+	direction: Vector3,
+	chars: { Model },
+	range: number,
+	arcRadius: number
+): { Model }
+	local dirH = Vector3.new(direction.X, 0, direction.Z)
+	if dirH.Magnitude < 0.001 then
+		return {}
+	end
+	dirH = dirH.Unit
+
+	local landingH = Vector3.new(origin.X + dirH.X * range, origin.Y, origin.Z + dirH.Z * range)
+
+	local result: { Model } = {}
+	for _, char in chars do
+		local rootPart = char:FindFirstChild("HumanoidRootPart") :: BasePart?
+		if not rootPart then
+			continue
+		end
+
+		local toTarget = rootPart.Position - landingH
+		local dist = Vector3.new(toTarget.X, 0, toTarget.Z).Magnitude
+
+		if dist <= arcRadius then
+			table.insert(result, char)
+		end
+	end
+
+	return result
+end
+
+-- attacker HRP → target HRP 단일 Ray.
+-- CollisionGroup "HitCheck": Characters 파츠 통과, 환경(벽 등)만 감지.
+local function isObstructed(attackerHRP: BasePart, targetRootPart: BasePart): boolean
+	local from = attackerHRP.Position
+	local to = targetRootPart.Position
+	local result = workspace:Raycast(from, to - from, WALL_CHECK_PARAMS)
+	return result ~= nil
+end
+
+-- 벽 차단 필터. useWallCheck == true일 때만 호출.
+local function applyWallCheck(attackerHRP: BasePart, hits: { Model }): { Model }
+	local result: { Model } = {}
+	for _, char in hits do
+		local rootPart = char:FindFirstChild("HumanoidRootPart") :: BasePart?
+		if rootPart and not isObstructed(attackerHRP, rootPart) then
+			table.insert(result, char)
+		end
+	end
+	return result
 end
 
 -- shape에 따라 판정 후 적중 목록 반환
 local function doHit(attacker: Model, origin: Vector3, direction: Vector3, config: HitConfig): { Model }
-	local candidates = getCharactersInSphere(origin, config.range, attacker)
+	-- wallCheck: nil / true → 활성화, false → 비활성화
+	local useWallCheck = config.wallCheck ~= false
+	local attackerHRP = if useWallCheck then attacker:FindFirstChild("HumanoidRootPart") :: BasePart? else nil
 
 	local hits: { Model }
+
 	if config.shape == "cone" then
-		hits = filterCone(origin, direction, candidates, config.range, config.angle or 90)
+		local range = config.range or 8
+		local candidates = getCharactersInSphere(origin, range, attacker)
+		hits = filterCone(origin, direction, candidates, range, config.angleMin or -180, config.angleMax or 180)
 	elseif config.shape == "line" then
-		hits = filterLine(origin, direction, candidates, config.range, config.width or 2)
+		local range = config.range or 10
+		local candidates = getCharactersInSphere(origin, range, attacker)
+		hits = filterLine(origin, direction, candidates, range, config.width or 2)
+	elseif config.shape == "circle" then
+		local radius = config.radius or 5
+		local candidates = getCharactersInSphere(origin, radius, attacker)
+		hits = filterCircle(origin, candidates, radius, config.innerRadius or 0)
+	elseif config.shape == "arc" then
+		local range = config.range or 20
+		local arcRadius = config.arcRadius or 3
+		local dirH = Vector3.new(direction.X, 0, direction.Z)
+		dirH = if dirH.Magnitude < 0.001 then Vector3.new(0, 0, -1) else dirH.Unit
+		-- 착탄 지점 기준으로 후보 수집
+		local landingOrigin = Vector3.new(origin.X + dirH.X * range, origin.Y, origin.Z + dirH.Z * range)
+		local candidates = getCharactersInSphere(landingOrigin, arcRadius, attacker)
+		hits = filterArc(origin, direction, candidates, range, arcRadius)
 	else
-		-- circle
-		hits = candidates
+		hits = {}
 	end
 
-	applyEffects(attacker, hits, config)
+	-- 벽 차단 (모든 shape 공통 후처리)
+	if useWallCheck and attackerHRP then
+		hits = applyWallCheck(attackerHRP, hits)
+	end
+
 	return hits
 end
 
 -- ─── 공개 API ────────────────────────────────────────────────────────────────
 
 --[=[
-	범위 판정을 실행합니다.
+	범위 판정을 즉시 실행합니다.
 
-	항상 취소함수 () -> () 를 반환합니다.
-	- delay 없음: 즉시 판정 후 onHit 호출, 반환된 취소함수는 no-op
-	- delay > 0: 지연 판정 예약, 취소함수 호출 시 판정 취소
+	delay가 필요한 경우:
+	  호출부에서 task.delay + fireMaid로 처리.
+	  예)
+	    local cancelled = false
+	    state.fireMaid:GiveTask(function() cancelled = true end)
+	    task.delay(0.3, function()
+	      if cancelled then return end
+	      InstantHit.apply(state.attacker, state.origin, state.direction, config, state.onHit)
+	    end)
 
-	onHit: 판정 완료 시점에 호출되는 콜백. victims: { Model }을 받음.
-	       nil이면 판정만 하고 콜백 없음.
+	onHit:
+	  항상 state.onHit 전달. nil이면 판정만 수행.
 ]=]
 function InstantHit.apply(
 	attacker: Model,
@@ -236,32 +331,10 @@ function InstantHit.apply(
 	direction: Vector3,
 	config: HitConfig,
 	onHit: ((victims: { Model }) -> ())?
-): () -> ()
-	local delay = config.delay or 0
-
-	local function execute()
-		local hits = doHit(attacker, origin, direction, config)
-		if onHit then
-			onHit(hits)
-		end
-	end
-
-	if delay <= 0 then
-		execute()
-		return function() end -- no-op
-	else
-		local cancelled = false
-
-		task.delay(delay, function()
-			if cancelled then
-				return
-			end
-			execute()
-		end)
-
-		return function()
-			cancelled = true
-		end
+): ()
+	local hits = doHit(attacker, origin, direction, config)
+	if onHit then
+		onHit(hits)
 	end
 end
 
