@@ -151,16 +151,17 @@ function AimControllerClient:StartAim(
 )
 	local doLock = if lockYawDuringAim == nil then true else lockYawDuringAim
 
-	-- 기존 interval 잠금 해제
-	self:CancelIntervalLock()
+	-- ❌ self:CancelIntervalLock() 제거
+	--    interval lock은 StartAim으로 해제되지 않음
+	--    _onRenderStep에서 lock 중 캐릭터 회전만 막으면 됨
 
 	-- 기존 AimSession cancel
 	if self._aimSession then
 		self:_cancelInternal()
 	end
 
-	-- ShiftLock 연동
-	if doLock and self._cameraController:IsShiftLocked() then
+	-- ShiftLock 연동: interval lock이 없을 때만 yaw 초기화
+	if doLock and self._cameraController:IsShiftLocked() and not self._intervalLockCancel then
 		local humanoid = self:_getHumanoid()
 		if humanoid then
 			humanoid.AutoRotate = false
@@ -213,7 +214,8 @@ function AimControllerClient:ConfirmAim(): Vector3?
 	abilityState.indicator:hideAll()
 
 	-- AutoRotate 복원 (lockYawDuringAim인 경우)
-	if aimSession.lockYawDuringAim then
+	-- interval lock이 없을 때만 복원 (StartIntervalLock이 직후에 걸지만 방어적으로)
+	if aimSession.lockYawDuringAim and not self._intervalLockCancel then
 		local humanoid = self:_getHumanoid()
 		if humanoid then
 			humanoid.AutoRotate = true
@@ -365,7 +367,9 @@ function AimControllerClient:_cancelInternal()
 	abilityState.aimTime = 0
 	abilityState.effectiveAimTime = 0
 
-	if aimSession.lockYawDuringAim then
+	-- interval lock이 활성 중이면 AutoRotate 복원하지 않음
+	-- interval lock 종료 시 cancellableDelay 콜백에서 자동 복원됨
+	if aimSession.lockYawDuringAim and not self._intervalLockCancel then
 		local humanoid = self:_getHumanoid()
 		if humanoid then
 			humanoid.AutoRotate = true
@@ -391,8 +395,21 @@ function AimControllerClient:_onRenderStep()
 	end
 
 	-- [조준 상태] ShiftLock 연동
-	if aimSession.lockYawDuringAim and self._cameraController:IsShiftLocked() then
+	-- interval lock 중이면 캐릭터 방향 업데이트 스킵 (발사 방향 고정 유지)
+	if
+		aimSession.lockYawDuringAim
+		and self._cameraController:IsShiftLocked()
+		and not self._intervalLockCancel -- ← 추가
+	then
 		self:_updateCharacterRotation()
+	end
+
+	-- interval lock 중에도 hrp 방향은 lock yaw로 유지
+	if self._intervalLockCancel and self._intervalLockYaw then
+		local hrp = self:_getHRP()
+		if hrp then
+			hrp.CFrame = CFrame.new(hrp.Position) * CFrame.Angles(0, self._yawSpring.Position, 0)
+		end
 	end
 
 	local origin, direction = self:_getAimDirection()
@@ -405,8 +422,6 @@ function AimControllerClient:_onRenderStep()
 	abilityState.direction = direction
 	abilityState.origin = origin
 
-	-- effectiveAimTime은 BasicAttackClient의 Heartbeat에서 관리
-	-- onAim 훅 실행
 	AbilityExecutor.OnAim(aimSession.clientModule, abilityState)
 end
 

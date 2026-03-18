@@ -6,24 +6,30 @@
 
 	담당:
 	- 플레이어별 리소스 상태 관리
-	- stack: 독립 재생 (Heartbeat)
+	- stack: 독립 재생 (Heartbeat) → 장전 틱마다 ResourceSync
 	- gauge: 발사 중 drain, 종료 후 regenDelay → regen (Heartbeat)
-	- BasicAttackRemoting.Fire 수신 → 검증 → onFire 실행
-	- BasicAttackRemoting.FireStart/FireEnd 수신 → hold/toggle 상태 관리
+	         소진 시 / max 도달 시 ResourceSync
+	- BasicAttackRemoting.Fire 수신 → 검증 → onFire 실행 → ResourceSync
+	- BasicAttackRemoting.FireEnd 수신 → hold/toggle 상태 관리
 	- 히트 체크 후 HitChecked:FireClient(공격자) 발송
 	- LoadoutRemoting.RequestEquipBasicAttack → 유효성 검증 후 장착 처리
+
+	ResourceSync 발송 시점:
+	- stack: 발사마다 + 장전 틱마다
+	- gauge: 발사마다 + 소진 시 + max 도달 시
 
 	Anti-exploit:
 	- FIRE_RATE_LIMIT (0.1초)
 	- direction 타입/크기 검증
 	- isAttackLocked 검증 (공격불가 상태)
 	- stack: currentStack > 0, interval 비율 검증
-	- gauge: currentGauge > 0
-	- hold/toggle: FireStart 없이 Fire 수신 시 무시
+	- gauge 시작: currentGauge >= minGauge
+	- gauge 루프 중: currentGauge > 0
+	- hold/toggle: 첫 Fire 수신 시 isFiring=true 설정
 
-	interval 예약 (stack/toggle만):
+	interval 예약 (stack만):
 	- interval 잔여 비율 ≤ INTERVAL_QUEUE_THRESHOLD(80%) 일 때 예약 발사
-	- hold: 예약 없음
+	- hold/toggle: 예약 없음
 ]=]
 
 local require = require(script.Parent.loader).load(script)
@@ -47,6 +53,7 @@ local FIRE_RATE_LIMIT = 0.1
 local MAX_DIRECTION_MAGNITUDE_DELTA = 0.1
 
 -- ⚠️ 주의: BasicAttackClient.lua의 INTERVAL_QUEUE_THRESHOLD와 반드시 동일해야 합니다.
+--          AbilityTypes에서 공통 참조합니다.
 local INTERVAL_QUEUE_THRESHOLD = AbilityTypes.INTERVAL_QUEUE_THRESHOLD
 
 -- ─── 타입 ────────────────────────────────────────────────────────────────────
@@ -70,6 +77,7 @@ export type BasicAttackState = {
 	-- gauge 리소스
 	currentGauge: number,
 	maxGauge: number,
+	minGauge: number,
 	drainRate: number,
 	regenRate: number,
 	regenDelay: number,
@@ -168,8 +176,9 @@ function BasicAttackService.Start(self: BasicAttackService): ()
 		self:_onPlayerRemoving(player)
 	end))
 
-	self._maid:GiveTask(RunService.Heartbeat:Connect(function()
-		self:_updateResources()
+	-- dt 전달
+	self._maid:GiveTask(RunService.Heartbeat:Connect(function(dt: number)
+		self:_updateResources(dt)
 	end))
 
 	self._maid:GiveTask(BasicAttackRemoting.AimStarted:Connect(function(player: Player)
@@ -180,10 +189,7 @@ function BasicAttackService.Start(self: BasicAttackService): ()
 		self:_onFire(player, direction)
 	end))
 
-	self._maid:GiveTask(BasicAttackRemoting.FireStart:Connect(function(player: Player)
-		self:_onFireStart(player)
-	end))
-
+	-- FireStart 제거됨. hold/toggle 첫 Fire 수신 시 isFiring=true 자동 설정.
 	self._maid:GiveTask(BasicAttackRemoting.FireEnd:Connect(function(player: Player)
 		self:_onFireEnd(player)
 	end))
@@ -213,6 +219,7 @@ function BasicAttackService:_onPlayerAdded(player: Player)
 
 		currentGauge = 0,
 		maxGauge = 0,
+		minGauge = 0,
 		drainRate = 0,
 		regenRate = 0,
 		regenDelay = 0,
@@ -253,6 +260,7 @@ end
 
 function BasicAttackService:_onCharacterAdded(player: Player, char: Model)
 	local state = self._playerStates[player.UserId]
+
 	if not state then
 		return
 	end
@@ -275,13 +283,13 @@ end
 
 -- ─── 리소스 업데이트 (Heartbeat) ─────────────────────────────────────────────
 
-function BasicAttackService:_updateResources()
+function BasicAttackService:_updateResources(dt: number)
 	local now = os.clock()
 	for userId, state in self._playerStates do
 		if state.resourceType == "stack" then
 			self:_updateStackRegen(userId, state, now)
 		elseif state.resourceType == "gauge" then
-			self:_updateGauge(userId, state, now)
+			self:_updateGauge(userId, state, now, dt)
 		end
 	end
 end
@@ -298,47 +306,43 @@ function BasicAttackService:_updateStackRegen(userId: number, state: BasicAttack
 		state.lastRegenTime = now
 		local player = Players:GetPlayerByUserId(userId)
 		if player then
-			self:_fireResourceChanged(player, state)
+			self:_fireResourceSync(player, state)
 		end
 	end
 end
 
-function BasicAttackService:_updateGauge(userId: number, state: BasicAttackState, now: number)
+function BasicAttackService:_updateGauge(userId: number, state: BasicAttackState, now: number, dt: number)
 	if state.maxGauge <= 0 then
 		return
 	end
 
-	local changed = false
-
 	if state.isFiring and state.currentGauge > 0 then
-		-- drain
-		local drain = state.drainRate * (now - math.max(state.lastFireTime, state.lastFireEndTime))
-		-- 실제로는 매 프레임 delta를 써야 함. Heartbeat dt를 쓰려면 다른 방식 필요.
-		-- 여기서는 간단히 매 Heartbeat마다 drainRate/60 으로 근사
-		local dt = 1 / 60
 		state.currentGauge = math.max(0, state.currentGauge - state.drainRate * dt)
-		changed = true
 
-		-- 게이지 소진 시 강제 종료
+		-- 소진 시: isFiring 종료 + ResourceSync 1회 (강제 캔슬 신호)
 		if state.currentGauge <= 0 then
 			state.isFiring = false
 			state.lastFireEndTime = now
+			local player = Players:GetPlayerByUserId(userId)
+			if player then
+				self:_fireResourceSync(player, state)
+			end
 		end
 	elseif not state.isFiring and state.currentGauge < state.maxGauge then
-		-- regenDelay 대기 후 regen
 		if now - state.lastFireEndTime >= state.regenDelay then
-			local dt = 1 / 60
+			local prev = state.currentGauge
 			state.currentGauge = math.min(state.maxGauge, state.currentGauge + state.regenRate * dt)
-			changed = true
-		end
-	end
 
-	if changed then
-		local player = Players:GetPlayerByUserId(userId)
-		if player then
-			self:_fireResourceChanged(player, state)
+			-- max 도달 시: ResourceSync 1회
+			if prev < state.maxGauge and state.currentGauge >= state.maxGauge then
+				local player = Players:GetPlayerByUserId(userId)
+				if player then
+					self:_fireResourceSync(player, state)
+				end
+			end
 		end
 	end
+	-- 매프레임 발송 없음
 end
 
 -- ─── 조준 시작 처리 ──────────────────────────────────────────────────────────
@@ -353,7 +357,7 @@ function BasicAttackService:_onAimStarted(player: Player)
 	if now < state.intervalUntil then
 		return
 	end
-	if not self:_hasResource(state) then
+	if not self:_hasResourceForStart(state) then
 		return
 	end
 	if not state.equippedAttackId then
@@ -366,19 +370,7 @@ function BasicAttackService:_onAimStarted(player: Player)
 	state.aimStartTime = now
 end
 
--- ─── FireStart / FireEnd (hold/toggle) ───────────────────────────────────────
-
-function BasicAttackService:_onFireStart(player: Player)
-	local state = self._playerStates[player.UserId]
-	if not state then
-		return
-	end
-	if self._playerStateController:IsAttackLocked(player) then
-		return
-	end
-
-	state.isFiring = true
-end
+-- ─── FireEnd (hold/toggle) ────────────────────────────────────────────────────
 
 function BasicAttackService:_onFireEnd(player: Player)
 	local state = self._playerStates[player.UserId]
@@ -429,16 +421,30 @@ function BasicAttackService:_onFire(player: Player, direction: unknown)
 	end
 
 	local fireType = state.fireType
-	local resourceType = state.resourceType
 
-	-- 리소스 검증
-	if not self:_hasResource(state) then
-		return
-	end
-
-	-- hold/toggle: FireStart 없이 Fire 수신 시 서버 검증용
-	if (fireType == "hold" or fireType == "toggle") and not state.isFiring then
-		return
+	-- hold/toggle: 첫 Fire 수신 시 isFiring=true 설정 (FireStart 대체)
+	if fireType == "hold" or fireType == "toggle" then
+		if not state.isFiring then
+			-- 첫 발사 시작: minGauge 체크
+			if not self:_hasResourceForStart(state) then
+				return
+			end
+			state.isFiring = true
+		else
+			-- 루프 중: currentGauge > 0 체크 (gauge 전용)
+			if state.resourceType == "gauge" and state.currentGauge <= 0 then
+				return
+			end
+			-- stack+hold/toggle: 일반 리소스 체크
+			if state.resourceType == "stack" and not self:_hasResourceForStart(state) then
+				return
+			end
+		end
+	else
+		-- stack fireType: 시작 리소스 체크
+		if not self:_hasResourceForStart(state) then
+			return
+		end
 	end
 
 	-- stack: interval 검증 및 예약 처리
@@ -486,13 +492,17 @@ function BasicAttackService:_executeFire(player: Player, state: BasicAttackState
 	state.lastFireTime = now
 	state.aimStartTime = 0
 
-	-- stack: 리소스 차감 + intervalUntil 설정
+	-- stack: 리소스 차감 + intervalUntil 설정 + ResourceSync
 	if state.fireType == "stack" then
 		state.currentStack -= 1
 		state.intervalUntil = now + state.interval
-		self:_fireResourceChanged(player, state)
+		self:_fireResourceSync(player, state)
 	end
-	-- gauge: drain은 _updateGauge에서 처리
+
+	-- gauge: 발사마다 ResourceSync (클라이언트 drift 보정)
+	if state.resourceType == "gauge" then
+		self:_fireResourceSync(player, state)
+	end
 
 	-- snapshot 생성
 	local snapshot = table.clone(state)
@@ -536,16 +546,19 @@ end
 
 -- ─── 헬퍼 ────────────────────────────────────────────────────────────────────
 
-function BasicAttackService:_hasResource(state: BasicAttackState): boolean
+--[=[
+	발사 시작 조건 체크. gauge는 minGauge 기준.
+]=]
+function BasicAttackService:_hasResourceForStart(state: BasicAttackState): boolean
 	if state.resourceType == "stack" then
 		return state.currentStack > 0
 	elseif state.resourceType == "gauge" then
-		return state.currentGauge > 0
+		return state.currentGauge >= state.minGauge
 	end
 	return false
 end
 
-function BasicAttackService:_fireResourceChanged(player: Player, state: BasicAttackState)
+function BasicAttackService:_fireResourceSync(player: Player, state: BasicAttackState)
 	local payload: { [string]: any }
 
 	if state.resourceType == "stack" then
@@ -561,6 +574,7 @@ function BasicAttackService:_fireResourceChanged(player: Player, state: BasicAtt
 			resourceType = "gauge",
 			currentGauge = state.currentGauge,
 			maxGauge = state.maxGauge,
+			minGauge = state.minGauge,
 			drainRate = state.drainRate,
 			regenRate = state.regenRate,
 			regenDelay = state.regenDelay,
@@ -568,7 +582,7 @@ function BasicAttackService:_fireResourceChanged(player: Player, state: BasicAtt
 		}
 	end
 
-	BasicAttackRemoting.ResourceChanged:FireClient(player, payload)
+	BasicAttackRemoting.ResourceSync:FireClient(player, payload)
 end
 
 function BasicAttackService:_setPlayerAttack(player: Player, attackId: string)
@@ -611,12 +625,14 @@ function BasicAttackService:_setPlayerAttack(player: Player, attackId: string)
 		-- gauge 초기화
 		state.currentGauge = 0
 		state.maxGauge = 0
+		state.minGauge = 0
 		state.drainRate = 0
 		state.regenRate = 0
 		state.regenDelay = 0
 	elseif resource.resourceType == "gauge" then
 		local r = resource :: AbilityTypes.GaugeResource
 		state.maxGauge = r.maxGauge
+		state.minGauge = r.minGauge
 		state.drainRate = r.drainRate
 		state.regenRate = r.regenRate
 		state.regenDelay = r.regenDelay
@@ -628,7 +644,7 @@ function BasicAttackService:_setPlayerAttack(player: Player, attackId: string)
 		state.lastRegenTime = 0
 	end
 
-	self:_fireResourceChanged(player, state)
+	self:_fireResourceSync(player, state)
 end
 
 -- ─── 공개 API ────────────────────────────────────────────────────────────────

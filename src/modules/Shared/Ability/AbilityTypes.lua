@@ -20,6 +20,9 @@
 
 	INTERVAL_QUEUE_THRESHOLD = 0.8:
 	  remaining / interval <= 0.8  →  20% 이상 경과 → 예약 발사 허용
+
+	minGauge:
+	  발사 시작 시에만 체크. 루프 지속 중에는 currentGauge > 0이면 계속 발사.
 ]=]
 
 -- ⚠️ 주의: 클라이언트/서버 양쪽에서 반드시 이 값을 참조해야 합니다.
@@ -37,6 +40,7 @@ export type StackResource = {
 export type GaugeResource = {
 	resourceType: "gauge",
 	maxGauge: number, -- 기준: 100.0
+	minGauge: number, -- 발사 시작 가능 최소 게이지 (루프 진입 시에만 체크)
 	drainRate: number, -- 발사 중 초당 소모
 	regenRate: number, -- 비발사 중 초당 재생
 	regenDelay: number, -- 발사 종료 후 재생 시작까지 대기 (초)

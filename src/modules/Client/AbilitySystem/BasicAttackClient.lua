@@ -6,10 +6,11 @@
 
 	담당:
 	- 입력 감지 (MB1 다운/업) → fireType별 분기 처리
-	- ResourceChanged 수신 → BasicAttackState 리소스 필드 갱신
+	- ResourceSync 수신 → 로컬 추적값 서버 기준으로 보정
 	- HitChecked 수신 → onHitChecked 배열 실행
 	- PlayerBinderClient.JointsChanged 구독 → EntityAnimator 재생성
 	- BasicAttackState 소유 및 관리
+	- 리소스 로컬 병렬 추적 (Heartbeat)
 
 	fireType별 입력 처리:
 	  stack:
@@ -25,6 +26,16 @@
 	    [다운] → isFiring이면 _stopFireLoop, 아니면 StartAim(lockYaw=false)
 	    [업]   → isFiring이면 무시, 아니면 ConfirmAim() → _startFireLoop(direction)
 
+	리소스 로컬 추적:
+	  gauge: Heartbeat에서 drainRate/regenRate 직접 계산
+	  stack: 발사 시 -1, 로컬 reloadTime 타이머로 +1
+	  ResourceSync 수신 시 서버 값으로 보정
+	  currentGauge=0 or currentStack=0 수신 시 즉시 _stopFireLoop()
+
+	발사 시작 vs 루프 지속 리소스 체크:
+	  시작: _hasResourceForStart() → gauge는 minGauge 기준
+	  루프: currentGauge > 0 직접 비교 (gauge) / _hasResourceForStart (stack)
+
 	CancelCombatState():
 	  외부에서 공격불가/교체 등 어떤 이유로든 캔슬할 때 이 함수만 호출.
 	  - aimController:Cancel() + CancelIntervalLock()
@@ -32,6 +43,7 @@
 	  - _pendingFireCancel 취소
 	  - fireMaid Destroy
 	  - onCancel 훅 실행
+	  - _stackReloadTimer 리셋
 
 	interval 예약 (stack/toggle만):
 	  interval 잔여 비율 ≤ INTERVAL_QUEUE_THRESHOLD(80%) 일 때 발사 시도 시
@@ -98,9 +110,13 @@ export type BasicAttackState = {
 	-- gauge 리소스
 	currentGauge: number,
 	maxGauge: number,
+	minGauge: number,
 	drainRate: number,
 	regenRate: number,
 	regenDelay: number,
+
+	-- 로컬 추적용
+	lastFireEndTime: number,
 
 	-- 콤보 / 타이밍
 	lastFireTime: number,
@@ -141,6 +157,7 @@ export type BasicAttackClient = typeof(setmetatable(
 		_attackState: BasicAttackState?,
 		_pendingFireCancel: (() -> ())?,
 		_fireLoopCancel: (() -> ())?,
+		_stackReloadTimer: number,
 	},
 	{} :: typeof({ __index = {} })
 ))
@@ -172,6 +189,7 @@ function BasicAttackClient.Init(self: BasicAttackClient, serviceBag: ServiceBag.
 	self._attackState = nil
 	self._pendingFireCancel = nil
 	self._fireLoopCancel = nil
+	self._stackReloadTimer = 0
 
 	local playerBinder = serviceBag:GetService(PlayerBinderClient)
 	self._maid:GiveTask(playerBinder.JointsChanged:Connect(function(joints)
@@ -185,8 +203,8 @@ function BasicAttackClient.Init(self: BasicAttackClient, serviceBag: ServiceBag.
 		self:CancelCombatState()
 	end))
 
-	self._maid:GiveTask(BasicAttackRemoting.ResourceChanged:Connect(function(payload: unknown)
-		self:_onResourceChanged(payload :: { [string]: any })
+	self._maid:GiveTask(BasicAttackRemoting.ResourceSync:Connect(function(payload: unknown)
+		self:_onResourceSync(payload :: { [string]: any })
 	end))
 
 	self._maid:GiveTask(BasicAttackRemoting.HitChecked:Connect(function(victimUserIds: unknown)
@@ -198,18 +216,23 @@ function BasicAttackClient.Start(self: BasicAttackClient): ()
 	-- AbilityCoordinator에 자신 등록
 	self._coordinator:Register(self)
 
-	-- effectiveAimTime 갱신 + 인디케이터 색상/투명도 업데이트
-	self._maid:GiveTask(RunService.Heartbeat:Connect(function(dt)
+	-- Heartbeat: 인디케이터 갱신 + 로컬 리소스 추적
+	self._maid:GiveTask(RunService.Heartbeat:Connect(function(dt: number)
 		local state = self._attackState
 		if not state then
 			return
 		end
+
+		-- 로컬 리소스 추적
+		self:_updateLocalResource(state, dt)
+
+		-- 인디케이터 갱신 (조준 중에만)
 		if not self._aimController:IsAiming() then
 			state.effectiveAimTime = 0
 			return
 		end
 
-		local hasResource = self:_hasResource(state)
+		local hasResource = self:_hasResourceForStart(state)
 		local isInterval = os.clock() < state.intervalUntil
 
 		if hasResource and not isInterval then
@@ -256,6 +279,7 @@ function BasicAttackClient:SetEquippedAttack(attackId: string)
 	self:CancelCombatState()
 
 	self._equippedAttackId = attackId
+	self._stackReloadTimer = 0
 
 	if self._attackState then
 		self._attackState.indicator:destroy()
@@ -282,9 +306,13 @@ function BasicAttackClient:SetEquippedAttack(attackId: string)
 		-- gauge 초기값
 		currentGauge = 0,
 		maxGauge = 0,
+		minGauge = 0,
 		drainRate = 0,
 		regenRate = 0,
 		regenDelay = 0,
+
+		-- 로컬 추적용
+		lastFireEndTime = 0,
 
 		-- 콤보
 		lastFireTime = 0,
@@ -313,6 +341,7 @@ end
 	어떤 이유로든 전투 상태를 초기화할 때 이 함수만 호출합니다.
 ]=]
 function BasicAttackClient:CancelCombatState()
+	self._stackReloadTimer = 0
 	self._aimController:Cancel()
 	self._aimController:CancelIntervalLock()
 
@@ -326,6 +355,7 @@ function BasicAttackClient:CancelCombatState()
 	local state = self._attackState
 	if state then
 		state.isFiring = false
+		state.lastFireEndTime = os.clock()
 		-- fireMaid Destroy (모듈이 등록한 cleanup 자동 실행)
 		if state.fireMaid then
 			state.fireMaid:Destroy()
@@ -364,6 +394,28 @@ function BasicAttackClient:IsToggleFiring(): boolean
 	return entry.def.fireType == "toggle" and self._fireLoopCancel ~= nil
 end
 
+-- ─── 내부: 로컬 리소스 추적 ─────────────────────────────────────────────────
+
+function BasicAttackClient:_updateLocalResource(state: BasicAttackState, dt: number)
+	if state.resourceType == "gauge" then
+		if state.isFiring and state.currentGauge > 0 then
+			state.currentGauge = math.max(0, state.currentGauge - state.drainRate * dt)
+		elseif not state.isFiring and state.currentGauge < state.maxGauge then
+			if os.clock() - state.lastFireEndTime >= state.regenDelay then
+				state.currentGauge = math.min(state.maxGauge, state.currentGauge + state.regenRate * dt)
+			end
+		end
+	elseif state.resourceType == "stack" then
+		if state.currentStack < state.maxStack and state.reloadTime > 0 then
+			self._stackReloadTimer += dt
+			if self._stackReloadTimer >= state.reloadTime then
+				self._stackReloadTimer -= state.reloadTime
+				state.currentStack = math.min(state.currentStack + 1, state.maxStack)
+			end
+		end
+	end
+end
+
 -- ─── 내부: 입력 처리 ────────────────────────────────────────────────────────
 
 function BasicAttackClient:_onMouseDown()
@@ -389,7 +441,7 @@ function BasicAttackClient:_onMouseDown()
 		if os.clock() < state.intervalUntil then
 			return
 		end
-		if not self:_hasResource(state) then
+		if not self:_hasResourceForStart(state) then
 			return
 		end
 		self:_tryStartAim(entry, true)
@@ -403,7 +455,6 @@ function BasicAttackClient:_onMouseDown()
 			-- 두번째 클릭: 루프 종료 (interval 허용 구간에서만)
 			local now = os.clock()
 			local remaining = state.intervalUntil - now
-			-- intervalUntil이 아직 안 됐으면 큐 또는 즉시 종료
 			if now >= state.intervalUntil then
 				self:_stopFireLoop()
 			elseif remaining / state.interval <= INTERVAL_QUEUE_THRESHOLD then
@@ -455,7 +506,10 @@ function BasicAttackClient:_onMouseUp()
 		-- 첫번째 업: 발사 루프 시작
 		local direction = self._aimController:ConfirmAim()
 		if direction then
-			self:_startFireLoop(entry)
+			local state = self._attackState
+			if state and self:_hasResourceForStart(state) then
+				self:_startFireLoop(entry)
+			end
 		end
 	end
 end
@@ -484,8 +538,7 @@ function BasicAttackClient:_executeStack(entry: { def: any, module: any, animDef
 	end
 
 	-- 리소스 부족: aim 실패 처리
-	if not self:_hasResource(state) then
-		-- interval 잠금 없음, AutoRotate는 ConfirmAim에서 이미 복원됨
+	if not self:_hasResourceForStart(state) then
 		return
 	end
 
@@ -512,13 +565,15 @@ function BasicAttackClient:_executeStack(entry: { def: any, module: any, animDef
 			state.direction = capturedDir
 			state.lastFireTime = scheduledAt
 			state.effectiveAimTime = 0
+			state.currentStack = math.max(0, state.currentStack - 1)
 			self:_onFireExecuted(entry, state)
 			AbilityExecutor.OnFire(entry.module, state)
+
+			-- 예약 실행 시점에 비로소 방향 전환
+			self._aimController:StartIntervalLock(capturedDir, def.interval)
 		end)
 
 		BasicAttackRemoting.Fire:FireServer(direction)
-		-- interval 잠금: 잔여 + 다음 interval 전체
-		self._aimController:StartIntervalLock(direction, remaining + def.interval)
 		return
 	end
 
@@ -532,6 +587,10 @@ function BasicAttackClient:_executeStack(entry: { def: any, module: any, animDef
 	state.intervalUntil = now + def.interval
 	state.lastFireTime = now
 	state.effectiveAimTime = 0
+
+	-- 로컬 리소스 차감
+	state.currentStack = math.max(0, state.currentStack - 1)
+	self._stackReloadTimer = 0 -- 차감 시 타이머 리셋
 
 	self:_onFireExecuted(entry, state)
 
@@ -555,7 +614,7 @@ function BasicAttackClient:_startFireLoop(entry: { def: any, module: any, animDe
 	state.isFiring = true
 	self:_onFireExecuted(entry, state) -- coordinator 알림
 
-	BasicAttackRemoting.FireStart:FireServer()
+	-- FireStart 제거됨. 서버는 첫 Fire 수신 시 isFiring=true 자동 설정.
 
 	local running = true
 	self._fireLoopCancel = function()
@@ -568,10 +627,17 @@ function BasicAttackClient:_startFireLoop(entry: { def: any, module: any, animDe
 		while running do
 			local now = os.clock()
 
-			-- 리소스 고갈 시 자동 종료
-			if not self:_hasResource(state) then
-				self:_stopFireLoop()
-				break
+			-- 루프 지속 조건: gauge는 currentGauge > 0, stack은 시작 조건과 동일
+			if state.resourceType == "gauge" then
+				if state.currentGauge <= 0 then
+					self:_stopFireLoop()
+					break
+				end
+			else
+				if not self:_hasResourceForStart(state) then
+					self:_stopFireLoop()
+					break
+				end
 			end
 
 			-- interval 대기
@@ -593,6 +659,12 @@ function BasicAttackClient:_startFireLoop(entry: { def: any, module: any, animDe
 					end
 				end
 				-- hold: state.direction은 _onRenderStep(AimController)에서 매 프레임 갱신됨
+
+				-- 로컬 리소스 차감
+				if state.resourceType == "stack" then
+					state.currentStack = math.max(0, state.currentStack - 1)
+					self._stackReloadTimer = 0
+				end
 
 				-- fireMaid 갱신
 				if state.fireMaid then
@@ -618,7 +690,7 @@ function BasicAttackClient:_stopFireLoop()
 	local state = self._attackState
 	if state then
 		state.isFiring = false
-		-- 루프 종료 시점 intervalUntil 설정 (이미 마지막 fire에서 설정됨)
+		state.lastFireEndTime = os.clock()
 		-- hold/toggle은 화면 고정 없음 → CancelIntervalLock 호출 안 함
 	end
 
@@ -642,18 +714,22 @@ end
 
 -- ─── 내부: 리소스 유틸 ──────────────────────────────────────────────────────
 
-function BasicAttackClient:_hasResource(state: BasicAttackState): boolean
+--[=[
+	발사 시작 조건 체크. gauge는 minGauge 기준.
+	루프 지속 중 체크에는 사용하지 않음.
+]=]
+function BasicAttackClient:_hasResourceForStart(state: BasicAttackState): boolean
 	if state.resourceType == "stack" then
 		return state.currentStack > 0
 	elseif state.resourceType == "gauge" then
-		return state.currentGauge > 0
+		return state.currentGauge >= state.minGauge
 	end
 	return false
 end
 
 -- ─── 내부: 서버 이벤트 처리 ─────────────────────────────────────────────────
 
-function BasicAttackClient:_onResourceChanged(payload: { [string]: any })
+function BasicAttackClient:_onResourceSync(payload: { [string]: any })
 	local state = self._attackState
 	if not state then
 		return
@@ -669,20 +745,29 @@ function BasicAttackClient:_onResourceChanged(payload: { [string]: any })
 
 	if rt == "stack" then
 		if type(payload.currentStack) == "number" then
-			state.currentStack = payload.currentStack
+			state.currentStack = payload.currentStack -- 서버 기준 보정
 		end
 		if type(payload.maxStack) == "number" then
 			state.maxStack = payload.maxStack
 		end
 		if type(payload.reloadTime) == "number" then
 			state.reloadTime = payload.reloadTime
+			self._stackReloadTimer = 0 -- 보정 시 타이머 리셋 (서버 기준 재시작)
+		end
+
+		-- 소진 보정 수신 시 즉시 루프 캔슬
+		if state.currentStack <= 0 then
+			self:_stopFireLoop()
 		end
 	elseif rt == "gauge" then
 		if type(payload.currentGauge) == "number" then
-			state.currentGauge = payload.currentGauge
+			state.currentGauge = payload.currentGauge -- 서버 기준 보정
 		end
 		if type(payload.maxGauge) == "number" then
 			state.maxGauge = payload.maxGauge
+		end
+		if type(payload.minGauge) == "number" then
+			state.minGauge = payload.minGauge
 		end
 		if type(payload.drainRate) == "number" then
 			state.drainRate = payload.drainRate
@@ -692,6 +777,11 @@ function BasicAttackClient:_onResourceChanged(payload: { [string]: any })
 		end
 		if type(payload.regenDelay) == "number" then
 			state.regenDelay = payload.regenDelay
+		end
+
+		-- 소진 보정 수신 시 즉시 루프 캔슬
+		if state.currentGauge <= 0 then
+			self:_stopFireLoop()
 		end
 	end
 end
