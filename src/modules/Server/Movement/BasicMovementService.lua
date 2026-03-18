@@ -9,6 +9,8 @@
 	- ClassService.ClassChanged 구독 → WalkSpeed 기준만 갱신.
 	- _setPlayerClass 메서드 제거.
 	- BasicAttackService 의존 제거 (CancelCombatState는 ClassService가 호출).
+	- PlayerState → BasicMovementState 로 타입명 변경 (PlayerState 시스템과 혼동 방지).
+	- isMoveLocked 필드 추가: CC 이동방지 중 클라이언트 보고가 targetSpeed 덮어쓰는 버그 수정.
 
 	Anti-exploit 구조:
 	- WalkSpeed는 오직 이 서비스만 설정합니다. 클라이언트는 절대 직접 변경 불가.
@@ -45,7 +47,7 @@ local VIOLATION_FREEZE_DURATION = 5
 
 -- ─── 타입 정의 ──────────────────────────────────
 
-type PlayerState = {
+type BasicMovementState = {
 	className: string,
 	currentSpeed: number,
 	targetSpeed: number,
@@ -53,6 +55,7 @@ type PlayerState = {
 	isMoving: boolean,
 	isFrozen: boolean,
 	frozenUntil: number,
+	isMoveLocked: boolean,
 	humanoid: Humanoid?,
 	rootPart: BasePart?,
 	lastEventTime: number,
@@ -65,7 +68,7 @@ export type BasicMovementService = typeof(setmetatable(
 		_serviceBag: ServiceBag.ServiceBag,
 		_maid: any,
 		_classService: any,
-		_playerStates: { [number]: PlayerState },
+		_playerStates: { [number]: BasicMovementState },
 		_playerMaids: { [number]: any },
 	},
 	{} :: typeof({ __index = BasicMovementService })
@@ -123,7 +126,6 @@ function BasicMovementService:_onPlayerAdded(player: Player)
 		local humanoid = char:WaitForChild("Humanoid") :: Humanoid
 		local rootPart = char:WaitForChild("HumanoidRootPart") :: BasePart
 
-		-- 현재 클래스 조회 (ClassService 위임)
 		local className = self._classService:GetClass(player)
 		local config = BasicMovementConfig.GetConfig(className)
 
@@ -135,6 +137,7 @@ function BasicMovementService:_onPlayerAdded(player: Player)
 			isMoving = false,
 			isFrozen = false,
 			frozenUntil = 0,
+			isMoveLocked = false,
 			humanoid = humanoid,
 			rootPart = rootPart,
 			lastEventTime = 0,
@@ -182,6 +185,7 @@ function BasicMovementService:_onMovementStateReceived(player: Player, isRunning
 	end
 	state.lastEventTime = now
 
+	-- isFrozen: 시간 만료 시 자동 해제 (isMoveLocked 체크 전에 처리)
 	if state.isFrozen then
 		if now >= state.frozenUntil then
 			state.isFrozen = false
@@ -194,7 +198,14 @@ function BasicMovementService:_onMovementStateReceived(player: Player, isRunning
 		return
 	end
 
+	-- isRunning은 lock 중에도 기록 (lock 해제 시 올바른 속도 복원용)
 	state.isRunning = isRunning
+
+	-- isMoveLocked: CC 이동방지 중이면 targetSpeed 갱신 차단
+	if state.isMoveLocked then
+		return
+	end
+
 	local config = BasicMovementConfig.GetConfig(state.className)
 	state.targetSpeed = if isRunning then config.runSpeed else config.walkSpeed
 
@@ -210,7 +221,7 @@ end
 
 -- ─── Violation ────────────────────────────────────
 
-function BasicMovementService:_recordViolation(state: PlayerState, reason: string)
+function BasicMovementService:_recordViolation(state: BasicMovementState, reason: string)
 	local now = os.clock()
 	local elapsed = now - state.lastViolationDecay
 	state.violations = math.max(0, state.violations - elapsed * VIOLATION_DECAY_RATE)
@@ -258,7 +269,8 @@ end
 -- ─── 공개 API ────────────────────────────────────
 
 --[=[
-	플레이어 이동을 외부에서 강제로 잠급니다. (예: 스킬 시전 중)
+	플레이어 이동을 외부에서 강제로 잠급니다. (예: 스킬 시전 중, CC 효과)
+	PlayerStateControllerService._syncMovement에서 호출됩니다.
 	@param player Player
 	@param locked boolean
 ]=]
@@ -267,6 +279,8 @@ function BasicMovementService:SetMovementLocked(player: Player, locked: boolean)
 	if not state or not state.humanoid then
 		return
 	end
+
+	state.isMoveLocked = locked
 
 	if locked then
 		state.targetSpeed = 0
