@@ -13,16 +13,15 @@
 	  AssignTeam(player, teamIndex) → player.Team 설정 (자동 복제됨)
 	  ClearTeams() → 모든 Team 인스턴스 제거, 플레이어 Neutral 처리
 
-	CanDamage 규칙:
-	  source == nil          → true  (환경 대미지)
-	  source == target       → true  (자해 허용)
-	  source or target 팀 없음 → true  (FFA는 모두 공격 가능)
+	IsEnemy 규칙:
+	  source or target 팀 없음 → true  (FFA는 모두 적)
 	  같은 팀               → false (팀킬 방지)
 	  다른 팀               → true
+	  (nil / self 처리는 호출 측 담당)
 
 	FilterTeammates / FilterEnemies:
-	  InstantHit.apply의 victims({ Model }) 목록을 팀 기준으로 필터링합니다.
-	  onHitChecked 내부에서 사용합니다.
+	  InstantHit.applyMap의 hits({ Model }) 목록을 팀 기준으로 필터링합니다.
+	  classifyHits 내부에서 사용합니다.
 
 	클라이언트 동기화:
 	  player.Team은 Roblox가 자동으로 클라이언트에 복제하므로
@@ -57,7 +56,7 @@ export type TeamService = typeof(setmetatable(
 	{} :: {
 		_serviceBag: ServiceBag.ServiceBag,
 		_maid: any,
-		_teams: { [number]: Team }, -- teamIndex → Team 인스턴스
+		_teams: { [number]: Team },
 	},
 	{} :: typeof({ __index = {} })
 ))
@@ -68,7 +67,6 @@ local TeamService = {}
 TeamService.ServiceName = "TeamService"
 TeamService.__index = TeamService
 
--- 팀별 기본 색상 (TeamColor는 필수값이므로 순서대로 배정)
 local TEAM_COLORS: { BrickColor } = {
 	BrickColor.new("Bright red"),
 	BrickColor.new("Bright blue"),
@@ -87,17 +85,10 @@ function TeamService.Init(self: TeamService, serviceBag: ServiceBag.ServiceBag):
 	self._teams = {}
 end
 
-function TeamService.Start(_self: TeamService): ()
-	-- 현재는 외부(게임 모드 로직)에서 CreateTeams/AssignTeam을 호출하는 구조.
-	-- 추후 게임 모드 서비스가 Start에서 팀 초기화를 요청할 예정.
-end
+function TeamService.Start(_self: TeamService): () end
 
 -- ─── 공개 API ────────────────────────────────────────────────────────────────
 
---[=[
-	N개의 팀을 생성합니다. 기존 팀이 있으면 먼저 제거 후 재생성합니다.
-	@param count number  생성할 팀 수 (1 이상)
-]=]
 function TeamService:CreateTeams(count: number)
 	assert(count >= 1, "count must be >= 1")
 	self:ClearTeams()
@@ -112,12 +103,6 @@ function TeamService:CreateTeams(count: number)
 	end
 end
 
---[=[
-	플레이어를 특정 팀에 배정합니다.
-	player.Team이 설정되면 Roblox가 자동으로 클라이언트에 복제합니다.
-	@param player Player
-	@param teamIndex number  1부터 시작
-]=]
 function TeamService:AssignTeam(player: Player, teamIndex: number)
 	local team = self._teams[teamIndex]
 	if not team then
@@ -127,18 +112,11 @@ function TeamService:AssignTeam(player: Player, teamIndex: number)
 	player.Team = team
 end
 
---[=[
-	플레이어를 팀 없음(FFA) 상태로 만듭니다.
-	@param player Player
-]=]
 function TeamService:ClearPlayerTeam(player: Player)
 	player.Team = nil
 	player.Neutral = true
 end
 
---[=[
-	생성된 모든 팀을 제거하고 모든 플레이어를 Neutral 상태로 만듭니다.
-]=]
 function TeamService:ClearTeams()
 	for _, team in self._teams do
 		team:Destroy()
@@ -151,11 +129,6 @@ function TeamService:ClearTeams()
 	end
 end
 
---[=[
-	플레이어의 현재 팀 인덱스를 반환합니다.
-	팀이 없으면 nil 반환 (FFA 상태).
-	@return number?
-]=]
 function TeamService:GetTeamIndex(player: Player): number?
 	if player.Neutral or not player.Team then
 		return nil
@@ -168,9 +141,6 @@ function TeamService:GetTeamIndex(player: Player): number?
 	return nil
 end
 
---[=[
-	현재 생성된 팀 수를 반환합니다.
-]=]
 function TeamService:GetTeamCount(): number
 	local count = 0
 	for _ in self._teams do
@@ -180,70 +150,65 @@ function TeamService:GetTeamCount(): number
 end
 
 --[=[
-	source가 target에게 대미지를 줄 수 있는지 판단합니다.
+	source와 target이 서로 적 관계인지 반환합니다.
 
 	규칙:
-	  source == nil          → true  (환경 대미지)
-	  source == target       → true  (자해 허용)
-	  둘 중 하나라도 팀 없음  → true  (FFA)
-	  같은 팀               → false (팀킬 방지)
+	  source or target 팀 없음 → true  (FFA)
+	  같은 팀               → false
 	  다른 팀               → true
 
-	@param source Player?  공격자 (nil이면 환경/자해 대미지)
-	@param target Player   피격자
+	nil / self 케이스는 호출 측에서 처리하세요.
+	  (HpService: source ~= nil and source ~= target 가드 후 호출)
+	  (classifyHits: char ~= attacker 가드 후 호출)
+
+	@param source Player
+	@param target Player
 	@return boolean
 ]=]
-function TeamService:CanDamage(source: Player?, target: Player): boolean
-	if source == nil or source == target then
-		return true
-	end
-
+function TeamService:IsEnemy(source: Player, target: Player): boolean
 	if source.Neutral or target.Neutral then
 		return true
 	end
-
 	if areTeamMates(source, target) then
 		return false
 	end
-
 	return true
 end
 
 --[=[
-	victims 목록에서 source와 같은 팀인 플레이어만 반환합니다.
+	victims 목록에서 source와 같은 팀인 캐릭터만 반환합니다.
 	source 자신은 포함하지 않습니다.
-	InstantHit.apply의 victims를 onHitChecked에서 필터링할 때 사용합니다.
 
 	@param source Player
 	@param victims { Model }
-	@return { Player }
+	@return { Model }
 ]=]
-function TeamService:FilterTeammates(source: Player, victims: { Model }): { Player }
-	local result: { Player } = {}
+function TeamService:FilterTeammates(source: Player, victims: { Model }): { Model }
+	local result: { Model } = {}
 	for _, char in victims do
 		local player = Players:GetPlayerFromCharacter(char)
 		if player and player ~= source and areTeamMates(source, player) then
-			table.insert(result, player)
+			table.insert(result, char)
 		end
 	end
 	return result
 end
 
 --[=[
-	victims 목록에서 source가 공격 가능한 적 플레이어만 반환합니다.
-	CanDamage 규칙을 따릅니다 (FFA 포함).
-	InstantHit.apply의 victims를 onHitChecked에서 필터링할 때 사용합니다.
+	victims 목록에서 source의 적 캐릭터만 반환합니다.
+	IsEnemy 규칙을 따릅니다 (FFA 포함).
+	source 자신은 포함하지 않습니다.
 
 	@param source Player
 	@param victims { Model }
-	@return { Player }
+	@return { Model }
 ]=]
-function TeamService:FilterEnemies(source: Player, victims: { Model }): { Player }
-	local result: { Player } = {}
+function TeamService:FilterEnemies(source: Player, victims: { Model }): { Model }
+	local result: { Model } = {}
 	for _, char in victims do
 		local player = Players:GetPlayerFromCharacter(char)
-		if player and self:CanDamage(source, player) then
-			table.insert(result, player)
+		if player and player ~= source and self:IsEnemy(source, player) then
+			table.insert(result, char)
 		end
 	end
 	return result

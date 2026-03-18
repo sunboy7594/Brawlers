@@ -25,7 +25,7 @@
 
 	팀 시스템 연동:
 	  ApplyDamage(target, amount, source?)
-	  source가 있고 source ≠ target일 때 TeamService:CanDamage 체크.
+	  source가 있고 source ≠ target일 때 TeamService:IsEnemy 체크.
 	  같은 팀이면 대미지 무시.
 	  source == nil이면 환경 대미지로 간주하여 항상 적용.
 ]=]
@@ -58,7 +58,7 @@ export type HpService = typeof(setmetatable(
 		_teamService: any,
 		_hpData: { [number]: PlayerHp },
 		_playerMaids: { [number]: any },
-		OnDeath: any, -- Signal<Player>
+		OnDeath: any,
 	},
 	{} :: typeof({ __index = {} })
 ))
@@ -81,12 +81,10 @@ function HpService.Init(self: HpService, serviceBag: ServiceBag.ServiceBag): ()
 end
 
 function HpService.Start(self: HpService): ()
-	-- 클래스 변경 구독 → maxHp 갱신
 	self._maid:GiveTask(self._classService.ClassChanged:Connect(function(player: Player, className: string)
 		self:_onClassChanged(player, className)
 	end))
 
-	-- 플레이어 라이프사이클
 	for _, player in Players:GetPlayers() do
 		self:_onPlayerAdded(player)
 	end
@@ -108,7 +106,6 @@ function HpService:_onPlayerAdded(player: Player)
 		local className = self._classService:GetClass(player)
 		local baseMax = HpConfig.GetBaseMaxHp(className)
 
-		-- 패시브 등으로 이미 maxHp가 조정된 경우 그 값을 유지
 		local existing = self._hpData[player.UserId]
 		local max = if existing and existing.className == className then existing.max else baseMax
 
@@ -140,7 +137,6 @@ function HpService:_onClassChanged(player: Player, className: string)
 	if not data then
 		return
 	end
-	-- 기존 HP 비율 유지하면서 maxHp를 새 클래스 기준으로 갱신
 	local ratio = if data.max > 0 then data.current / data.max else 1
 	local newMax = HpConfig.GetBaseMaxHp(className)
 	data.className = className
@@ -176,7 +172,7 @@ end
 	대미지를 적용합니다.
 
 	팀 체크:
-	  source가 있고 source ≠ target일 때 TeamService:CanDamage로 팀킬 여부 판단.
+	  source가 있고 source ≠ target일 때 TeamService:IsEnemy로 팀킬 여부 판단.
 	  같은 팀이면 대미지를 무시합니다.
 	  source == nil이면 환경 대미지로 간주하여 항상 적용.
 
@@ -192,9 +188,8 @@ function HpService:ApplyDamage(target: Player, amount: number, source: Player?)
 		return
 	end
 
-	-- 팀 체크: source가 있고 자기 자신이 아닌 경우에만
 	if source and source ~= target then
-		if not self._teamService:CanDamage(source, target) then
+		if not self._teamService:IsEnemy(source, target) then
 			return
 		end
 	end

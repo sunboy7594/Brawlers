@@ -34,103 +34,108 @@ export type CycleRef = { base: number, value: number }
 
 -- ─── Idle ────────────────────────────────────────────────────────────────────
 
-local function makeIdle(_intensity: number): AnimDef
-	local RootPose = CFrame.new(0.0000, -0.1027, 0.0090) * CFrame.Angles(-0.0000, 0.0000, -0.0000)
-	local WaistPose = CFrame.new(-0.0360, 0.0122, 0.1342) * CFrame.Angles(-0.1806, -0.2577, -0.0465)
-	local NeckPose = CFrame.new(-0.0405, 0.0159, -0.0095) * CFrame.Angles(0.0842, 0.2608, 0.0233)
-	local LeftShoulderPose = CFrame.new(0.0142, -0.0648, -0.1630) * CFrame.Angles(-0.2159, -0.2732, -0.3542)
-	local RightShoulderPose = CFrame.new(0.0425, -0.0234, 0.0362) * CFrame.Angles(-0.1723, 0.3210, 0.3493)
-	local LeftElbowPose = CFrame.new(0.0000, -0.0731, 0.0999) * CFrame.Angles(0.8727, -0.0000, 0.0000)
-	local RightElbowPose = CFrame.new(0.0000, -0.0068, -0.0134) * CFrame.Angles(0.5236, -0.0000, 0.0000)
-	local LeftWristPose = CFrame.new(-0.0000, -0.0000, 0.0000) * CFrame.Angles(-0.0000, -0.0000, 0.0000)
-	local RightWristPose = CFrame.new(-0.0000, -0.0000, -0.0000) * CFrame.Angles(-0.0000, -0.0000, 0.0000)
-	local LeftHipPose = CFrame.new(-0.1311, -0.0026, -0.1711) * CFrame.Angles(0.2492, -0.1980, -0.0698)
-	local RightHipPose = CFrame.new(0.1182, 0.0141, 0.0425) * CFrame.Angles(0.0157, -0.2611, 0.0900)
-	local LeftKneePose = CFrame.new(-0.0000, 0.0161, -0.0195) * CFrame.Angles(-0.5236, 0.0000, 0.0000)
-	local RightKneePose = CFrame.new(-0.0000, 0.0469, 0.0661) * CFrame.Angles(-0.3491, -0.0000, 0.0000)
-	local LeftAnklePose = CFrame.new(-0.0087, 0.1051, -0.2099) * CFrame.Angles(0.2776, 0.0005, 0.1163)
-	local RightAnklePose = CFrame.new(0.0123, 0.0781, -0.1783) * CFrame.Angles(0.3414, 0.0876, -0.0863)
+-- [변경] 포즈 상수를 모듈 레벨로 호이스팅
+local IDLE_ROOT_POSE = CFrame.new(0.0000, -0.1027, 0.0090) * CFrame.Angles(-0.0000, 0.0000, -0.0000)
+local IDLE_WAIST_POSE = CFrame.new(-0.0360, 0.0122, 0.1342) * CFrame.Angles(-0.1806, -0.2577, -0.0465)
+local IDLE_NECK_POSE = CFrame.new(-0.0405, 0.0159, -0.0095) * CFrame.Angles(0.0842, 0.2608, 0.0233)
+local IDLE_LEFT_SHOULDER_POSE = CFrame.new(0.0142, -0.0648, -0.1630) * CFrame.Angles(-0.2159, -0.2732, -0.3542)
+local IDLE_RIGHT_SHOULDER_POSE = CFrame.new(0.0425, -0.0234, 0.0362) * CFrame.Angles(-0.1723, 0.3210, 0.3493)
+local IDLE_LEFT_ELBOW_POSE = CFrame.new(0.0000, -0.0731, 0.0999) * CFrame.Angles(0.8727, -0.0000, 0.0000)
+local IDLE_RIGHT_ELBOW_POSE = CFrame.new(0.0000, -0.0068, -0.0134) * CFrame.Angles(0.5236, -0.0000, 0.0000)
+local IDLE_LEFT_WRIST_POSE = CFrame.new(-0.0000, -0.0000, 0.0000) * CFrame.Angles(-0.0000, -0.0000, 0.0000)
+local IDLE_RIGHT_WRIST_POSE = CFrame.new(-0.0000, -0.0000, -0.0000) * CFrame.Angles(-0.0000, -0.0000, 0.0000)
+local IDLE_LEFT_HIP_POSE = CFrame.new(-0.1311, -0.0026, -0.1711) * CFrame.Angles(0.2492, -0.1980, -0.0698)
+local IDLE_RIGHT_HIP_POSE = CFrame.new(0.1182, 0.0141, 0.0425) * CFrame.Angles(0.0157, -0.2611, 0.0900)
+local IDLE_LEFT_KNEE_POSE = CFrame.new(-0.0000, 0.0161, -0.0195) * CFrame.Angles(-0.5236, 0.0000, 0.0000)
+local IDLE_RIGHT_KNEE_POSE = CFrame.new(-0.0000, 0.0469, 0.0661) * CFrame.Angles(-0.3491, -0.0000, 0.0000)
+local IDLE_LEFT_ANKLE_POSE = CFrame.new(-0.0087, 0.1051, -0.2099) * CFrame.Angles(0.2776, 0.0005, 0.1163)
+local IDLE_RIGHT_ANKLE_POSE = CFrame.new(0.0123, 0.0781, -0.1783) * CFrame.Angles(0.3414, 0.0876, -0.0863)
 
+-- [추가] 외부에서 참조할 수 있도록 export
+BasicMovementAnimDef.IdleJoints = {
+	Root = function(_j, defaultC0, ac): OnUpdate
+		return function(j, dt)
+			ac:spring(j, defaultC0 * IDLE_ROOT_POSE, 10, 0.3, dt)
+		end
+	end,
+	Waist = function(_j, defaultC0, ac): OnUpdate
+		return function(j, dt)
+			ac:spring(j, defaultC0 * IDLE_WAIST_POSE, 10, 0.3, dt)
+		end
+	end,
+	Neck = function(_j, defaultC0, ac): OnUpdate
+		return function(j, dt)
+			ac:spring(j, defaultC0 * IDLE_NECK_POSE, 10, 0.3, dt)
+		end
+	end,
+	LeftShoulder = function(_j, defaultC0, ac): OnUpdate
+		return function(j, dt)
+			ac:spring(j, defaultC0 * IDLE_LEFT_SHOULDER_POSE, 10, 0.3, dt)
+		end
+	end,
+	RightShoulder = function(_j, defaultC0, ac): OnUpdate
+		return function(j, dt)
+			ac:spring(j, defaultC0 * IDLE_RIGHT_SHOULDER_POSE, 10, 0.3, dt)
+		end
+	end,
+	LeftElbow = function(_j, defaultC0, ac): OnUpdate
+		return function(j, dt)
+			ac:spring(j, defaultC0 * IDLE_LEFT_ELBOW_POSE, 10, 0.3, dt)
+		end
+	end,
+	RightElbow = function(_j, defaultC0, ac): OnUpdate
+		return function(j, dt)
+			ac:spring(j, defaultC0 * IDLE_RIGHT_ELBOW_POSE, 10, 0.3, dt)
+		end
+	end,
+	LeftWrist = function(_j, defaultC0, ac): OnUpdate
+		return function(j, dt)
+			ac:spring(j, defaultC0 * IDLE_LEFT_WRIST_POSE, 10, 0.3, dt)
+		end
+	end,
+	RightWrist = function(_j, defaultC0, ac): OnUpdate
+		return function(j, dt)
+			ac:spring(j, defaultC0 * IDLE_RIGHT_WRIST_POSE, 10, 0.3, dt)
+		end
+	end,
+	LeftHip = function(_j, defaultC0, ac): OnUpdate
+		return function(j, dt)
+			ac:spring(j, defaultC0 * IDLE_LEFT_HIP_POSE, 10, 1, dt)
+		end
+	end,
+	RightHip = function(_j, defaultC0, ac): OnUpdate
+		return function(j, dt)
+			ac:spring(j, defaultC0 * IDLE_RIGHT_HIP_POSE, 10, 1, dt)
+		end
+	end,
+	LeftKnee = function(_j, defaultC0, ac): OnUpdate
+		return function(j, dt)
+			ac:spring(j, defaultC0 * IDLE_LEFT_KNEE_POSE, 10, 1, dt)
+		end
+	end,
+	RightKnee = function(_j, defaultC0, ac): OnUpdate
+		return function(j, dt)
+			ac:spring(j, defaultC0 * IDLE_RIGHT_KNEE_POSE, 10, 1, dt)
+		end
+	end,
+	LeftAnkle = function(_j, defaultC0, ac): OnUpdate
+		return function(j, dt)
+			ac:spring(j, defaultC0 * IDLE_LEFT_ANKLE_POSE, 10, 1, dt)
+		end
+	end,
+	RightAnkle = function(_j, defaultC0, ac): OnUpdate
+		return function(j, dt)
+			ac:spring(j, defaultC0 * IDLE_RIGHT_ANKLE_POSE, 10, 1, dt)
+		end
+	end,
+}
+
+-- [변경] makeIdle은 IdleJoints를 그대로 재사용
+local function makeIdle(_intensity: number): AnimDef
 	return {
 		type = "anim",
 		layer = Layer.BASE,
-		joints = {
-			Root = function(_joint, defaultC0, ac): OnUpdate
-				return function(j, dt)
-					ac:spring(j, defaultC0 * RootPose, 10, 0.3, dt)
-				end
-			end,
-			Waist = function(_joint, defaultC0, ac): OnUpdate
-				return function(j, dt)
-					ac:spring(j, defaultC0 * WaistPose, 10, 0.3, dt)
-				end
-			end,
-			Neck = function(_joint, defaultC0, ac): OnUpdate
-				return function(j, dt)
-					ac:spring(j, defaultC0 * NeckPose, 10, 0.3, dt)
-				end
-			end,
-			LeftShoulder = function(_joint, defaultC0, ac): OnUpdate
-				return function(j, dt)
-					ac:spring(j, defaultC0 * LeftShoulderPose, 10, 0.3, dt)
-				end
-			end,
-			RightShoulder = function(_joint, defaultC0, ac): OnUpdate
-				return function(j, dt)
-					ac:spring(j, defaultC0 * RightShoulderPose, 10, 0.3, dt)
-				end
-			end,
-			LeftElbow = function(_joint, defaultC0, ac): OnUpdate
-				return function(j, dt)
-					ac:spring(j, defaultC0 * LeftElbowPose, 10, 0.3, dt)
-				end
-			end,
-			RightElbow = function(_joint, defaultC0, ac): OnUpdate
-				return function(j, dt)
-					ac:spring(j, defaultC0 * RightElbowPose, 10, 0.3, dt)
-				end
-			end,
-			LeftWrist = function(_joint, defaultC0, ac): OnUpdate
-				return function(j, dt)
-					ac:spring(j, defaultC0 * LeftWristPose, 10, 0.3, dt)
-				end
-			end,
-			RightWrist = function(_joint, defaultC0, ac): OnUpdate
-				return function(j, dt)
-					ac:spring(j, defaultC0 * RightWristPose, 10, 0.3, dt)
-				end
-			end,
-			LeftHip = function(_joint, defaultC0, ac): OnUpdate
-				return function(j, dt)
-					ac:spring(j, defaultC0 * LeftHipPose, 10, 1, dt)
-				end
-			end,
-			RightHip = function(_joint, defaultC0, ac): OnUpdate
-				return function(j, dt)
-					ac:spring(j, defaultC0 * RightHipPose, 10, 1, dt)
-				end
-			end,
-			LeftKnee = function(_joint, defaultC0, ac): OnUpdate
-				return function(j, dt)
-					ac:spring(j, defaultC0 * LeftKneePose, 10, 1, dt)
-				end
-			end,
-			RightKnee = function(_joint, defaultC0, ac): OnUpdate
-				return function(j, dt)
-					ac:spring(j, defaultC0 * RightKneePose, 10, 1, dt)
-				end
-			end,
-			LeftAnkle = function(_joint, defaultC0, ac): OnUpdate
-				return function(j, dt)
-					ac:spring(j, defaultC0 * LeftAnklePose, 10, 1, dt)
-				end
-			end,
-			RightAnkle = function(_joint, defaultC0, ac): OnUpdate
-				return function(j, dt)
-					ac:spring(j, defaultC0 * RightAnklePose, 10, 1, dt)
-				end
-			end,
-		},
+		joints = BasicMovementAnimDef.IdleJoints,
 	}
 end
 

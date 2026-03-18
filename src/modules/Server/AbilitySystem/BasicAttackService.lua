@@ -11,19 +11,19 @@
 	         소진 시 / max 도달 시 ResourceSync
 	- BasicAttackRemoting.Fire 수신 → 검증 → onFire 실행 → ResourceSync
 	- BasicAttackRemoting.FireEnd 수신 → hold/toggle 상태 관리
-	- 히트 체크 후 HitChecked:FireClient(공격자) 발송
+	- 히트 체크 후 HitChecked:FireClient(공격자) 발송 (enemies만)
 	- LoadoutRemoting.RequestEquipBasicAttack → 유효성 검증 후 장착 처리
+
+	victims 구조 변경:
+	  기존 { Model } flat 배열 → VictimSet { enemies, teammates, self }
+	  hitMap: { [shapeId]: VictimSet } — shape별 구분 접근 가능.
+	  HitChecked:FireClient에는 enemies만 전송 (기존 동작 유지).
 
 	ResourceSync 발송 시점:
 	- stack: 발사마다 + 장전 틱마다
 	- gauge: 발사마다 + 소진 시 + max 도달 시
 	- reloadRateMult / regenRateMult 변경 시 (PSC의 EffectiveMultipliersChanged)
 	- resourceDelta 적용 시 (PSC의 ResourceDeltaApplied)
-
-	리소스 배율:
-	- reloadRateMult: PSC에서 가져와 유효 reloadTime에 반영 (높을수록 빠른 장전)
-	- regenRateMult:  PSC에서 가져와 유효 regenRate에 반영  (높을수록 빠른 재생)
-	- ResourceSync에는 항상 유효 값(배율 적용됨)을 전송합니다.
 
 	Anti-exploit:
 	- FIRE_RATE_LIMIT (0.1초)
@@ -47,17 +47,19 @@ local AbilityTypes = require("AbilityTypes")
 local BasicAttackDefs = require("BasicAttackDefs")
 local BasicAttackRemoting = require("BasicAttackRemoting")
 local ClassService = require("ClassService")
+local InstantHit = require("InstantHit")
 local LoadoutRemoting = require("LoadoutRemoting")
 local Maid = require("Maid")
 local PlayerStateControllerService = require("PlayerStateControllerService")
 local ServiceBag = require("ServiceBag")
+local TeamService = require("TeamService")
 local cancellableDelay = require("cancellableDelay")
 
 -- ─── 상수 ────────────────────────────────────────────────────────────────────
 
 local FIRE_RATE_LIMIT = 0.1
 local MAX_DIRECTION_MAGNITUDE_DELTA = 0.1
-local MIN_RELOAD_RATE_MULT = 0.01 -- 0 나누기 방지
+local MIN_RELOAD_RATE_MULT = 0.01
 
 -- ⚠️ 주의: BasicAttackClient.lua의 INTERVAL_QUEUE_THRESHOLD와 반드시 동일해야 합니다.
 local INTERVAL_QUEUE_THRESHOLD = AbilityTypes.INTERVAL_QUEUE_THRESHOLD
@@ -108,15 +110,24 @@ export type BasicAttackState = {
 	aimTime: number,
 	effectiveAimTime: number,
 	idleTime: number,
-	victims: { Model }?,
+	effectiveIdleTime: number,
 
-	-- 판정 콜백
-	onHit: ((victims: { Model }) -> ())?,
+	-- 피격 결과 (enemies/teammates/self 분류)
+	victims: InstantHit.VictimSet?,
+	-- shape별 피격 결과
+	hitMap: InstantHit.HitMapResult?,
+
+	-- 판정 콜백 (HitMapResult를 받음)
+	onHit: ((results: InstantHit.HitMapResult) -> ())?,
+
+	-- 팀 판정용 주입 필드
+	teamService: any?,
+	attackerPlayer: Player?,
 
 	-- 예약 발사 취소 함수
 	pendingFireCancel: (() -> ())?,
 
-	-- 발사 수명 관리 (모듈이 GiveTask로 딜레이 히트 취소 등록)
+	-- 발사 수명 관리
 	fireMaid: any?,
 
 	-- snapshot 전용 주입 필드
@@ -152,6 +163,7 @@ export type BasicAttackService = typeof(setmetatable(
 		_maid: any,
 		_playerStateController: any,
 		_classService: any,
+		_teamService: any,
 		_playerStates: { [number]: BasicAttackState },
 		_playerMaids: { [number]: any },
 	},
@@ -170,6 +182,7 @@ function BasicAttackService.Init(self: BasicAttackService, serviceBag: ServiceBa
 	self._maid = Maid.new()
 	self._playerStateController = serviceBag:GetService(PlayerStateControllerService)
 	self._classService = serviceBag:GetService(ClassService)
+	self._teamService = serviceBag:GetService(TeamService)
 	self._playerStates = {}
 	self._playerMaids = {}
 end
@@ -205,14 +218,12 @@ function BasicAttackService.Start(self: BasicAttackService): ()
 		return self:_onRequestEquip(player, attackId)
 	end)
 
-	-- PSC 시그널 구독: resourceDelta 즉시 반영
 	self._maid:GiveTask(
 		self._playerStateController.ResourceDeltaApplied:Connect(function(player: Player, amount: number)
 			self:_applyResourceDelta(player, amount)
 		end)
 	)
 
-	-- PSC 시그널 구독: reloadRateMult/regenRateMult 변경 시 ResourceSync 재발송
 	self._maid:GiveTask(self._playerStateController.EffectiveMultipliersChanged:Connect(function(player: Player)
 		local state = self._playerStates[player.UserId]
 		if state then
@@ -263,9 +274,13 @@ function BasicAttackService:_onPlayerAdded(player: Player)
 		aimTime = 0,
 		effectiveAimTime = 0,
 		idleTime = 0,
-		victims = nil,
+		effectiveIdleTime = 0,
 
+		victims = nil,
+		hitMap = nil,
 		onHit = nil,
+		teamService = nil,
+		attackerPlayer = nil,
 		pendingFireCancel = nil,
 		fireMaid = nil,
 		playerStateController = nil,
@@ -400,7 +415,7 @@ function BasicAttackService:_onAimStarted(player: Player)
 	state.aimStartTime = now
 end
 
--- ─── FireEnd (hold/toggle) ────────────────────────────────────────────────────
+-- ─── FireEnd (hold/toggle) ───────────────────────────────────────────────────
 
 function BasicAttackService:_onFireEnd(player: Player)
 	local state = self._playerStates[player.UserId]
@@ -420,7 +435,6 @@ function BasicAttackService:_onFire(player: Player, direction: unknown)
 		return
 	end
 
-	-- 어빌리티 잠금 검증
 	if self._playerStateController:IsAbilityLocked(player, "BasicAttack") then
 		return
 	end
@@ -507,9 +521,11 @@ function BasicAttackService:_executeFire(player: Player, state: BasicAttackState
 	state.origin = state.rootPart.Position
 	state.direction = dir
 	state.aimTime = if state.aimStartTime > 0 then now - state.aimStartTime else 0
-	state.idleTime = if state.lastFireTime > 0 then now - state.lastFireTime else 0
+	state.idleTime = if state.lastFireTime > 0 then now - state.lastFireTime else math.huge
+	state.effectiveIdleTime = if state.lastHitTime > 0 then now - state.lastHitTime else math.huge
 	state.effectiveAimTime = 0
 	state.victims = nil
+	state.hitMap = nil
 
 	state.lastFireTime = now
 	state.aimStartTime = 0
@@ -529,20 +545,53 @@ function BasicAttackService:_executeFire(player: Player, state: BasicAttackState
 	end
 	state.fireMaid = Maid.new()
 
+	-- 팀 판정 주입
+	local attackerPlayer = Players:GetPlayerFromCharacter(state.attacker)
+	state.teamService = self._teamService
+	state.attackerPlayer = attackerPlayer
+
 	local snapshot = table.clone(state)
 	snapshot.victims = nil
+	snapshot.hitMap = nil
 	snapshot.onHit = nil
 	snapshot.pendingFireCancel = nil
 	snapshot.fireMaid = state.fireMaid
 	snapshot.playerStateController = self._playerStateController
 	snapshot.attackerStates = self._playerStateController:GetActiveEffects(player)
 
-	state.onHit = function(victims: { Model })
-		if #victims > 0 then
+	state.onHit = function(hitMap: InstantHit.HitMapResult)
+		-- merged VictimSet 생성 (중복 제거)
+		local merged: InstantHit.VictimSet = { enemies = {}, teammates = {}, self = nil }
+		local seenEnemies: { [Model]: boolean } = {}
+		local seenTeammates: { [Model]: boolean } = {}
+
+		for _, vs in hitMap do
+			if vs.self and not merged.self then
+				merged.self = vs.self
+			end
+			for _, m in vs.enemies do
+				if not seenEnemies[m] then
+					seenEnemies[m] = true
+					table.insert(merged.enemies, m)
+				end
+			end
+			for _, m in vs.teammates do
+				if not seenTeammates[m] then
+					seenTeammates[m] = true
+					table.insert(merged.teammates, m)
+				end
+			end
+		end
+
+		local totalCount = #merged.enemies + #merged.teammates + (if merged.self then 1 else 0)
+		if totalCount > 0 then
 			state.lastHitTime = os.clock()
 		end
-		state.victims = victims
-		snapshot.victims = victims
+
+		state.victims = merged
+		state.hitMap = hitMap
+		snapshot.victims = merged
+		snapshot.hitMap = hitMap
 		snapshot.fireComboCount = state.fireComboCount
 		snapshot.hitComboCount = state.hitComboCount
 
@@ -552,8 +601,9 @@ function BasicAttackService:_executeFire(player: Player, state: BasicAttackState
 			end
 		end
 
+		-- HitChecked: enemies만 클라이언트에 통보
 		local victimUserIds: { number } = {}
-		for _, victimModel in victims do
+		for _, victimModel in merged.enemies do
 			local victimPlayer = Players:GetPlayerFromCharacter(victimModel)
 			if victimPlayer then
 				table.insert(victimUserIds, victimPlayer.UserId)
@@ -571,12 +621,6 @@ end
 
 -- ─── 리소스 델타 적용 ────────────────────────────────────────────────────────
 
---[=[
-	PSC의 ResourceDeltaApplied 시그널에서 호출됩니다.
-	stack → currentStack 직접 증감
-	gauge → currentGauge 직접 증감
-	양수=충전/회복, 음수=소모.
-]=]
 function BasicAttackService:_applyResourceDelta(player: Player, amount: number)
 	local state = self._playerStates[player.UserId]
 	if not state then
@@ -700,9 +744,6 @@ end
 
 -- ─── 공개 API ────────────────────────────────────────────────────────────────
 
---[=[
-	공격불가 등 외부 이벤트로 전투 상태를 강제 초기화합니다.
-]=]
 function BasicAttackService:CancelCombatState(player: Player)
 	local state = self._playerStates[player.UserId]
 	if not state then
@@ -727,14 +768,11 @@ function BasicAttackService:CancelCombatState(player: Player)
 	state.onHit = nil
 end
 
--- BasicAttackService.lua
 function BasicAttackService:ForceEquip(player: Player, attackId: string): (boolean, string?)
 	if not ATTACK_REGISTRY[attackId] then
 		return false, "unknown attackId: " .. attackId
 	end
-	-- ① 먼저 클라에 attack 전환 알림 → SetEquippedAttack()로 새 state(zeros) 생성
 	LoadoutRemoting.EquippedBasicAttackChanged:FireClient(player, attackId)
-	-- ② 그 다음 서버 state 설정 + ResourceSync 발송 → 새 state에 값이 채워짐
 	self:_setPlayerAttack(player, attackId)
 	return true, nil
 end

@@ -5,16 +5,11 @@
 	범위 판정 유틸리티. 서버 전용.
 
 	변경 이력:
-	- damage / knockback 제거: 데미지는 onHitChecked에서 직접 처리.
-	- delay 제거: 공격 모듈에서 task.delay + fireMaid로 처리.
-	- HpService 주입 제거: applyEffects 삭제로 불필요.
-	- angle → angleMin / angleMax: DynamicIndicator 동일 기준 (부호 있는 각도).
-	- circle: radius / innerRadius 추가 (도넛 판정 지원).
-	- arc 추가: 착탄 지점(origin + direction * range) 기준 원판 판정.
-	- wallCheck 기본 true: false 지정 시에만 벽 차단 비활성화.
-	  CollisionGroup "HitCheck" 사용 → "Characters" 그룹 파츠 자동 통과.
-	- attacker 자신 포함: getCharactersInSphere에서 attacker 제외 필터 제거.
-	  onHitChecked에서 victimModel == state.attacker로 자기자신 구별.
+	- apply() 제거: applyMap()으로 통합.
+	- VictimSet 도입: enemies / teammates / self 로 분류.
+	  classifyHits에서 TeamService:IsEnemy 기준으로 자동 분류.
+	- HitMapResult: { [shapeId]: VictimSet }
+	  DynamicIndicator의 shapeMap과 동일한 id 구조.
 
 	지원 shape:
 	- "cone":   부채꼴 (range, angleMin, angleMax)
@@ -26,15 +21,16 @@
 	- 기본 true: attacker HRP → victim HRP 단일 Ray, 벽에 막히면 판정 제외.
 	- false 지정 시만 비활성화.
 	- CollisionGroup "HitCheck"는 "Characters"와 비충돌로 설정 필요.
-	  (PhysicsService 초기화는 BrawlersService 또는 별도 스크립트에서 수행)
 
-	apply():
-	- 즉시 판정, 반환값 없음.
-	- delay가 필요하면 호출부에서 task.delay + fireMaid 처리.
-	- onHit에는 항상 state.onHit 전달.
+	applyMap():
+	- hitMap의 각 shape를 판정 후 VictimSet으로 분류.
+	- onHit: { [shapeId]: VictimSet }
+	- delay가 필요하면 HitConfig.delay 사용.
 ]=]
 
 local require = require(script.Parent.loader).load(script)
+
+local Players = game:GetService("Players")
 
 local cancellableDelay = require("cancellableDelay")
 
@@ -47,9 +43,6 @@ export type HitConfig = {
 	range: number?,
 
 	-- cone 전용 (도 단위, 전방 기준, 부호 있는 각도)
-	-- 예) 중앙 90도  → angleMin=-45, angleMax=45
-	-- 예) 오른쪽만   → angleMin=0,   angleMax=90
-	-- 예) 전방향     → angleMin=-180, angleMax=180 (기본값)
 	angleMin: number?,
 	angleMax: number?,
 
@@ -57,22 +50,41 @@ export type HitConfig = {
 	width: number?,
 
 	-- circle 전용
-	radius: number?, -- 원 반지름 (기본 5)
-	innerRadius: number?, -- 도넛 내경 (기본 0, 0이면 꽉 찬 원)
+	radius: number?,
+	innerRadius: number?,
 
-	-- arc 전용: 착탄 지점 = origin + dirH * range 기준 원판
-	arcRadius: number?, -- 착탄 반경 (기본 3)
+	-- arc 전용
+	arcRadius: number?,
 
 	-- 벽 차단 (false 지정 시만 비활성화, 기본 true)
 	wallCheck: boolean?,
 
-	delay: number?, -- nil / 0이면 즉발
+	delay: number?,
 }
 
--- ─── RaycastParams (모듈 로드 시 1회 생성) ───────────────────────────────────
+--[=[
+	판정 결과를 관계별로 분류한 구조체.
+	enemies   : attacker 기준 적군 (TeamService:IsEnemy == true)
+	teammates : 같은 팀 (자신 제외)
+	self      : attacker 본인 캐릭터 (판정 범위에 포함된 경우)
+]=]
+export type VictimSet = {
+	enemies: { Model },
+	teammates: { Model },
+	self: Model?,
+}
 
--- "HitCheck" CollisionGroup은 "Characters" 그룹과 비충돌로 설정되어야 함.
--- 캐릭터 파츠를 자동 통과, 환경(벽 등)만 감지.
+--[=[
+	shape id → VictimSet 맵.
+	DynamicIndicator의 shapeMap과 동일한 id 구조.
+	예) { inner = VictimSet, outer = VictimSet }
+]=]
+export type HitMapResult = { [string]: VictimSet }
+
+export type HitMap = { [string]: HitConfig }
+
+-- ─── RaycastParams ───────────────────────────────────────────────────────────
+
 local WALL_CHECK_PARAMS = RaycastParams.new()
 WALL_CHECK_PARAMS.CollisionGroup = "HitCheck"
 
@@ -80,16 +92,8 @@ WALL_CHECK_PARAMS.CollisionGroup = "HitCheck"
 
 local InstantHit = {}
 
---[=[
-	구 범위 내 생존 캐릭터 수집.
-	attacker 자신도 포함합니다.
-	onHitChecked에서 victimModel == state.attacker로 자기자신을 구별하세요.
-]=]
-local function getCharactersInSphere(origin: Vector3, searchRadius: number, _attacker: Model): { Model }
-	local params = OverlapParams.new()
-	-- attacker 제외 없음 → 자기자신 포함
-
-	local parts = workspace:GetPartBoundsInRadius(origin, searchRadius, params)
+local function getCharactersInSphere(origin: Vector3, searchRadius: number): { Model }
+	local parts = workspace:GetPartBoundsInRadius(origin, searchRadius, OverlapParams.new())
 	local seen: { [Model]: boolean } = {}
 	local result: { Model } = {}
 
@@ -108,8 +112,6 @@ local function getCharactersInSphere(origin: Vector3, searchRadius: number, _att
 	return result
 end
 
--- 부채꼴 필터
--- angleMin~angleMax: 전방 기준 부호 있는 각도 (도). DynamicIndicator 동일 기준.
 local function filterCone(
 	origin: Vector3,
 	direction: Vector3,
@@ -142,7 +144,6 @@ local function filterCone(
 		end
 
 		if horizontal.Magnitude < 0.001 then
-			-- origin과 거의 겹침 → 무조건 히트 (자기자신 포함)
 			table.insert(result, char)
 			continue
 		end
@@ -160,7 +161,6 @@ local function filterCone(
 	return result
 end
 
--- 직선 필터
 local function filterLine(
 	origin: Vector3,
 	direction: Vector3,
@@ -199,8 +199,6 @@ local function filterLine(
 	return result
 end
 
--- 원/도넛 필터
--- innerRadius > 0 → 도넛 (내경 안쪽 제외)
 local function filterCircle(origin: Vector3, chars: { Model }, radius: number, innerRadius: number): { Model }
 	local result: { Model } = {}
 	for _, char in chars do
@@ -220,9 +218,6 @@ local function filterCircle(origin: Vector3, chars: { Model }, radius: number, i
 	return result
 end
 
--- arc 착탄 필터
--- 착탄 지점 = origin + dirH * range, 그 지점 기준 arcRadius 원판 판정.
--- DynamicIndicator posUpdateArc의 t=1 착탄 지점과 동일 기준.
 local function filterArc(
 	origin: Vector3,
 	direction: Vector3,
@@ -256,8 +251,6 @@ local function filterArc(
 	return result
 end
 
--- attacker HRP → target HRP 단일 Ray.
--- CollisionGroup "HitCheck": Characters 파츠 통과, 환경(벽 등)만 감지.
 local function isObstructed(attackerHRP: BasePart, targetRootPart: BasePart): boolean
 	local from = attackerHRP.Position
 	local to = targetRootPart.Position
@@ -265,7 +258,6 @@ local function isObstructed(attackerHRP: BasePart, targetRootPart: BasePart): bo
 	return result ~= nil
 end
 
--- 벽 차단 필터. useWallCheck == true일 때만 호출.
 local function applyWallCheck(attackerHRP: BasePart, hits: { Model }): { Model }
 	local result: { Model } = {}
 	for _, char in hits do
@@ -277,7 +269,6 @@ local function applyWallCheck(attackerHRP: BasePart, hits: { Model }): { Model }
 	return result
 end
 
--- shape에 따라 판정 후 적중 목록 반환
 local function doHit(attacker: Model, origin: Vector3, direction: Vector3, config: HitConfig): { Model }
 	local useWallCheck = config.wallCheck ~= false
 	local attackerHRP = if useWallCheck then attacker:FindFirstChild("HumanoidRootPart") :: BasePart? else nil
@@ -286,15 +277,15 @@ local function doHit(attacker: Model, origin: Vector3, direction: Vector3, confi
 
 	if config.shape == "cone" then
 		local range = config.range or 8
-		local candidates = getCharactersInSphere(origin, range, attacker)
+		local candidates = getCharactersInSphere(origin, range)
 		hits = filterCone(origin, direction, candidates, range, config.angleMin or -180, config.angleMax or 180)
 	elseif config.shape == "line" then
 		local range = config.range or 10
-		local candidates = getCharactersInSphere(origin, range, attacker)
+		local candidates = getCharactersInSphere(origin, range)
 		hits = filterLine(origin, direction, candidates, range, config.width or 2)
 	elseif config.shape == "circle" then
 		local radius = config.radius or 5
-		local candidates = getCharactersInSphere(origin, radius, attacker)
+		local candidates = getCharactersInSphere(origin, radius)
 		hits = filterCircle(origin, candidates, radius, config.innerRadius or 0)
 	elseif config.shape == "arc" then
 		local range = config.range or 20
@@ -302,7 +293,7 @@ local function doHit(attacker: Model, origin: Vector3, direction: Vector3, confi
 		local dirH = Vector3.new(direction.X, 0, direction.Z)
 		dirH = if dirH.Magnitude < 0.001 then Vector3.new(0, 0, -1) else dirH.Unit
 		local landingOrigin = Vector3.new(origin.X + dirH.X * range, origin.Y, origin.Z + dirH.Z * range)
-		local candidates = getCharactersInSphere(landingOrigin, arcRadius, attacker)
+		local candidates = getCharactersInSphere(landingOrigin, arcRadius)
 		hits = filterArc(origin, direction, candidates, range, arcRadius)
 	else
 		hits = {}
@@ -315,49 +306,103 @@ local function doHit(attacker: Model, origin: Vector3, direction: Vector3, confi
 	return hits
 end
 
+--[=[
+	geometry 판정 결과를 enemies / teammates / self 로 분류합니다.
+
+	attacker 본인은 self에 저장.
+	나머지는 TeamService:IsEnemy 기준으로 enemies / teammates 분류.
+	teamService 또는 attackerPlayer가 nil이면 attacker 제외 전체를 enemies로 취급.
+]=]
+local function classifyHits(hits: { Model }, attacker: Model, attackerPlayer: Player?, teamService: any?): VictimSet
+	local result: VictimSet = { enemies = {}, teammates = {}, self = nil }
+
+	for _, char in hits do
+		-- 본인 분류
+		if char == attacker then
+			result.self = char
+			continue
+		end
+
+		local player = Players:GetPlayerFromCharacter(char)
+		if not player then
+			continue
+		end
+
+		if teamService and attackerPlayer then
+			if teamService:IsEnemy(attackerPlayer, player) then
+				table.insert(result.enemies, char)
+			else
+				table.insert(result.teammates, char)
+			end
+		else
+			-- teamService 없으면 전부 enemy 취급
+			table.insert(result.enemies, char)
+		end
+	end
+
+	return result
+end
+
 -- ─── 공개 API ────────────────────────────────────────────────────────────────
 
 --[=[
-	범위 판정을 즉시 실행합니다.
-	attacker 자신도 victims에 포함됩니다.
-	onHitChecked에서 victimModel == state.attacker 비교로 자기자신을 구별하세요.
+	이름(id) 기반 멀티 shape 판정을 실행합니다.
+	DynamicIndicator.new(shapeMap)과 동일한 맵 구조를 받습니다.
 
-	delay가 필요한 경우:
-	  호출부에서 task.delay + fireMaid로 처리.
-	  예)
-	    local cancelled = false
-	    state.fireMaid:GiveTask(function() cancelled = true end)
-	    task.delay(0.3, function()
-	      if cancelled then return end
-	      InstantHit.apply(state.attacker, state.origin, state.direction, config, state.onHit)
-	    end)
+	onHit 콜백: { [shapeId]: VictimSet }
+	  → enemies / teammates / self 로 분류된 결과.
+	  → 같은 캐릭터가 여러 zone에 중복 포함될 수 있음.
 
-	onHit:
-	  항상 state.onHit 전달. nil이면 판정만 수행.
+	delay:
+	  HitConfig.delay > 0이면 cancellableDelay 사용.
+	  hitMap 내 첫 번째 config의 delay 기준 (공통 delay 가정).
+	  개별 delay가 필요하면 applyMap 호출을 분리하세요.
+
+	@param attacker      Model
+	@param origin        Vector3
+	@param direction     Vector3
+	@param hitMap        HitMap
+	@param onHit         ((HitMapResult) -> ())?
+	@param fireMaid      any?
+	@param teamService   any?   TeamService 인스턴스
+	@param attackerPlayer Player?
 ]=]
-function InstantHit.apply(
+function InstantHit.applyMap(
 	attacker: Model,
 	origin: Vector3,
 	direction: Vector3,
-	config: HitConfig,
-	onHit: ((victims: { Model }) -> ())?,
-	fireMaid: any?
+	hitMap: HitMap,
+	onHit: ((results: HitMapResult) -> ())?,
+	fireMaid: any?,
+	teamService: any?,
+	attackerPlayer: Player?
 ): ()
-	if config.delay and config.delay > 0 then
-		local cancel = cancellableDelay(config.delay, function()
+	local function execute()
+		local results: HitMapResult = {}
+		for id, config in hitMap do
 			local hits = doHit(attacker, origin, direction, config)
-			if onHit then
-				onHit(hits)
-			end
-		end)
+			results[id] = classifyHits(hits, attacker, attackerPlayer, teamService)
+		end
+		if onHit then
+			onHit(results)
+		end
+	end
+
+	local delay: number? = nil
+	for _, config in hitMap do
+		if config.delay and config.delay > 0 then
+			delay = config.delay
+		end
+		break
+	end
+
+	if delay and delay > 0 then
+		local cancel = cancellableDelay(delay, execute)
 		if fireMaid then
 			fireMaid:GiveTask(cancel)
 		end
 	else
-		local hits = doHit(attacker, origin, direction, config)
-		if onHit then
-			onHit(hits)
-		end
+		execute()
 	end
 end
 

@@ -5,13 +5,17 @@
 	탱크 주먹 공격 서버 모듈.
 
 	onFire:
-	- InstantHit.apply()에 state.onHit을 콜백으로 전달
-	- 1,2콤보: cone range 8 / angleMin=-45, angleMax=45
-	- 3콤보:   cone range 10 / angleMin=-60, angleMax=60
+	- applyMap으로 멀티 shape 판정.
+	- 1,2콤보: main  cone range 8  / angleMin=-45, angleMax=45
+	- 3콤보:   inner cone range 5  / angleMin=-45, angleMax=45 (강타)
+	           outer cone range 10 / angleMin=-60, angleMax=60 (날림)
 
 	onHitChecked:
-	- 1,2콤보: damage effect (anim_hit + screen_hit_red)
-	- 3콤보:   knockback effect (anim_knockback + cam_knockback)
+	- snapshot.victims.enemies 기준으로 처리.
+	- snapshot.hitMap으로 zone별 구분 접근 가능.
+	- 1,2콤보: damage 20
+	- 3콤보 inner: damage 40 + knockback
+	- 3콤보 outer (inner 미포함): damage 20
 ]=]
 
 local require = require(script.Parent.loader).load(script)
@@ -32,9 +36,12 @@ type BasicAttackState = {
 	indicator: any,
 	animator: any?,
 	fireMaid: any?,
-	victims: { any }?,
+	victims: InstantHit.VictimSet?,
+	hitMap: InstantHit.HitMapResult?,
 	attacker: Model?,
-	onHit: ((victims: { Model }) -> ())?,
+	onHit: ((results: InstantHit.HitMapResult) -> ())?,
+	teamService: any?,
+	attackerPlayer: Player?,
 	playerStateController: any?,
 	attackerStates: { any }?,
 }
@@ -43,7 +50,7 @@ local IDLE_COMBO_RESET = 3.0
 
 return {
 	onFire = {
-		function(state)
+		function(state: BasicAttackState)
 			if not state.attacker then
 				return
 			end
@@ -51,31 +58,26 @@ return {
 			if state.idleTime >= IDLE_COMBO_RESET then
 				state.fireComboCount = 0
 			end
-
 			state.fireComboCount = (state.fireComboCount % 3) + 1
 
 			if state.fireComboCount == 3 then
-				InstantHit.apply(state.attacker, state.origin, state.direction, {
-					shape = "cone",
-					range = 10,
-					angleMin = -60,
-					angleMax = 60,
-				}, state.onHit)
+				-- 3콤보: inner(강타) + outer(날림) 구분
+				InstantHit.applyMap(state.attacker, state.origin, state.direction, {
+					inner = { shape = "cone", range = 5, angleMin = -45, angleMax = 45 },
+					outer = { shape = "cone", range = 10, angleMin = -60, angleMax = 60 },
+				}, state.onHit, state.fireMaid, state.teamService, state.attackerPlayer)
 			else
-				InstantHit.apply(state.attacker, state.origin, state.direction, {
-					shape = "cone",
-					range = 8,
-					angleMin = -45,
-					angleMax = 45,
-				}, state.onHit)
+				InstantHit.applyMap(state.attacker, state.origin, state.direction, {
+					main = { shape = "cone", range = 8, angleMin = -45, angleMax = 45 },
+				}, state.onHit, state.fireMaid, state.teamService, state.attackerPlayer)
 			end
 		end,
 	},
 
 	onHitChecked = {
-		function(snapshot)
+		function(snapshot: BasicAttackState)
 			local victims = snapshot.victims
-			if not victims or #victims == 0 then
+			if not victims or (#victims.enemies == 0) then
 				return
 			end
 
@@ -88,13 +90,20 @@ return {
 			local attackerPlayer = Players:GetPlayerFromCharacter(attacker)
 			local isHeavy = snapshot.fireComboCount == 3
 
-			for _, victimModel in victims do
-				local victimPlayer = Players:GetPlayerFromCharacter(victimModel)
-				if not victimPlayer then
-					continue
-				end
+			if isHeavy then
+				-- zone별 구분: hitMap.inner / hitMap.outer
+				local hitMap = snapshot.hitMap
+				local innerSet: { [Model]: boolean } = {}
 
-				if isHeavy then
+				-- inner zone 적군: 강타 (damage 40 + knockback)
+				local innerEnemies = if hitMap and hitMap.inner then hitMap.inner.enemies else {}
+				for _, victimModel in innerEnemies do
+					innerSet[victimModel] = true
+					local victimPlayer = Players:GetPlayerFromCharacter(victimModel)
+					if not victimPlayer then
+						continue
+					end
+
 					local knockbackDir = Vector3.new(0, 0, -1)
 					if attacker then
 						local attackerRoot = attacker:FindFirstChild("HumanoidRootPart") :: BasePart?
@@ -120,7 +129,34 @@ return {
 						source = attackerPlayer,
 						intensity = 0.8,
 					})
-				else
+				end
+
+				-- outer zone 적군 중 inner에 없는 것: 약타 (damage 20)
+				local outerEnemies = if hitMap and hitMap.outer then hitMap.outer.enemies else {}
+				for _, victimModel in outerEnemies do
+					if innerSet[victimModel] then
+						continue
+					end
+					local victimPlayer = Players:GetPlayerFromCharacter(victimModel)
+					if not victimPlayer then
+						continue
+					end
+
+					PlayerStateUtils.PlayPlayerState(psc, victimPlayer, "damage", {
+						amount = 20,
+						source = attackerPlayer,
+						intensity = 0.2,
+						duration = 0.25,
+					})
+				end
+			else
+				-- 1,2콤보: 일반 타격 (damage 20)
+				for _, victimModel in victims.enemies do
+					local victimPlayer = Players:GetPlayerFromCharacter(victimModel)
+					if not victimPlayer then
+						continue
+					end
+
 					PlayerStateUtils.PlayPlayerState(psc, victimPlayer, "damage", {
 						amount = 20,
 						source = attackerPlayer,

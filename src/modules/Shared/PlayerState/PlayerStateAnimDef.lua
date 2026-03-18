@@ -25,11 +25,27 @@
 	  Exhausted    : 탈진 루프 (intensity → 숨 주기/크기)
 ]=]
 
+local require = require(script.Parent.loader).load(script)
+
+local BasicMovementAnimDef = require("BasicMovementAnimDef")
+
 local Layer = {
 	BASE = 0,
 	ACTION = 1,
 	OVERRIDE = 2,
 }
+
+-- idle을 베이스로 특정 관절만 교체
+local function withIdleBase(overrides: { [string]: AnimFactory }): { [string]: AnimFactory }
+	local result = {}
+	for k, v in BasicMovementAnimDef.IdleJoints do
+		result[k] = v
+	end
+	for k, v in overrides do
+		result[k] = v
+	end
+	return result
+end
 
 -- ─── 타입 ────────────────────────────────────────────────────────────────────
 
@@ -213,7 +229,7 @@ Anims["Stun"] = {
 	layer = Layer.OVERRIDE,
 	duration = math.huge,
 	force = true,
-	joints = {
+	joints = withIdleBase({ -- [변경] idle 베이스 + Waist/Neck만 교체
 		Waist = function(_j: Motor6D, defaultC0: CFrame, ac: any, params: AnimParams?): OnUpdate
 			local intensity = (params and params.intensity) or 0.5
 			local t = 0
@@ -238,7 +254,7 @@ Anims["Stun"] = {
 				ac:spring(joint, defaultC0 * CFrame.Angles(droop, sway, 0), 6, 0.85, dt)
 			end
 		end,
-	},
+	}),
 }
 
 -- ============================================================
@@ -291,28 +307,39 @@ Anims["Freeze"] = {
 	layer = Layer.OVERRIDE,
 	duration = math.huge,
 	force = true,
-	joints = {
-		Waist = function(_j: Motor6D, defaultC0: CFrame, ac: any, params: AnimParams?): OnUpdate
-			local intensity = (params and params.intensity) or 0.5
-			local t = 0
-			local frozenAngle = math.rad(5 + intensity * 10)
-			return function(joint: Motor6D, dt: number)
-				t += dt
-				local tremble = math.sin(t * 18) * math.rad(0.3 + intensity * 0.7)
-				ac:spring(joint, defaultC0 * CFrame.Angles(frozenAngle + tremble, 0, 0), 30, 1.0, dt)
+	joints = (function()
+		local names = {
+			"Root",
+			"Waist",
+			"Neck",
+			"LeftShoulder",
+			"LeftElbow",
+			"LeftWrist",
+			"RightShoulder",
+			"RightElbow",
+			"RightWrist",
+			"LeftHip",
+			"LeftKnee",
+			"LeftAnkle",
+			"RightHip",
+			"RightKnee",
+			"RightAnkle",
+		}
+		local joints = {}
+		for _, name in names do
+			joints[name] = function(j: Motor6D, _defaultC0: CFrame, ac: any, params: AnimParams?): OnUpdate
+				local intensity = (params and params.intensity) or 0.5
+				local frozenPose = j.C0 -- ← 발동 순간 포즈 캡처
+				local t = 0
+				return function(joint: Motor6D, dt: number)
+					t += dt
+					local tremble = math.sin(t * 20) * math.rad(0.2 + intensity * 0.6)
+					ac:spring(joint, frozenPose * CFrame.Angles(tremble, tremble * 0.3, 0), 40, 1.0, dt)
+				end
 			end
-		end,
-		Neck = function(_j: Motor6D, defaultC0: CFrame, ac: any, params: AnimParams?): OnUpdate
-			local intensity = (params and params.intensity) or 0.5
-			local t = 0
-			local frozenAngle = math.rad(3 + intensity * 7)
-			return function(joint: Motor6D, dt: number)
-				t += dt
-				local tremble = math.sin(t * 20 + 0.5) * math.rad(0.2 + intensity * 0.5)
-				ac:spring(joint, defaultC0 * CFrame.Angles(frozenAngle + tremble, 0, 0), 28, 1.0, dt)
-			end
-		end,
-	},
+		end
+		return joints
+	end)(),
 }
 
 -- ============================================================
