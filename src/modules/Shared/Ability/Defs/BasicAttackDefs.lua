@@ -37,8 +37,8 @@ local BasicAttackDefs: { [string]: BasicAttackDef } = {
 		fireType = "stack",
 		resource = {
 			resourceType = "stack",
-			maxStack = 10,
-			reloadTime = 0.3,
+			maxStack = 3,
+			reloadTime = 2,
 		},
 		interval = 0.3,
 	},

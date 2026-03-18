@@ -73,26 +73,17 @@ return {
 
 	onAim = {
 		function(state: BasicAttackState)
-			local canFire = state.currentStack > 0 and os.clock() >= state.intervalUntil
-
-			-- 리소스 없을 때 색상으로 피드백
-			local color = if canFire then Color3.fromRGB(100, 200, 255) else Color3.fromRGB(220, 80, 80)
-
 			state.indicator:update("shot", {
 				origin = state.origin,
 				direction = state.direction,
-				color = color,
 			})
 			state.indicator:update("trail", {
 				origin = state.origin,
 				direction = state.direction,
-				color = color,
 			})
-			-- zone은 항상 플레이어 발 위치
 			state.indicator:update("zone", {
 				origin = state.origin,
 				direction = state.direction,
-				color = color,
 			})
 		end,
 	},
