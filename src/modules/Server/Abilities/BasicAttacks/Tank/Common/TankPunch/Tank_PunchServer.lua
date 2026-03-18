@@ -16,11 +16,6 @@
 	- 1,2콤보: damage 20
 	- 3콤보 inner: damage 40 + knockback
 	- 3콤보 outer (inner 미포함): damage 20
-
-	visualConfig:
-	- thick: "Thick" / heightMode: "Air" / gradientDir: "outward"
-	- state._visualHitMap에 applyMap과 동일한 hitMap을 설정
-	  → BasicAttackService._executeFire에서 FireAllClients로 전송
 ]=]
 
 local require = require(script.Parent.loader).load(script)
@@ -49,25 +44,9 @@ type BasicAttackState = {
 	attackerPlayer: Player?,
 	playerStateController: any?,
 	attackerStates: { any }?,
-	visualConfig: any?,
-	_visualHitMap: any?,
 }
-
--- 두께 프리셋별 실제 스터드 값
--- Thick=2.5, Normal=1.5, Thin=0.5
--- 여기서는 프리셋 문자열로 전달하고 클라이언트에서 해석
 
 local IDLE_COMBO_RESET = 3.0
-
--- 히트맵 상수: 콤보별로 재사용
-local HIT_MAP_NORMAL: InstantHit.HitMap = {
-	main = { shape = "cone", range = 8, angleMin = -45, angleMax = 45 },
-}
-
-local HIT_MAP_HEAVY: InstantHit.HitMap = {
-	inner = { shape = "cone", range = 5, angleMin = -45, angleMax = 45 },
-	outer = { shape = "cone", range = 10, angleMin = -60, angleMax = 60 },
-}
 
 return {
 	onFire = {
@@ -81,32 +60,17 @@ return {
 			end
 			state.fireComboCount = (state.fireComboCount % 3) + 1
 
-			local hitMap: InstantHit.HitMap
 			if state.fireComboCount == 3 then
-				hitMap = HIT_MAP_HEAVY
+				-- 3콤보: inner(강타) + outer(날림) 구분
+				InstantHit.applyMap(state.attacker, state.origin, state.direction, {
+					inner = { shape = "cone", range = 5, angleMin = -45, angleMax = 45 },
+					outer = { shape = "cone", range = 10, angleMin = -60, angleMax = 60 },
+				}, state.onHit, state.fireMaid, state.teamService, state.attackerPlayer)
 			else
-				hitMap = HIT_MAP_NORMAL
+				InstantHit.applyMap(state.attacker, state.origin, state.direction, {
+					main = { shape = "cone", range = 8, angleMin = -45, angleMax = 45 },
+				}, state.onHit, state.fireMaid, state.teamService, state.attackerPlayer)
 			end
-
-			-- 히트맵 적용
-			InstantHit.applyMap(
-				state.attacker,
-				state.origin,
-				state.direction,
-				hitMap,
-				state.onHit,
-				state.fireMaid,
-				state.teamService,
-				state.attackerPlayer
-			)
-
-			-- 히트 비주얼 설정
-			state.visualConfig = {
-				thick = "Thick",
-				heightMode = "Air",
-				gradientDir = "outward",
-			}
-			state._visualHitMap = hitMap
 		end,
 	},
 
