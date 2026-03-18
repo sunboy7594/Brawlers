@@ -444,6 +444,53 @@ function DevCommandService:_registerCommands()
 			return "사용법: resource-log on | off"
 		end
 	end)
+	-- ── 13. set-attack ────────────────────────────────────────────────────────
+	cmdr:RegisterCommand({
+		Name = "set-attack",
+		Aliases = { "sa" },
+		Description = "[Dev] 기본공격 강제 변경. 예) sa Tank_Punch",
+		Args = {
+			{
+				Type = "string",
+				Name = "attackId",
+				Description = "BasicAttackDefs의 키 (예: Tank_Punch, Tank_CannonTest)",
+			},
+		},
+	}, function(context, attackId: string)
+		local player = getPlayer(context)
+		if not player then
+			return "플레이어를 찾을 수 없습니다."
+		end
+		local ok, err = self._basicAttackService:ForceEquip(player, attackId)
+		if not ok then
+			return "기본공격 변경 실패: " .. tostring(err)
+		end
+		return string.format("[Dev] 기본공격 → '%s'", attackId)
+	end)
+
+	-- ── 14. set-skill ─────────────────────────────────────────────────────────
+	cmdr:RegisterCommand({
+		Name = "set-skill",
+		Aliases = { "ss" },
+		Description = "[Dev] 스킬 강제 변경. (미구현)",
+		Args = {
+			{ Type = "string", Name = "skillId", Description = "SkillDefs의 키" },
+		},
+	}, function(_context, skillId: string)
+		return string.format("[Dev] set-skill '%s' → 스킬 시스템 미구현.", skillId)
+	end)
+
+	-- ── 15. set-ultimate ──────────────────────────────────────────────────────
+	cmdr:RegisterCommand({
+		Name = "set-ultimate",
+		Aliases = { "su" },
+		Description = "[Dev] 궁극기 강제 변경. (미구현)",
+		Args = {
+			{ Type = "string", Name = "ultimateId", Description = "UltimateDefs의 키" },
+		},
+	}, function(_context, ultimateId: string)
+		return string.format("[Dev] set-ultimate '%s' → 궁극기 시스템 미구현.", ultimateId)
+	end)
 end
 
 -- ─── 정리 ────────────────────────────────────────────────────────────────────

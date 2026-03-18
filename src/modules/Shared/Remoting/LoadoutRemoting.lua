@@ -28,6 +28,11 @@ if RunService:IsServer() then
 	LoadoutRemoting.RequestEquipSkill:DeclareMethod()
 	LoadoutRemoting.RequestEquipUltimate:DeclareMethod()
 	LoadoutRemoting.RequestEquipPassive:DeclareMethod()
+
+	-- 서버 선언 블록에 추가
+	LoadoutRemoting.EquippedBasicAttackChanged:DeclareEvent()
+	LoadoutRemoting.EquippedSkillChanged:DeclareEvent()
+	LoadoutRemoting.EquippedUltimateChanged:DeclareEvent()
 else
 	LoadoutRemoting = Remoting.Client.new(ReplicatedStorage, "Loadout")
 end

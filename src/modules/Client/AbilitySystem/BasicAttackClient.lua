@@ -71,6 +71,7 @@ local BasicAttackRemoting = require("BasicAttackRemoting")
 local ClassRemoting = require("ClassRemoting")
 local DynamicIndicator = require("DynamicIndicator")
 local EntityAnimator = require("EntityAnimator")
+local LoadoutRemoting = require("LoadoutRemoting")
 local Maid = require("Maid")
 local PlayerBinderClient = require("PlayerBinderClient")
 local PlayerStateClient = require("PlayerStateClient")
@@ -212,6 +213,10 @@ function BasicAttackClient.Init(self: BasicAttackClient, serviceBag: ServiceBag.
 
 	self._maid:GiveTask(BasicAttackRemoting.HitChecked:Connect(function(victimUserIds: unknown)
 		self:_onHitChecked(victimUserIds)
+	end))
+
+	self._maid:GiveTask(LoadoutRemoting.EquippedBasicAttackChanged:Connect(function(attackId: string)
+		self:SetEquippedAttack(attackId)
 	end))
 end
 

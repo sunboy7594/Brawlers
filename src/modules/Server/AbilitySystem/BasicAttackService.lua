@@ -57,7 +57,7 @@ local cancellableDelay = require("cancellableDelay")
 
 local FIRE_RATE_LIMIT = 0.1
 local MAX_DIRECTION_MAGNITUDE_DELTA = 0.1
-local MIN_RELOAD_RATE_MULT = 0.01  -- 0 나누기 방지
+local MIN_RELOAD_RATE_MULT = 0.01 -- 0 나누기 방지
 
 -- ⚠️ 주의: BasicAttackClient.lua의 INTERVAL_QUEUE_THRESHOLD와 반드시 동일해야 합니다.
 local INTERVAL_QUEUE_THRESHOLD = AbilityTypes.INTERVAL_QUEUE_THRESHOLD
@@ -206,9 +206,11 @@ function BasicAttackService.Start(self: BasicAttackService): ()
 	end)
 
 	-- PSC 시그널 구독: resourceDelta 즉시 반영
-	self._maid:GiveTask(self._playerStateController.ResourceDeltaApplied:Connect(function(player: Player, amount: number)
-		self:_applyResourceDelta(player, amount)
-	end))
+	self._maid:GiveTask(
+		self._playerStateController.ResourceDeltaApplied:Connect(function(player: Player, amount: number)
+			self:_applyResourceDelta(player, amount)
+		end)
+	)
 
 	-- PSC 시그널 구독: reloadRateMult/regenRateMult 변경 시 ResourceSync 재발송
 	self._maid:GiveTask(self._playerStateController.EffectiveMultipliersChanged:Connect(function(player: Player)
@@ -582,17 +584,9 @@ function BasicAttackService:_applyResourceDelta(player: Player, amount: number)
 	end
 
 	if state.resourceType == "stack" then
-		state.currentStack = math.clamp(
-			state.currentStack + math.round(amount),
-			0,
-			state.maxStack
-		)
+		state.currentStack = math.clamp(state.currentStack + math.round(amount), 0, state.maxStack)
 	elseif state.resourceType == "gauge" then
-		state.currentGauge = math.clamp(
-			state.currentGauge + amount,
-			0,
-			state.maxGauge
-		)
+		state.currentGauge = math.clamp(state.currentGauge + amount, 0, state.maxGauge)
 	end
 
 	self:_fireResourceSync(player, state)
@@ -731,6 +725,15 @@ function BasicAttackService:CancelCombatState(player: Player)
 	state.aimStartTime = 0
 	state.effectiveAimTime = 0
 	state.onHit = nil
+end
+
+function BasicAttackService:ForceEquip(player: Player, attackId: string): (boolean, string?)
+	if not ATTACK_REGISTRY[attackId] then
+		return false, "unknown attackId: " .. attackId
+	end
+	self:_setPlayerAttack(player, attackId)
+	LoadoutRemoting.EquippedBasicAttackChanged:FireClient(player, attackId)
+	return true, nil
 end
 
 function BasicAttackService:_onRequestEquip(player: Player, attackId: unknown): (boolean, string?)
