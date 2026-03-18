@@ -119,8 +119,12 @@ function PlayerStateControllerService.Init(self: PlayerStateControllerService, s
 	self._runtimes = {}
 	self._playerMaids = {}
 	self._idCounter = 0
-	self.ResourceDeltaApplied = self._maid:GiveTask(Signal.new())
-	self.EffectiveMultipliersChanged = self._maid:GiveTask(Signal.new())
+
+	-- Signal은 따로 생성 후 Maid에 Destroy 등록 (GiveTask 반환값 사용 금지)
+	self.ResourceDeltaApplied = Signal.new()
+	self._maid:GiveTask(self.ResourceDeltaApplied)
+	self.EffectiveMultipliersChanged = Signal.new()
+	self._maid:GiveTask(self.EffectiveMultipliersChanged)
 end
 
 function PlayerStateControllerService.Start(self: PlayerStateControllerService): ()
@@ -309,7 +313,6 @@ end
 --[=[
 	effect를 일정 간격으로 count회 반복 적용합니다.
 	interval = totalDuration / count 자동 계산.
-	instance 1개 생성. Heartbeat에서 tick 관리.
 	@return () -> ()  취소 함수
 ]=]
 function PlayerStateControllerService:PlayRepeat(
@@ -569,7 +572,6 @@ end
 
 --[=[
 	장전 속도 배율을 반환합니다. (기본 1.0)
-	BasicAttackService가 읽어 유효 reloadTime을 계산합니다.
 ]=]
 function PlayerStateControllerService:GetReloadRateMult(player: Player): number
 	local runtime = self._runtimes[player.UserId]
@@ -578,7 +580,6 @@ end
 
 --[=[
 	재생 속도 배율을 반환합니다. (기본 1.0)
-	BasicAttackService가 읽어 유효 regenRate를 계산합니다.
 ]=]
 function PlayerStateControllerService:GetRegenRateMult(player: Player): number
 	local runtime = self._runtimes[player.UserId]
@@ -587,7 +588,6 @@ end
 
 --[=[
 	특정 어빌리티 타입이 잠겨있는지 확인합니다.
-
 	@param player Player
 	@param abilityType string  "BasicAttack" | "Skill" | "Ultimate"
 	@return boolean
@@ -624,13 +624,11 @@ function PlayerStateControllerService:_createInstance(
 		for _, comp in effectDef.components do
 			local c = comp :: any
 
-			-- cleanse는 보호 체크 없이 항상 포함 (instant)
 			if c.type == ComponentType.Cleanse then
 				table.insert(components, { component = comp, expiresAt = now })
 				continue
 			end
 
-			-- 보호 체크
 			if not force then
 				if runtime.isIgnoreDamage and c.type == ComponentType.Damage then
 					continue
@@ -642,7 +640,6 @@ function PlayerStateControllerService:_createInstance(
 
 			local expiresAt: number?
 
-			-- 즉시 처리 컴포넌트
 			if
 				c.type == ComponentType.Damage
 				or c.type == ComponentType.Knockback
@@ -652,7 +649,7 @@ function PlayerStateControllerService:_createInstance(
 			elseif c.duration then
 				expiresAt = now + c.duration
 			else
-				expiresAt = nil -- 영구
+				expiresAt = nil
 			end
 
 			table.insert(components, { component = comp, expiresAt = expiresAt })
@@ -757,10 +754,6 @@ end
 
 -- ─── 내부: 캐시 재빌드 ───────────────────────────────────────────────────────
 
---[=[
-	@param runtime PlayerRuntime
-	@param player Player?  nil이면 EffectiveMultipliersChanged 미발동
-]=]
 function PlayerStateControllerService:_rebuildCache(runtime: PlayerRuntime, player: Player?)
 	local isMoveLocked = false
 	local lockedAbilityTypes: { [string]: boolean }? = nil
@@ -783,7 +776,6 @@ function PlayerStateControllerService:_rebuildCache(runtime: PlayerRuntime, play
 					lockedAbilityTypes = {}
 				end
 				if c.abilityTypes == nil then
-					-- nil → 전부 잠금
 					lockedAbilityTypes["*"] = true
 				else
 					for _, aType in c.abilityTypes do
@@ -821,7 +813,6 @@ function PlayerStateControllerService:_rebuildCache(runtime: PlayerRuntime, play
 	runtime.reloadRateMult = reloadMult
 	runtime.regenRateMult = regenMult
 
-	-- 배율 변경 시 BasicAttackService에 알림
 	if player then
 		local reloadChanged = math.abs(prevReloadMult - reloadMult) > 0.001
 		local regenChanged = math.abs(prevRegenMult - regenMult) > 0.001
@@ -895,10 +886,6 @@ end
 
 -- ─── 내부: onHitReact 체크 ───────────────────────────────────────────────────
 
---[=[
-	대상이 공격을 받았을 때 onHitReact component의 콜백을 호출합니다.
-	incomingEffectDef.source로 공격자를 확인할 수 있습니다.
-]=]
 function PlayerStateControllerService:_checkOnHitReact(
 	target: Player,
 	runtime: PlayerRuntime,
@@ -914,7 +901,6 @@ function PlayerStateControllerService:_checkOnHitReact(
 			if c.type ~= ComponentType.OnHitReact or not c.onHit then
 				continue
 			end
-			-- 콜백 호출. incomingEffectDef 전체 전달.
 			local ok, err = pcall(c.onHit, incomingEffectDef)
 			if not ok then
 				warn(string.format("[PSC] onHitReact 콜백 오류 (target=%s): %s", target.Name, tostring(err)))

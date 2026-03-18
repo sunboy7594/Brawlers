@@ -77,7 +77,8 @@ local PlayerStateVfxDef: { [string]: VfxMapping } = {
 		loop = true,
 	},
 
-	[Tag.VfxVulnerable] = {
+	-- vulnerable → onHitReact로 교체됨
+	[Tag.VfxOnHitReact] = {
 		billboard = true,
 		attachTo = "Head",
 		loop = true,
