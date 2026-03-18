@@ -9,6 +9,9 @@
 	  shot  (line)   : 직사 방향 표시
 	  trail (arc)    : 포물선 궤적 + 착탄 링
 	  zone  (circle) : 플레이어 주변 근접 범위 링
+
+	색상/투명도는 BasicAttackClient의 Heartbeat에서 리소스 상태에 따라
+	updateAll로 일괄 처리하므로 onAim에서 별도 설정 불필요.
 ]=]
 
 local require = require(script.Parent.loader).load(script)

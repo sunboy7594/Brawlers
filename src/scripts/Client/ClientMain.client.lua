@@ -38,5 +38,8 @@ serviceBag:GetService(require("TeamClient"))
 -- ─── 테스트용 (슬롯 시스템 완성 시 제거) ─────────
 serviceBag:GetService(require("TestLoadoutClient"))
 
+-- ─── Dev ─────────────────────────────────────────
+serviceBag:GetService(require("DevCommandClientService"))
+
 serviceBag:Init()
 serviceBag:Start()
