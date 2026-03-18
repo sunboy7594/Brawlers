@@ -34,7 +34,7 @@ type BasicAttackState = {
 
 -- line
 local LINE_RANGE = 15
-local LINE_WIDTH = 1
+local LINE_WIDTH = 3
 
 -- arc
 local ARC_RANGE = 20
@@ -43,8 +43,8 @@ local ARC_RING_RADIUS = 3
 local ARC_RING_INNER = 1
 
 -- circle (플레이어 발 아래 근접 링)
-local ZONE_RADIUS = 3
-local ZONE_INNER_RADIUS = 1.5
+local ZONE_RADIUS = 10
+local ZONE_INNER_RADIUS = 3
 
 return {
 	shapes = {

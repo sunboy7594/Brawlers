@@ -171,10 +171,10 @@ BasicAttackClient.AbilityType = "BasicAttack"
 
 -- ─── 인디케이터 색상 상수 ─────────────────────────────────────────────────────
 
-local COLOR_NORMAL = Color3.fromRGB(160, 160, 160)
+local COLOR_NORMAL = Color3.fromRGB(184, 184, 184)
 local COLOR_NO_RESOURCE = Color3.fromRGB(220, 50, 50)
 local ALPHA_NORMAL = 0
-local ALPHA_INTERVAL = 0.8
+local ALPHA_INTERVAL = 0.85
 
 -- ─── 초기화 ──────────────────────────────────────────────────────────────────
 

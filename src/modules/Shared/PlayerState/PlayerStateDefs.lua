@@ -103,16 +103,19 @@ PlayerStateDefs.Tag = {
 	AnimFreeze = "anim_freeze",
 	AnimKnockback = "anim_knockback",
 	AnimExhausted = "anim_exhausted",
+
 	CamShake = "cam_shake",
 	CamRecoil = "cam_recoil",
 	CamKnockback = "cam_knockback",
 	CamMotionSickness = "cam_motion_sickness",
+
 	ScreenHitRed = "screen_hit_red",
 	ScreenBlind = "screen_blind",
 	ScreenStun = "screen_stun",
 	ScreenFreeze = "screen_freeze",
 	ScreenBurn = "screen_burn",
 	ScreenPoison = "screen_poison",
+
 	VfxBurn = "vfx_burn",
 	VfxPoison = "vfx_poison",
 	VfxBleed = "vfx_bleed",

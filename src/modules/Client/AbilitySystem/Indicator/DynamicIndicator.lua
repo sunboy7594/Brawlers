@@ -73,7 +73,7 @@ local GUI_PIXELS_PER_STUD = 50
 
 -- 그라디언트 fade 구간 (0~1, SurfaceGui Top face 기준)
 local GRADIENT_FADE_START = 0.7 -- 일반 세그먼트: 끝 70%부터 불투명해짐
-local GRADIENT_FADE_START_LINE = 0.5 -- line: 더 일찍 fade
+local GRADIENT_FADE_START_LINE = 0.2 -- line: 더 일찍 fade
 local GRADIENT_FADE_START_INNER = 0.2 -- donut 안쪽: fade 끝 (구간 짧게)
 local GRADIENT_INNER_OPACITY = 0.6 -- donut 안쪽 테두리 투명도 (0=불투명, 1=완전투명)
 
@@ -83,8 +83,11 @@ local ROT_DIAG_LEFT = 0 -- 콘 왼끝 세그먼트 (필요 시 조정)
 local ROT_DIAG_RIGHT = 0 -- 콘 오른끝 세그먼트 (필요 시 조정)
 
 -- Beam 설정
-local BEAM_FADE_START = 0.3 -- 빔: 이 지점부터 불투명해짐
-local BEAM_SEGMENTS = 20
+local BEAM_FADE_START = 0.15 -- 빔: 이 지점부터 불투명해짐
+local BEAM_SEGMENTS = 50
+
+-- Beam 설정 아래에 추가
+local RING_THICKNESS = 0.3 -- 링 세그먼트 두께
 
 -- ─── 기본값 ──────────────────────────────────────────────────────────────────
 
@@ -93,6 +96,7 @@ local DEFAULTS: { [string]: { [string]: any } } = {
 		range = 8,
 		angleMin = -180,
 		angleMax = 180,
+		innerRange = 0, -- ← 추가
 		color = DEFAULT_COLOR,
 		transparency = DEFAULT_TRANSPARENCY,
 	},
@@ -268,14 +272,19 @@ local function createCone(folder: Folder, cfg: { [string]: any }): ({ BasePart }
 	local guis: { GradientEntry } = {}
 	local segAngle = (cfg.angleMax - cfg.angleMin) / CONE_SEGMENTS
 
-	for i = 1, CONE_SEGMENTS do
+	for i = 1, CONE_SEGMENTS do -- outer
 		local p = makePart(folder)
 		local w = cfg.range * 2 * math.tan(math.rad(segAngle / 2))
 		p.Size = Vector3.new(w, PART_HEIGHT, cfg.range)
-
 		local rot = if i == 1 then ROT_DIAG_LEFT elseif i == CONE_SEGMENTS then ROT_DIAG_RIGHT else ROT_FORWARD
 		table.insert(parts, p)
 		table.insert(guis, makeGui(p, cfg.color, rot))
+	end
+
+	for _ = 1, CONE_SEGMENTS do -- inner
+		local p = makePart(folder)
+		table.insert(parts, p)
+		table.insert(guis, makeGui(p, cfg.color, 180, 0.001))
 	end
 
 	return parts, guis, nil
@@ -284,13 +293,16 @@ end
 local function createCircle(folder: Folder, cfg: { [string]: any }): ({ BasePart }, { GradientEntry }, ArcBeamEntry?)
 	local parts: { BasePart } = {}
 	local guis: { GradientEntry } = {}
-	local segs = cfg.segments or CIRCLE_SEGMENTS
-	local donut = cfg.innerRadius > 0
 
-	for _ = 1, segs do
+	for _ = 1, CONE_SEGMENTS do -- outer
 		local p = makePart(folder)
 		table.insert(parts, p)
-		table.insert(guis, makeGui(p, cfg.color, ROT_FORWARD, nil, donut))
+		table.insert(guis, makeGui(p, cfg.color, ROT_FORWARD))
+	end
+	for _ = 1, CONE_SEGMENTS do -- inner (rotation 180 = 그라디언트 반전)
+		local p = makePart(folder)
+		table.insert(parts, p)
+		table.insert(guis, makeGui(p, cfg.color, 180, 0.001))
 	end
 
 	return parts, guis, nil
@@ -349,13 +361,16 @@ local function createArc(folder: Folder, cfg: { [string]: any }): ({ BasePart },
 	-- ── 착탄 원 세그먼트 ─────────────────────────────────────────
 	local parts: { BasePart } = {}
 	local guis: { GradientEntry } = {}
-	local segs = cfg.arcSegments or CIRCLE_SEGMENTS
-	local donut = cfg.arcInnerRadius > 0
 
-	for _ = 1, segs do
+	for _ = 1, CONE_SEGMENTS do -- outer
 		local p = makePart(folder)
 		table.insert(parts, p)
-		table.insert(guis, makeGui(p, cfg.color, ROT_FORWARD, nil, donut))
+		table.insert(guis, makeGui(p, cfg.color, ROT_FORWARD))
+	end
+	for _ = 1, CONE_SEGMENTS do -- inner
+		local p = makePart(folder)
+		table.insert(parts, p)
+		table.insert(guis, makeGui(p, cfg.color, 180))
 	end
 
 	return parts, guis, arcBeam
@@ -379,7 +394,9 @@ local function posUpdateCone(parts: { BasePart }, origin: Vector3, direction: Ve
 	local totalAngle = cfg.angleMax - cfg.angleMin
 	local segAngle = totalAngle / CONE_SEGMENTS
 
-	for i, part in parts do
+	-- outer
+	for i = 1, CONE_SEGMENTS do
+		local part = parts[i]
 		local deg = cfg.angleMin + segAngle * (i - 0.5)
 		local rad = math.rad(deg)
 		local cosR, sinR = math.cos(rad), math.sin(rad)
@@ -387,21 +404,62 @@ local function posUpdateCone(parts: { BasePart }, origin: Vector3, direction: Ve
 		local center = Vector3.new(origin.X + segDir.X * cfg.range / 2, PART_Y, origin.Z + segDir.Z * cfg.range / 2)
 		part.CFrame = CFrame.lookAt(center, center + segDir)
 	end
+
+	-- inner
+	local innerRange = cfg.innerRange or 0
+	for i = 1, CONE_SEGMENTS do
+		local part = parts[CONE_SEGMENTS + i]
+		if innerRange > 0 then
+			local innerEdge = math.min(innerRange * 1.2, cfg.range)
+			local deg = cfg.angleMin + segAngle * (i - 0.5)
+			local rad = math.rad(deg)
+			local cosR, sinR = math.cos(rad), math.sin(rad)
+			local segDir = Vector3.new(dirH.X * cosR - dirH.Z * sinR, 0, dirH.X * sinR + dirH.Z * cosR)
+			local w = innerEdge * 2 * math.tan(math.rad(segAngle / 2))
+			local center = Vector3.new(origin.X + segDir.X * innerEdge / 2, PART_Y, origin.Z + segDir.Z * innerEdge / 2)
+			part.CFrame = CFrame.lookAt(center, center + segDir)
+			part.Size = Vector3.new(w, PART_HEIGHT, innerEdge)
+		else
+			part.Size = Vector3.new(0.001, PART_HEIGHT, 0.001)
+			part.CFrame = CFrame.new(origin)
+		end
+	end
 end
 
 local function posUpdateCircle(parts: { BasePart }, origin: Vector3, _dir: Vector3, cfg: { [string]: any })
-	local segs = #parts
+	local segs = CONE_SEGMENTS
 	local segAngle = 360 / segs
-	local midRadius = (cfg.radius + cfg.innerRadius) / 2
-	local thickness = math.max(cfg.radius - cfg.innerRadius, 0.05)
-	local segWidth = 2 * midRadius * math.sin(math.rad(segAngle / 2)) * 2
 
-	for i, part in parts do
-		local rad = math.rad(segAngle * (i - 1))
+	-- outer ring (콘 방식)
+	for i = 1, segs do
+		local part = parts[i]
+		local rad = math.rad(segAngle * (i - 0.5))
 		local dx, dz = math.sin(rad), math.cos(rad)
-		local center = Vector3.new(origin.X + dx * midRadius, PART_Y, origin.Z + dz * midRadius)
+		local w = 2 * cfg.radius * math.tan(math.rad(segAngle / 2))
+		local center = Vector3.new(origin.X + dx * cfg.radius / 2, PART_Y, origin.Z + dz * cfg.radius / 2)
 		part.CFrame = CFrame.lookAt(center, center + Vector3.new(dx, 0, dz))
-		part.Size = Vector3.new(segWidth, PART_HEIGHT, thickness)
+		part.Size = Vector3.new(w, PART_HEIGHT, cfg.radius)
+	end
+
+	-- inner ring
+	local innerR = cfg.innerRadius
+	for i = 1, segs do
+		local part = parts[segs + i]
+		if innerR > 0 then
+			local outerEdge = math.min(innerR * 1.2, cfg.radius)
+			local depth = outerEdge - innerR
+			local midR = (innerR + outerEdge) / 2
+			local rad = math.rad(segAngle * (i - 0.5))
+			local dx, dz = math.sin(rad), math.cos(rad)
+			local w = 2 * midR * math.tan(math.rad(segAngle / 2))
+			local center = Vector3.new(origin.X + dx * midR, PART_Y, origin.Z + dz * midR)
+			part.CFrame = CFrame.lookAt(center, center + Vector3.new(dx, 0, dz))
+			part.Size = Vector3.new(w, PART_HEIGHT, depth)
+		else
+			-- innerRadius=0이면 outer만으로 충분, inner 숨김
+			part.Size = Vector3.new(0.001, PART_HEIGHT, 0.001)
+			part.CFrame = CFrame.new(origin)
+		end
 	end
 end
 
@@ -426,51 +484,75 @@ local function posUpdateArc(entry: ShapeEntry)
 	local R = cfg.range
 	local H = if cfg.height ~= nil then cfg.height else R * 0.35
 
-	-- 착탄 위치
-	local landPos = Vector3.new(origin.X + dirH.X * R, origin.Y, origin.Z + dirH.Z * R)
+	-- ① landPos Y를 PART_Y로 고정 (빔 끝점 = 착탄 원 위치)
+	local landPos = Vector3.new(origin.X + dirH.X * R, PART_Y, origin.Z + dirH.Z * R)
 
-	-- ── Beam 위치/방향 ───────────────────────────────────────────
 	if arcBeam then
-		-- t=0 접선: (R*dirH, 4H)
-		-- t=1 접선: (R*dirH, -4H)
-		local t0Dir = (dirH * R + Vector3.new(0, 4 * H, 0)).Unit
-		local t1Dir = (dirH * R - Vector3.new(0, 4 * H, 0)).Unit
+		local up = Vector3.new(0, 1, 0)
 
-		-- 베지어 근사: CurveSize = ||(R, 4H)|| / 3
-		local curveSize = math.sqrt(R * R + 16 * H * H) / 3
+		-- att0: RightVector = +up → P1이 origin 위쪽에 위치
+		local yAxis0 = (-dirH):Cross(up)
+		yAxis0 = if yAxis0.Magnitude > 0.001 then yAxis0.Unit else Vector3.new(1, 0, 0)
+		arcBeam.part0.CFrame = CFrame.fromMatrix(origin, up, yAxis0)
 
-		arcBeam.part0.CFrame = CFrame.lookAt(origin, origin + t0Dir)
-		arcBeam.part1.CFrame = CFrame.lookAt(landPos, landPos + t1Dir)
-		arcBeam.beam.CurveSize0 = curveSize
-		arcBeam.beam.CurveSize1 = curveSize
+		-- att1: RightVector = -up → P2 = landPos - (-up)*CS = landPos 위쪽에 위치
+		local yAxis1 = (-dirH):Cross(-up)
+		yAxis1 = if yAxis1.Magnitude > 0.001 then yAxis1.Unit else Vector3.new(1, 0, 0)
+		arcBeam.part1.CFrame = CFrame.fromMatrix(landPos, -up, yAxis1)
+
+		-- CurveSize: B(0.5) = avgY + 0.75*CS = origin.Y + H 이 되도록 역산
+		local avgY = (origin.Y + landPos.Y) / 2
+		local peakY = origin.Y + H
+		local CS = math.max((peakY - avgY) / 0.75, 0.1)
+
+		arcBeam.beam.CurveSize0 = CS
+		arcBeam.beam.CurveSize1 = CS
 	end
 
-	-- ── 착탄 원 세그먼트 ────────────────────────────────────────
-	local segs = #parts
+	-- ③ 착탄 원도 landPos 기준으로 (PART_Y 하드코딩 제거)
+	local segs = CONE_SEGMENTS
 	if segs == 0 then
 		return
 	end
-
 	local segAngle = 360 / segs
-	local innerR = cfg.arcInnerRadius or 0
 	local outerR = cfg.arcRadius
-	local midRadius = (outerR + innerR) / 2
-	local thickness = math.max(outerR - innerR, 0.05)
-	local segWidth = 2 * midRadius * math.sin(math.rad(segAngle / 2)) * 2
+	local innerR = cfg.arcInnerRadius or 0
 
-	for i, part in parts do
-		local rad = math.rad(segAngle * (i - 1))
+	-- outer ring
+	for i = 1, segs do
+		local part = parts[i]
+		local rad = math.rad(segAngle * (i - 0.5))
 		local dx, dz = math.sin(rad), math.cos(rad)
-		local center = Vector3.new(landPos.X + dx * midRadius, PART_Y, landPos.Z + dz * midRadius)
+		local w = 2 * outerR * math.tan(math.rad(segAngle / 2))
+		local center = Vector3.new(landPos.X + dx * outerR / 2, landPos.Y, landPos.Z + dz * outerR / 2)
 		part.CFrame = CFrame.lookAt(center, center + Vector3.new(dx, 0, dz))
-		part.Size = Vector3.new(segWidth, PART_HEIGHT, thickness)
+		part.Size = Vector3.new(w, PART_HEIGHT, outerR)
+	end
+
+	-- inner ring
+	for i = 1, segs do
+		local part = parts[segs + i]
+		if innerR > 0 then
+			local outerEdge = math.min(innerR * 1.2, outerR)
+			local depth = outerEdge - innerR
+			local midR = (innerR + outerEdge) / 2
+			local rad = math.rad(segAngle * (i - 0.5))
+			local dx, dz = math.sin(rad), math.cos(rad)
+			local w = 2 * midR * math.tan(math.rad(segAngle / 2))
+			local center = Vector3.new(landPos.X + dx * midR, landPos.Y, landPos.Z + dz * midR)
+			part.CFrame = CFrame.lookAt(center, center + Vector3.new(dx, 0, dz))
+			part.Size = Vector3.new(w, PART_HEIGHT, depth)
+		else
+			part.Size = Vector3.new(0.001, PART_HEIGHT, 0.001)
+			part.CFrame = CFrame.new(landPos)
+		end
 	end
 end
 
 -- ─── 크기 리사이즈 ────────────────────────────────────────────────────────────
 
 local SIZE_FIELDS: { [string]: { string } } = {
-	cone = { "range", "angleMin", "angleMax" },
+	cone = { "range", "angleMin", "angleMax", "innerRange" },
 	circle = { "radius", "innerRadius" },
 	line = { "range", "width" },
 	arc = { "range", "height", "beamWidth", "arcRadius", "arcInnerRadius" },
@@ -478,9 +560,9 @@ local SIZE_FIELDS: { [string]: { string } } = {
 
 local function resizeCone(parts: { BasePart }, cfg: { [string]: any })
 	local segAngle = (cfg.angleMax - cfg.angleMin) / CONE_SEGMENTS
-	for _, p in parts do
+	for i = 1, CONE_SEGMENTS do -- outer만, inner는 posUpdate에서 처리
 		local w = cfg.range * 2 * math.tan(math.rad(segAngle / 2))
-		p.Size = Vector3.new(w, PART_HEIGHT, cfg.range)
+		parts[i].Size = Vector3.new(w, PART_HEIGHT, cfg.range)
 	end
 end
 
@@ -638,21 +720,6 @@ function DynamicIndicator:update(id: string, params: { [string]: any })
 		if resizer then
 			resizer(entry)
 		end
-	end
-
-	-- innerRadius 변경 시 donut 여부 갱신
-	if entry.shape == "circle" and params.innerRadius ~= nil then
-		local donut = cfg.innerRadius > 0
-		for _, g in entry.gradients do
-			g.isDonut = donut
-		end
-		applyTransparency(entry)
-	elseif entry.shape == "arc" and params.arcInnerRadius ~= nil then
-		local donut = cfg.arcInnerRadius > 0
-		for _, g in entry.gradients do
-			g.isDonut = donut
-		end
-		applyTransparency(entry)
 	end
 
 	-- 위치 갱신

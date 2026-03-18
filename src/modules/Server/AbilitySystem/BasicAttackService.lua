@@ -727,12 +727,15 @@ function BasicAttackService:CancelCombatState(player: Player)
 	state.onHit = nil
 end
 
+-- BasicAttackService.lua
 function BasicAttackService:ForceEquip(player: Player, attackId: string): (boolean, string?)
 	if not ATTACK_REGISTRY[attackId] then
 		return false, "unknown attackId: " .. attackId
 	end
-	self:_setPlayerAttack(player, attackId)
+	-- ① 먼저 클라에 attack 전환 알림 → SetEquippedAttack()로 새 state(zeros) 생성
 	LoadoutRemoting.EquippedBasicAttackChanged:FireClient(player, attackId)
+	-- ② 그 다음 서버 state 설정 + ResourceSync 발송 → 새 state에 값이 채워짐
+	self:_setPlayerAttack(player, attackId)
 	return true, nil
 end
 
