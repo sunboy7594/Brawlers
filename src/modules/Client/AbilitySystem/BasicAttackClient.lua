@@ -73,6 +73,7 @@ local DynamicIndicator = require("DynamicIndicator")
 local EntityAnimator = require("EntityAnimator")
 local Maid = require("Maid")
 local PlayerBinderClient = require("PlayerBinderClient")
+local PlayerStateClient = require("PlayerStateClient")
 local ServiceBag = require("ServiceBag")
 local cancellableDelay = require("cancellableDelay")
 
@@ -165,6 +166,7 @@ export type BasicAttackClient = typeof(setmetatable(
 local BasicAttackClient = {}
 BasicAttackClient.ServiceName = "BasicAttackClient"
 BasicAttackClient.__index = BasicAttackClient
+BasicAttackClient.AbilityType = "BasicAttack"
 
 -- ─── 인디케이터 색상 상수 ─────────────────────────────────────────────────────
 
@@ -182,6 +184,7 @@ function BasicAttackClient.Init(self: BasicAttackClient, serviceBag: ServiceBag.
 	self._aimController = serviceBag:GetService(AimControllerClient)
 	self._animController = serviceBag:GetService(AnimationControllerClient)
 	self._coordinator = serviceBag:GetService(AbilityCoordinator)
+	self._playerStateClient = serviceBag:GetService(PlayerStateClient)
 
 	self._equippedAttackId = nil
 	self._joints = nil
@@ -419,6 +422,10 @@ end
 -- ─── 내부: 입력 처리 ────────────────────────────────────────────────────────
 
 function BasicAttackClient:_onMouseDown()
+	if self._playerStateClient:IsAbilityLocked("BasicAttack") then
+		return
+	end
+
 	local attackId = self._equippedAttackId
 	if not attackId then
 		return

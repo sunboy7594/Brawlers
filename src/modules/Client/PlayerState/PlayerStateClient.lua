@@ -99,6 +99,9 @@ function PlayerStateClient.Init(self: PlayerStateClient, serviceBag: ServiceBag.
 	self._idToTags = {}
 	self._cameraLockCancel = nil
 
+	self._lockedAbilityTypes = {} :: { [string]: number }
+	self._idToAbilityLockTypes = {} :: { [string]: { string } }
+
 	self._cameraAnimator = CameraAnimator.new(OWNER, PlayerStateCameraAnimDef, self._cameraController)
 	self._maid:GiveTask(self._cameraAnimator)
 end
@@ -142,13 +145,17 @@ function PlayerStateClient:_onEffectApplied(effectDef: PlayerStateDefs.EffectDef
 
 	self._idToTags[id] = {}
 
-	-- attackLock component 감지 → 공격불가 상태 → ability 전체 캔슬
+	-- abilityLock component 감지 → 공격불가 상태 → ability 캔슬
 	if components then
 		for _, comp in components do
 			local c = comp :: any
-			if c.type == "attackLock" then
-				self._abilityCoordinator:CancelAll()
-				break
+			if c.type == "abilityLock" then
+				local keys: { string } = if c.abilityTypes == nil then { "*" } else c.abilityTypes
+				self._idToAbilityLockTypes[id] = keys
+				for _, key in keys do
+					self._lockedAbilityTypes[key] = (self._lockedAbilityTypes[key] or 0) + 1
+					self._abilityCoordinator:CancelByType(key)
+				end
 			end
 		end
 	end
@@ -265,6 +272,15 @@ function PlayerStateClient:_onEffectRemoved(id: string)
 	end
 
 	self._idToTags[id] = nil
+
+	local lockKeys = self._idToAbilityLockTypes[id]
+	if lockKeys then
+		for _, key in lockKeys do
+			local count = (self._lockedAbilityTypes[key] or 1) - 1
+			self._lockedAbilityTypes[key] = if count <= 0 then nil else count
+		end
+		self._idToAbilityLockTypes[id] = nil
+	end
 end
 
 -- ─── 슬롯 헬퍼 ──────────────────────────────────────────────────────────────
@@ -490,7 +506,11 @@ function PlayerStateClient:_applyCameraLock(duration: number?)
 	end
 end
 
--- ─── 소멸 ────────────────────────────────────────────────────────────────────
+-- ─── 공개 API ────────────────────────────────────────────────────────────────────
+
+function PlayerStateClient:IsAbilityLocked(abilityType: string): boolean
+	return (self._lockedAbilityTypes["*"] or 0) > 0 or (self._lockedAbilityTypes[abilityType] or 0) > 0
+end
 
 function PlayerStateClient.Destroy(self: PlayerStateClient)
 	-- 모든 슬롯 정리

@@ -28,6 +28,7 @@ local ServiceBag = require("ServiceBag")
 -- ─── 타입 ────────────────────────────────────────────────────────────────────
 
 type AbilityClient = {
+	AbilityType: string,
 	IsFiring: (self: any) -> boolean,
 	IsToggleFiring: (self: any) -> boolean,
 	CancelCombatState: (self: any) -> (),
@@ -94,6 +95,14 @@ end
 function AbilityCoordinator:CancelAll()
 	for _, client in self._clients do
 		client:CancelCombatState()
+	end
+end
+
+function AbilityCoordinator:CancelByType(abilityType: string)
+	for _, client in self._clients do
+		if abilityType == "*" or client.AbilityType == abilityType then
+			client:CancelCombatState()
+		end
 	end
 end
 
