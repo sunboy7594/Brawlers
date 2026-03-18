@@ -78,7 +78,7 @@ local ENEMY_COLORS: { Color3 } = {
 	Color3.new(1, 0.4, 0.7), -- 분홍
 }
 
-local MY_TEAM_COLOR = Color3.new(0.2, 0.5, 1) -- 파랑
+local MY_TEAM_COLOR = Color3.new(96 / 255, 226 / 255, 252 / 255) -- 파랑
 local NO_TEAM_ENEMY_COLOR = Color3.new(1, 0.2, 0.2) -- 팀없음 모드 적 색상
 
 -- UIGradient 투명도 시퀀스 (중앙 불투명 밴드)
@@ -247,31 +247,47 @@ local function addSweepGui(part: BasePart, face: Enum.NormalId, color: Color3, g
 	gradient.Transparency = GRADIENT_TRANSPARENCY
 	gradient.Color = ColorSequence.new(color)
 
-	-- gradientDir에 따른 Rotation 및 sweep 방향 결정
-	-- Face별 좌표계:
-	--   Top/Bottom: Rotation=0 → 수평(파트 X축), Rotation=90 → 수직(파트 Z축 방향)
-	--   Front/Back/Left/Right: Rotation=0 → 수평
-
-	-- "outward" 기본: 파트 앞방향(-Z)으로 sweep
-	-- Face.Top: Rotation=90으로 Z방향 sweep, Offset.Y 이동
-	-- Face.Bottom: Rotation=90, Offset.Y 이동 (방향 반전)
-	-- Face.Left: Rotation=0, Offset.X 이동 (역방향)
-	-- Face.Right: Rotation=0, Offset.X 이동
+	-- UIGradient.Offset은 그라디언트 자체의 로컬 좌표계로 동작.
+	-- Rotation=90일 때: Offset.X → screen Y 이동, Offset.Y → screen X 이동 (뒤집힘!)
+	--
+	-- Face.Top  screen 좌표:  +X = Part +X,  +Y = Part -Z (outward)
+	-- Face.Bottom screen 좌표: +X = Part +X,  +Y = Part +Z (inward)  ← Top과 반전
+	-- Face.Left  screen 좌표:  +X = Part -Z (outward),  +Y = Part +Y
+	-- Face.Right screen 좌표:  +X = Part +Z (inward),   +Y = Part +Y
 
 	local startOffset: Vector2
 	local endOffset: Vector2
 	local rotation: number
 
-	if face == Enum.NormalId.Top or face == Enum.NormalId.Bottom then
+	if face == Enum.NormalId.Top then
+		-- Rotation=90 → 그라디언트가 screen Y 방향으로 흐름
+		-- Offset.X가 screen Y(= Part -Z = outward) 방향 이동
 		rotation = 90
 		if gradientDir == "outward" then
-			-- Top: SurfaceGui +Y = 파트 -Z (forward/outward)
-			-- 밴드가 backward→forward로 sweep: Offset.Y: -0.65 → 0.65
-			startOffset = Vector2.new(0, -0.65)
-			endOffset = Vector2.new(0, 0.65)
+			startOffset = Vector2.new(-0.65, 0)
+			endOffset = Vector2.new(0.65, 0)
 		elseif gradientDir == "inward" then
-			startOffset = Vector2.new(0, 0.65)
-			endOffset = Vector2.new(0, -0.65)
+			startOffset = Vector2.new(0.65, 0)
+			endOffset = Vector2.new(-0.65, 0)
+		elseif gradientDir == "up" then
+			rotation = 0
+			startOffset = Vector2.new(-0.65, 0)
+			endOffset = Vector2.new(0.65, 0)
+		else -- "down"
+			rotation = 0
+			startOffset = Vector2.new(0.65, 0)
+			endOffset = Vector2.new(-0.65, 0)
+		end
+	elseif face == Enum.NormalId.Bottom then
+		-- Top과 screen Y 방향이 반전 (Part +Z = inward가 screen +Y)
+		-- outward = screen -Y → Offset.X: 0.65 → -0.65
+		rotation = 90
+		if gradientDir == "outward" then
+			startOffset = Vector2.new(0.65, 0)
+			endOffset = Vector2.new(-0.65, 0)
+		elseif gradientDir == "inward" then
+			startOffset = Vector2.new(-0.65, 0)
+			endOffset = Vector2.new(0.65, 0)
 		elseif gradientDir == "up" then
 			rotation = 0
 			startOffset = Vector2.new(-0.65, 0)
@@ -282,54 +298,53 @@ local function addSweepGui(part: BasePart, face: Enum.NormalId, color: Color3, g
 			endOffset = Vector2.new(-0.65, 0)
 		end
 	elseif face == Enum.NormalId.Left then
+		-- Rotation=0 → 그라디언트가 screen X 방향으로 흐름
+		-- screen +X = Part -Z = outward → Offset.X: -0.65 → 0.65
 		rotation = 0
 		if gradientDir == "outward" then
-			-- Left face: SurfaceGui +X = 파트 +Z (backward/inward)
-			-- outward sweep: 오른쪽→왼쪽 (inward→outward)
-			startOffset = Vector2.new(0.65, 0)
-			endOffset = Vector2.new(-0.65, 0)
-		elseif gradientDir == "inward" then
 			startOffset = Vector2.new(-0.65, 0)
 			endOffset = Vector2.new(0.65, 0)
+		elseif gradientDir == "inward" then
+			startOffset = Vector2.new(0.65, 0)
+			endOffset = Vector2.new(-0.65, 0)
 		elseif gradientDir == "up" then
 			rotation = 90
-			startOffset = Vector2.new(0, -0.65)
-			endOffset = Vector2.new(0, 0.65)
+			startOffset = Vector2.new(-0.65, 0)
+			endOffset = Vector2.new(0.65, 0)
 		else -- "down"
 			rotation = 90
-			startOffset = Vector2.new(0, 0.65)
-			endOffset = Vector2.new(0, -0.65)
+			startOffset = Vector2.new(0.65, 0)
+			endOffset = Vector2.new(-0.65, 0)
 		end
 	elseif face == Enum.NormalId.Right then
+		-- screen +X = Part +Z = inward → outward = screen 왼쪽
+		-- Offset.X: 0.65 → -0.65
 		rotation = 0
 		if gradientDir == "outward" then
-			-- Right face: SurfaceGui +X = 파트 -Z (forward/outward)
-			startOffset = Vector2.new(-0.65, 0)
-			endOffset = Vector2.new(0.65, 0)
-		elseif gradientDir == "inward" then
 			startOffset = Vector2.new(0.65, 0)
 			endOffset = Vector2.new(-0.65, 0)
+		elseif gradientDir == "inward" then
+			startOffset = Vector2.new(-0.65, 0)
+			endOffset = Vector2.new(0.65, 0)
 		elseif gradientDir == "up" then
 			rotation = 90
-			startOffset = Vector2.new(0, -0.65)
-			endOffset = Vector2.new(0, 0.65)
+			startOffset = Vector2.new(-0.65, 0)
+			endOffset = Vector2.new(0.65, 0)
 		else -- "down"
 			rotation = 90
-			startOffset = Vector2.new(0, 0.65)
-			endOffset = Vector2.new(0, -0.65)
+			startOffset = Vector2.new(0.65, 0)
+			endOffset = Vector2.new(-0.65, 0)
 		end
 	else
-		-- fallback
 		rotation = 0
-		startOffset = SWEEP_START
-		endOffset = SWEEP_END
+		startOffset = Vector2.new(-0.65, 0)
+		endOffset = Vector2.new(0.65, 0)
 	end
 
 	gradient.Rotation = rotation
 	gradient.Offset = startOffset
 	gradient.Parent = frame
 
-	-- Tween: Offset sweep
 	local tween = TweenService:Create(gradient, SWEEP_TWEEN_INFO, { Offset = endOffset })
 	tween:Play()
 end
@@ -518,13 +533,13 @@ local function spawnCone(
 
 		local part = createPart(partSize, cf)
 
-		local isFirst = (i == 0)
-		local isLast = (i == CONE_SEGMENTS - 1)
-		local addLeft = (i == 0) -- 가장 왼쪽 세그먼트
-		local addRight = (i == CONE_SEGMENTS - 1) -- 가장 오른쪽 세그먼트
+		-- local isFirst = (i == 0)
+		-- local isLast = (i == CONE_SEGMENTS - 1)
+		-- local addLeft = (i == 0) -- 가장 왼쪽 세그먼트
+		-- local addRight = (i == CONE_SEGMENTS - 1) -- 가장 오른쪽 세그먼트
 
 		-- innerRange > 0이면 Back cap 위치가 innerRange 지점
-		applySegmentGui(part, color, gradientDir, isFirst, isLast, addLeft, addRight)
+		applySegmentGui(part, color, gradientDir, true, true, (i == 0), (i == CONE_SEGMENTS - 1))
 
 		table.insert(parts, part)
 	end
