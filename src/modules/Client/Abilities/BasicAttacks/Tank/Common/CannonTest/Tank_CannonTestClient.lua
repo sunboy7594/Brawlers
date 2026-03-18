@@ -9,6 +9,9 @@
 	  shot  (line)   : 직사 방향 표시
 	  trail (arc)    : 포물선 궤적 + 착탄 링
 	  zone  (circle) : 플레이어 주변 근접 범위 링
+
+	색상/투명도는 BasicAttackClient의 Heartbeat에서 리소스 상태에 따라
+	updateAll로 일괄 처리하므로 onAim에서 별도 설정 불필요.
 ]=]
 
 local require = require(script.Parent.loader).load(script)
@@ -34,20 +37,20 @@ local LINE_RANGE = 15
 local LINE_WIDTH = 1
 
 -- arc
-local ARC_RANGE = 20
-local ARC_BEAM_WIDTH = 0.25
-local ARC_RING_RADIUS = 3
-local ARC_RING_INNER = 1
+local ARC_RANGE          = 20
+local ARC_BEAM_WIDTH     = 0.25
+local ARC_RING_RADIUS    = 3
+local ARC_RING_INNER     = 1
 
 -- circle (플레이어 발 아래 근접 링)
-local ZONE_RADIUS = 3
-local ZONE_INNER_RADIUS = 1.5
+local ZONE_RADIUS        = 3
+local ZONE_INNER_RADIUS  = 1.5
 
 return {
 	shapes = {
-		shot = "line",
+		shot  = "line",
 		trail = "arc",
-		zone = "circle",
+		zone  = "circle",
 	},
 
 	onAimStart = {
@@ -58,13 +61,13 @@ return {
 				width = LINE_WIDTH,
 			})
 			state.indicator:update("trail", {
-				range = ARC_RANGE,
-				beamWidth = ARC_BEAM_WIDTH,
-				arcRadius = ARC_RING_RADIUS,
+				range          = ARC_RANGE,
+				beamWidth      = ARC_BEAM_WIDTH,
+				arcRadius      = ARC_RING_RADIUS,
 				arcInnerRadius = ARC_RING_INNER,
 			})
 			state.indicator:update("zone", {
-				radius = ZONE_RADIUS,
+				radius      = ZONE_RADIUS,
 				innerRadius = ZONE_INNER_RADIUS,
 			})
 			state.indicator:showAll()
@@ -73,26 +76,18 @@ return {
 
 	onAim = {
 		function(state: BasicAttackState)
-			local canFire = state.currentStack > 0 and os.clock() >= state.intervalUntil
-
-			-- 리소스 없을 때 색상으로 피드백
-			local color = if canFire then Color3.fromRGB(100, 200, 255) else Color3.fromRGB(220, 80, 80)
-
+			-- 위치/방향만 업데이트 (색상/투명도는 BasicAttackClient Heartbeat에서 처리)
 			state.indicator:update("shot", {
-				origin = state.origin,
+				origin    = state.origin,
 				direction = state.direction,
-				color = color,
 			})
 			state.indicator:update("trail", {
-				origin = state.origin,
+				origin    = state.origin,
 				direction = state.direction,
-				color = color,
 			})
-			-- zone은 항상 플레이어 발 위치
 			state.indicator:update("zone", {
-				origin = state.origin,
+				origin    = state.origin,
 				direction = state.direction,
-				color = color,
 			})
 		end,
 	},
