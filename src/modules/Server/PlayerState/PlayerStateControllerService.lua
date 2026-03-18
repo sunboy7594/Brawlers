@@ -12,17 +12,24 @@
 	- GetActiveTags    : 현재 활성 tag 목록 열람
 	- HasEffect        : 대상에 특정 componentType 존재 여부 확인
 	- HasTag           : 대상에 특정 tag 존재 여부 확인
+	- IsAbilityLocked  : 특정 어빌리티 타입 잠금 여부 확인
 
 	내부 구조:
 	  runtime.effects: { [id]: EffectInstance } 딕셔너리
 	  EffectInstance: id + effectDef + components(ComponentState) + tags(TagState) + repeatState?
 	  damage 포함 모든 component를 ComponentState로 저장
-	  (damage/knockback/cleanse는 즉시 처리 후 expiresAt = 생성시각으로 표시)
+	  (damage/knockback/cleanse/resourceDelta는 즉시 처리 후 expiresAt = 생성시각으로 표시)
 
 	클라이언트 통보:
 	  effect 적용 시 EffectApplied:FireClient(target, effectDef, id)
 	  repeat의 경우 tag duration을 totalDuration으로 확장한 displayDef 전송
 	  effect 만료/취소 시 EffectRemoved:FireClient(target, id)
+
+	공개 Signal:
+	  ResourceDeltaApplied  : (target: Player, amount: number)
+	    → resourceDelta component 즉시 처리 시 발동. BasicAttackService가 구독.
+	  EffectiveMultipliersChanged : (target: Player)
+	    → reloadRateMult/regenRateMult 변경 시 발동. BasicAttackService가 ResourceSync 재발송.
 ]=]
 
 local require = require(script.Parent.loader).load(script)
@@ -36,6 +43,7 @@ local Maid = require("Maid")
 local PlayerStateDefs = require("PlayerStateDefs")
 local PlayerStateRemoting = require("PlayerStateRemoting")
 local ServiceBag = require("ServiceBag")
+local Signal = require("Signal")
 
 local CC_TYPES = PlayerStateDefs.CC_TYPES
 local ComponentType = PlayerStateDefs.ComponentType
@@ -68,12 +76,15 @@ type EffectInstance = {
 type PlayerRuntime = {
 	effects: { [string]: EffectInstance },
 	isMoveLocked: boolean,
-	isAttackLocked: boolean,
+	-- lockedAbilityTypes: nil=잠금없음, { ["*"]=true }=전부잠금, { ["BasicAttack"]=true, ... }=선택잠금
+	lockedAbilityTypes: { [string]: boolean }?,
 	isIgnoreCC: boolean,
 	isIgnoreDamage: boolean,
-	slowMultiplier: number,
+	walkSpeedMult: number,
 	receiveDamageMult: number,
 	dealDamageMult: number,
+	reloadRateMult: number,
+	regenRateMult: number,
 	humanoid: Humanoid?,
 	rootPart: BasePart?,
 }
@@ -87,6 +98,8 @@ export type PlayerStateControllerService = typeof(setmetatable(
 		_runtimes: { [number]: PlayerRuntime },
 		_playerMaids: { [number]: any },
 		_idCounter: number,
+		ResourceDeltaApplied: any,
+		EffectiveMultipliersChanged: any,
 	},
 	{} :: typeof({ __index = {} })
 ))
@@ -106,6 +119,8 @@ function PlayerStateControllerService.Init(self: PlayerStateControllerService, s
 	self._runtimes = {}
 	self._playerMaids = {}
 	self._idCounter = 0
+	self.ResourceDeltaApplied = self._maid:GiveTask(Signal.new())
+	self.EffectiveMultipliersChanged = self._maid:GiveTask(Signal.new())
 end
 
 function PlayerStateControllerService.Start(self: PlayerStateControllerService): ()
@@ -132,12 +147,14 @@ function PlayerStateControllerService:_onPlayerAdded(player: Player)
 	local runtime: PlayerRuntime = {
 		effects = {},
 		isMoveLocked = false,
-		isAttackLocked = false,
+		lockedAbilityTypes = nil,
 		isIgnoreCC = false,
 		isIgnoreDamage = false,
-		slowMultiplier = 1.0,
+		walkSpeedMult = 1.0,
 		receiveDamageMult = 1.0,
 		dealDamageMult = 1.0,
+		reloadRateMult = 1.0,
+		regenRateMult = 1.0,
 		humanoid = nil,
 		rootPart = nil,
 	}
@@ -155,7 +172,7 @@ function PlayerStateControllerService:_onPlayerAdded(player: Player)
 			runtime.rootPart = nil
 		end))
 
-		for _, part in char:GetDescendants() do -- 캐릭터 그룹으로 지정
+		for _, part in char:GetDescendants() do
 			if part:IsA("BasePart") then
 				part.CollisionGroup = "Characters"
 			end
@@ -204,13 +221,11 @@ function PlayerStateControllerService:_onHeartbeat(_dt: number)
 			if instance.repeatState then
 				local rs = instance.repeatState
 
-				-- 취소 또는 만료
 				if rs.cancelled or now >= rs.expiresAt then
 					table.insert(toRemove, id)
 					continue
 				end
 
-				-- 펜딩 tick 처리
 				local nextFireAt = rs.startedAt + rs.fired * rs.interval
 				while rs.fired < rs.count and now >= nextFireAt do
 					self:_fireRepeatTick(player, runtime, instance)
@@ -219,7 +234,6 @@ function PlayerStateControllerService:_onHeartbeat(_dt: number)
 					nextFireAt = rs.startedAt + rs.fired * rs.interval
 				end
 			else
-				-- 단발: 모든 컴포넌트/태그가 만료되면 제거
 				if self:_isInstanceExpired(instance, now) then
 					table.insert(toRemove, id)
 				end
@@ -236,7 +250,7 @@ function PlayerStateControllerService:_onHeartbeat(_dt: number)
 		end
 
 		if dirty then
-			self:_rebuildCache(runtime)
+			self:_rebuildCache(runtime, player)
 			self:_syncMovement(player, runtime)
 		end
 	end
@@ -257,7 +271,6 @@ function PlayerStateControllerService:Play(target: Player, effectDef: PlayerStat
 	local id = self:_generateId()
 	local now = os.clock()
 
-	-- 인스턴스 생성 (보호 체크 포함)
 	local instance = self:_createInstance(id, effectDef, runtime, now, nil)
 
 	-- cleanse 먼저 처리 (인스턴스 추가 전)
@@ -268,7 +281,6 @@ function PlayerStateControllerService:Play(target: Player, effectDef: PlayerStat
 		end
 	end
 
-	-- 인스턴스 등록
 	runtime.effects[id] = instance
 
 	-- 즉시 처리 컴포넌트 실행
@@ -278,13 +290,14 @@ function PlayerStateControllerService:Play(target: Player, effectDef: PlayerStat
 			self:_applyDamage(target, runtime, effectDef, c)
 		elseif c.type == ComponentType.Knockback then
 			self:_applyKnockback(runtime, c)
+		elseif c.type == ComponentType.ResourceDelta then
+			self.ResourceDeltaApplied:Fire(target, c.amount)
 		end
 	end
 
-	self:_rebuildCache(runtime)
+	self:_rebuildCache(runtime, target)
 	self:_syncMovement(target, runtime)
 
-	-- 태그가 있을 때만 클라이언트 통보
 	if effectDef.tags and #effectDef.tags > 0 then
 		PlayerStateRemoting.EffectApplied:FireClient(target, effectDef, id)
 		instance.sentApplied = true
@@ -297,7 +310,6 @@ end
 	effect를 일정 간격으로 count회 반복 적용합니다.
 	interval = totalDuration / count 자동 계산.
 	instance 1개 생성. Heartbeat에서 tick 관리.
-	EffectApplied는 최초 1회 (tag duration = totalDuration으로 확장하여 전송).
 	@return () -> ()  취소 함수
 ]=]
 function PlayerStateControllerService:PlayRepeat(
@@ -327,7 +339,6 @@ function PlayerStateControllerService:PlayRepeat(
 
 	local instance = self:_createInstance(id, effectDef, runtime, now, repeatState)
 
-	-- 첫 tick 즉시 실행
 	for _, cs in instance.components do
 		local c = cs.component :: any
 		if c.type == ComponentType.Cleanse then
@@ -340,10 +351,9 @@ function PlayerStateControllerService:PlayRepeat(
 	self:_fireRepeatTick(target, runtime, instance)
 	repeatState.fired = 1
 
-	self:_rebuildCache(runtime)
+	self:_rebuildCache(runtime, target)
 	self:_syncMovement(target, runtime)
 
-	-- tag duration을 totalDuration으로 확장한 displayDef 전송
 	if effectDef.tags and #effectDef.tags > 0 then
 		local displayDef = self:_makeRepeatDisplayDef(effectDef, totalDuration)
 		PlayerStateRemoting.EffectApplied:FireClient(target, displayDef, id)
@@ -394,7 +404,7 @@ function PlayerStateControllerService:StopAll(target: Player, includeForced: boo
 		runtime.effects[id] = nil
 	end
 
-	self:_rebuildCache(runtime)
+	self:_rebuildCache(runtime, target)
 	self:_syncMovement(target, runtime)
 end
 
@@ -417,7 +427,6 @@ function PlayerStateControllerService:GetActiveEffects(target: Player): { Player
 		if instance.repeatState then
 			remaining = math.max(0, instance.repeatState.expiresAt - now)
 		else
-			-- 가장 늦게 만료되는 컴포넌트/태그 기준
 			local maxExpiry: number = 0
 			local hasPermanent = false
 
@@ -441,7 +450,6 @@ function PlayerStateControllerService:GetActiveEffects(target: Player): { Player
 			end
 		end
 
-		-- RepeatState 뷰 변환
 		local repeatStateView: PlayerStateDefs.RepeatState? = nil
 		if instance.repeatState then
 			local rs = instance.repeatState
@@ -501,7 +509,6 @@ end
 
 --[=[
 	대상에게 특정 componentType의 effect가 존재하는지 확인합니다.
-	@param componentType PlayerStateDefs.ComponentType 값 (예: "moveLock", "slow")
 ]=]
 function PlayerStateControllerService:HasEffect(target: Player, componentType: string): boolean
 	local runtime = self._runtimes[target.UserId]
@@ -526,7 +533,6 @@ end
 
 --[=[
 	대상에게 특정 tag가 존재하는지 확인합니다.
-	@param tagName PlayerStateDefs.Tag 값 (예: "vfx_burn", "anim_stun")
 ]=]
 function PlayerStateControllerService:HasTag(target: Player, tagName: string): boolean
 	local runtime = self._runtimes[target.UserId]
@@ -562,11 +568,43 @@ function PlayerStateControllerService:GetDealDamageMult(player: Player): number
 end
 
 --[=[
-	공격 잠금 여부를 반환합니다.
+	장전 속도 배율을 반환합니다. (기본 1.0)
+	BasicAttackService가 읽어 유효 reloadTime을 계산합니다.
 ]=]
-function PlayerStateControllerService:IsAttackLocked(player: Player): boolean
+function PlayerStateControllerService:GetReloadRateMult(player: Player): number
 	local runtime = self._runtimes[player.UserId]
-	return if runtime then runtime.isAttackLocked else false
+	return if runtime then runtime.reloadRateMult else 1.0
+end
+
+--[=[
+	재생 속도 배율을 반환합니다. (기본 1.0)
+	BasicAttackService가 읽어 유효 regenRate를 계산합니다.
+]=]
+function PlayerStateControllerService:GetRegenRateMult(player: Player): number
+	local runtime = self._runtimes[player.UserId]
+	return if runtime then runtime.regenRateMult else 1.0
+end
+
+--[=[
+	특정 어빌리티 타입이 잠겨있는지 확인합니다.
+
+	@param player Player
+	@param abilityType string  "BasicAttack" | "Skill" | "Ultimate"
+	@return boolean
+]=]
+function PlayerStateControllerService:IsAbilityLocked(player: Player, abilityType: string): boolean
+	local runtime = self._runtimes[player.UserId]
+	if not runtime then
+		return false
+	end
+	local locked = runtime.lockedAbilityTypes
+	if locked == nil then
+		return false
+	end
+	if locked["*"] then
+		return true
+	end
+	return locked[abilityType] == true
 end
 
 -- ─── 내부: 인스턴스 생성 ──────────────────────────────────────────────────────
@@ -605,8 +643,12 @@ function PlayerStateControllerService:_createInstance(
 			local expiresAt: number?
 
 			-- 즉시 처리 컴포넌트
-			if c.type == ComponentType.Damage or c.type == ComponentType.Knockback then
-				expiresAt = now -- 즉시 처리됨, 이미 만료로 표시
+			if
+				c.type == ComponentType.Damage
+				or c.type == ComponentType.Knockback
+				or c.type == ComponentType.ResourceDelta
+			then
+				expiresAt = now
 			elseif c.duration then
 				expiresAt = now + c.duration
 			else
@@ -663,6 +705,8 @@ function PlayerStateControllerService:_fireRepeatTick(target: Player, runtime: P
 			self:_applyDamage(target, runtime, effectDef, c)
 		elseif c.type == ComponentType.Knockback then
 			self:_applyKnockback(runtime, c)
+		elseif c.type == ComponentType.ResourceDelta then
+			self.ResourceDeltaApplied:Fire(target, c.amount)
 		end
 	end
 end
@@ -695,16 +739,14 @@ end
 -- ─── 내부: 만료 체크 ─────────────────────────────────────────────────────────
 
 function PlayerStateControllerService:_isInstanceExpired(instance: EffectInstance, now: number): boolean
-	-- 살아있는 컴포넌트 체크
 	for _, cs in instance.components do
 		if cs.expiresAt == nil then
 			return false
-		end -- 영구
+		end
 		if cs.expiresAt > now then
 			return false
-		end -- 아직 활성
+		end
 	end
-	-- 살아있는 태그 체크
 	for _, ts in instance.tags do
 		if ts.expiresAt > now then
 			return false
@@ -715,14 +757,20 @@ end
 
 -- ─── 내부: 캐시 재빌드 ───────────────────────────────────────────────────────
 
-function PlayerStateControllerService:_rebuildCache(runtime: PlayerRuntime)
-	local isMoveLocked, isAttackLocked, isIgnoreCC, isIgnoreDamage = false, false, false, false
-	local slowMult, receiveMult, dealMult = 1.0, 1.0, 1.0
+--[=[
+	@param runtime PlayerRuntime
+	@param player Player?  nil이면 EffectiveMultipliersChanged 미발동
+]=]
+function PlayerStateControllerService:_rebuildCache(runtime: PlayerRuntime, player: Player?)
+	local isMoveLocked = false
+	local lockedAbilityTypes: { [string]: boolean }? = nil
+	local isIgnoreCC, isIgnoreDamage = false, false
+	local speedMult, receiveMult, dealMult = 1.0, 1.0, 1.0
+	local reloadMult, regenMult = 1.0, 1.0
 	local now = os.clock()
 
 	for _, instance in runtime.effects do
 		for _, cs in instance.components do
-			-- 즉시 처리된 컴포넌트(expiresAt = 생성시각) 및 만료된 컴포넌트는 제외
 			if cs.expiresAt ~= nil and cs.expiresAt <= now then
 				continue
 			end
@@ -730,29 +778,57 @@ function PlayerStateControllerService:_rebuildCache(runtime: PlayerRuntime)
 			local c = cs.component :: any
 			if c.type == ComponentType.MoveLock then
 				isMoveLocked = true
-			elseif c.type == ComponentType.AttackLock then
-				isAttackLocked = true
+			elseif c.type == ComponentType.AbilityLock then
+				if not lockedAbilityTypes then
+					lockedAbilityTypes = {}
+				end
+				if c.abilityTypes == nil then
+					-- nil → 전부 잠금
+					lockedAbilityTypes["*"] = true
+				else
+					for _, aType in c.abilityTypes do
+						lockedAbilityTypes[aType] = true
+					end
+				end
 			elseif c.type == ComponentType.IgnoreCC then
 				isIgnoreCC = true
 			elseif c.type == ComponentType.IgnoreDamage then
 				isIgnoreDamage = true
-			elseif c.type == ComponentType.Slow then
-				slowMult *= c.multiplier
+			elseif c.type == ComponentType.WalkSpeedMult then
+				speedMult = math.min(speedMult, c.multiplier)
 			elseif c.type == ComponentType.ReceiveDamageMult then
 				receiveMult *= c.multiplier
 			elseif c.type == ComponentType.DealDamageMult then
 				dealMult *= c.multiplier
+			elseif c.type == ComponentType.ReloadRateMult then
+				reloadMult *= c.multiplier
+			elseif c.type == ComponentType.RegenRateMult then
+				regenMult *= c.multiplier
 			end
 		end
 	end
 
+	local prevReloadMult = runtime.reloadRateMult
+	local prevRegenMult = runtime.regenRateMult
+
 	runtime.isMoveLocked = isMoveLocked
-	runtime.isAttackLocked = isAttackLocked
+	runtime.lockedAbilityTypes = lockedAbilityTypes
 	runtime.isIgnoreCC = isIgnoreCC
 	runtime.isIgnoreDamage = isIgnoreDamage
-	runtime.slowMultiplier = slowMult
+	runtime.walkSpeedMult = speedMult
 	runtime.receiveDamageMult = receiveMult
 	runtime.dealDamageMult = dealMult
+	runtime.reloadRateMult = reloadMult
+	runtime.regenRateMult = regenMult
+
+	-- 배율 변경 시 BasicAttackService에 알림
+	if player then
+		local reloadChanged = math.abs(prevReloadMult - reloadMult) > 0.001
+		local regenChanged = math.abs(prevRegenMult - regenMult) > 0.001
+		if reloadChanged or regenChanged then
+			self.EffectiveMultipliersChanged:Fire(player)
+		end
+	end
 end
 
 -- ─── 내부: 이동 동기화 ───────────────────────────────────────────────────────
@@ -767,7 +843,7 @@ function PlayerStateControllerService:_syncMovement(target: Player, runtime: Pla
 	else
 		ms:SetMovementLocked(target, false)
 		if ms.SetSpeedMultiplier then
-			ms:SetSpeedMultiplier(target, runtime.slowMultiplier)
+			ms:SetSpeedMultiplier(target, runtime.walkSpeedMult)
 		end
 	end
 end
@@ -793,7 +869,7 @@ function PlayerStateControllerService:_applyDamage(
 	end
 
 	self._hpService:ApplyDamage(target, amount, effectDef.source)
-	self:_checkVulnerable(target, runtime, effectDef)
+	self:_checkOnHitReact(target, runtime, effectDef)
 end
 
 -- ─── 내부: 넉백 처리 ─────────────────────────────────────────────────────────
@@ -817,12 +893,16 @@ function PlayerStateControllerService:_applyKnockback(runtime: PlayerRuntime, co
 	end)
 end
 
--- ─── 내부: vulnerable 체크 ───────────────────────────────────────────────────
+-- ─── 내부: onHitReact 체크 ───────────────────────────────────────────────────
 
-function PlayerStateControllerService:_checkVulnerable(
+--[=[
+	대상이 공격을 받았을 때 onHitReact component의 콜백을 호출합니다.
+	incomingEffectDef.source로 공격자를 확인할 수 있습니다.
+]=]
+function PlayerStateControllerService:_checkOnHitReact(
 	target: Player,
 	runtime: PlayerRuntime,
-	incomingDef: PlayerStateDefs.EffectDef
+	incomingEffectDef: PlayerStateDefs.EffectDef
 )
 	local now = os.clock()
 	for _, instance in runtime.effects do
@@ -831,14 +911,14 @@ function PlayerStateControllerService:_checkVulnerable(
 				continue
 			end
 			local c = cs.component :: any
-			if c.type ~= ComponentType.Vulnerable or not c.onHit then
+			if c.type ~= ComponentType.OnHitReact or not c.onHit then
 				continue
 			end
-			local onHitDef = c.onHit :: PlayerStateDefs.EffectDef
-			if incomingDef.source and not onHitDef.source then
-				(onHitDef :: any).source = incomingDef.source
+			-- 콜백 호출. incomingEffectDef 전체 전달.
+			local ok, err = pcall(c.onHit, incomingEffectDef)
+			if not ok then
+				warn(string.format("[PSC] onHitReact 콜백 오류 (target=%s): %s", target.Name, tostring(err)))
 			end
-			self:Play(target, onHitDef)
 		end
 	end
 end
@@ -855,7 +935,7 @@ function PlayerStateControllerService:_clearAllEffects(target: Player, runtime: 
 		end
 	end
 	table.clear(runtime.effects)
-	self:_rebuildCache(runtime)
+	self:_rebuildCache(runtime, target)
 	self:_syncMovement(target, runtime)
 end
 

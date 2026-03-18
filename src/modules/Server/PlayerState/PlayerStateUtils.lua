@@ -27,20 +27,23 @@
 	-- → { { builderName="burn", id="ps_3", remaining=7.2 }, ... }
 
 	─── 지원 effect ─────────────────────────────────────────────────────────────
-	"stun"              moveLock + attackLock  /  anim_stun, screen_stun, vfx_stun_stars
-	"slow"              slow(multiplier)       /  vfx_slow
-	"knockback"         knockback(dir, force)  /  anim_knockback, cam_knockback
-	"airborne"          moveLock + attackLock  /  anim_airborne
-	"freeze"            moveLock + attackLock  /  anim_freeze, screen_freeze, vfx_freeze
-	"burn"              damage(amount)         /  vfx_burn, screen_burn
-	"poison"            damage(amount)         /  vfx_poison, screen_poison
-	"damage"            damage(amount)         /  anim_hit, screen_hit_red
-	"hyperArmor"        ignoreCC               /  vfx_hyperarmor
+	"stun"              moveLock + abilityLock(전부)  /  anim_stun, screen_stun, vfx_stun_stars
+	"slow"              walkSpeedMult(multiplier)     /  vfx_slow
+	"knockback"         knockback(dir, force)         /  anim_knockback, cam_knockback
+	"airborne"          moveLock + abilityLock(전부)  /  anim_airborne
+	"freeze"            moveLock + abilityLock(전부)  /  anim_freeze, screen_freeze, vfx_freeze
+	"burn"              damage(amount)               /  vfx_burn, screen_burn
+	"poison"            damage(amount)               /  vfx_poison, screen_poison
+	"damage"            damage(amount)               /  anim_hit, screen_hit_red
+	"hyperArmor"        ignoreCC                     /  vfx_hyperarmor
 	"ignoreDamage"      ignoreDamage
 	"receiveDamageMult" receiveDamageMult(multiplier)
 	"dealDamageMult"    dealDamageMult(multiplier)
 	"cleanse"           cleanse
-	"vulnerable"        vulnerable(onHit)      /  vfx_vulnerable
+	"onHitReact"        onHitReact(onHit callback)   /  vfx_onhitreact
+	"reloadRateMult"    reloadRateMult(multiplier)
+	"regenRateMult"     regenRateMult(multiplier)
+	"resourceDelta"     resourceDelta(amount, 양수=충전/음수=소모)
 ]=]
 
 local require = require(script.Parent.loader).load(script)
@@ -65,12 +68,15 @@ export type Params = {
 	direction: Vector3?,
 	knockbackForce: number?,
 
+	-- abilityLock 전용: nil이면 전부 잠금
+	abilityTypes: { string }?,
+
+	-- onHitReact 전용
+	onHit: ((incomingEffectDef: PlayerStateDefs.EffectDef) -> ())?,
+
 	-- PlayPlayerStateRepeat 전용
 	totalDuration: number?,
 	count: number?,
-
-	-- vulnerable 전용
-	onHit: PlayerStateDefs.EffectDef?,
 }
 
 -- ─── 내부 상수 ───────────────────────────────────────────────────────────────
@@ -91,7 +97,7 @@ local BUILDERS: { [string]: Builder } = {
 			source = p.source,
 			components = {
 				{ type = "moveLock", duration = dur },
-				{ type = "attackLock", duration = dur },
+				{ type = "abilityLock", abilityTypes = nil, duration = dur },
 			},
 			tags = {
 				{ name = Tag.AnimStun, duration = dur, intensity = i },
@@ -109,7 +115,7 @@ local BUILDERS: { [string]: Builder } = {
 			force = p.force,
 			source = p.source,
 			components = {
-				{ type = "slow", multiplier = mult, duration = dur },
+				{ type = "walkSpeedMult", multiplier = mult, duration = dur },
 			},
 			tags = if dur
 				then {
@@ -145,7 +151,7 @@ local BUILDERS: { [string]: Builder } = {
 			source = p.source,
 			components = {
 				{ type = "moveLock", duration = dur },
-				{ type = "attackLock", duration = dur },
+				{ type = "abilityLock", abilityTypes = nil, duration = dur },
 			},
 			tags = {
 				{ name = Tag.AnimAirborne, duration = dur, intensity = i },
@@ -161,7 +167,7 @@ local BUILDERS: { [string]: Builder } = {
 			source = p.source,
 			components = {
 				{ type = "moveLock", duration = dur },
-				{ type = "attackLock", duration = dur },
+				{ type = "abilityLock", abilityTypes = nil, duration = dur },
 			},
 			tags = {
 				{ name = Tag.AnimFreeze, duration = dur, intensity = i },
@@ -277,20 +283,52 @@ local BUILDERS: { [string]: Builder } = {
 		}
 	end,
 
-	vulnerable = function(p)
+	onHitReact = function(p)
 		local dur = p.duration
 		local i = p.intensity or DEFAULT_INTENSITY
+		assert(p.onHit, "[PlayerStateUtils] onHitReact builder requires params.onHit (function)")
 		return {
 			force = p.force,
 			source = p.source,
 			components = {
-				{ type = "vulnerable", onHit = p.onHit or {}, duration = dur },
+				{ type = "onHitReact", onHit = p.onHit :: any, duration = dur },
 			},
 			tags = if dur
 				then {
-					{ name = Tag.VfxVulnerable, duration = dur, intensity = i },
+					{ name = Tag.VfxOnHitReact, duration = dur, intensity = i },
 				}
 				else nil,
+		}
+	end,
+
+	reloadRateMult = function(p)
+		return {
+			force = p.force,
+			source = p.source,
+			components = {
+				{ type = "reloadRateMult", multiplier = p.multiplier or 2.0, duration = p.duration },
+			},
+		}
+	end,
+
+	regenRateMult = function(p)
+		return {
+			force = p.force,
+			source = p.source,
+			components = {
+				{ type = "regenRateMult", multiplier = p.multiplier or 2.0, duration = p.duration },
+			},
+		}
+	end,
+
+	resourceDelta = function(p)
+		local amount = p.amount or 1
+		return {
+			force = p.force,
+			source = p.source,
+			components = {
+				{ type = "resourceDelta", amount = amount },
+			},
 		}
 	end,
 }

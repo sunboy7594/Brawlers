@@ -20,6 +20,10 @@
 	  같은 팀               → false (팀킬 방지)
 	  다른 팀               → true
 
+	FilterTeammates / FilterEnemies:
+	  InstantHit.apply의 victims({ Model }) 목록을 팀 기준으로 필터링합니다.
+	  onHitChecked 내부에서 사용합니다.
+
 	클라이언트 동기화:
 	  player.Team은 Roblox가 자동으로 클라이언트에 복제하므로
 	  별도 RemoteEvent 불필요.
@@ -190,22 +194,59 @@ end
 	@return boolean
 ]=]
 function TeamService:CanDamage(source: Player?, target: Player): boolean
-	-- 환경 대미지 또는 자해
 	if source == nil or source == target then
 		return true
 	end
 
-	-- 팀 없음(FFA): 양쪽 다 공격 가능
 	if source.Neutral or target.Neutral then
 		return true
 	end
 
-	-- 같은 팀이면 대미지 차단
 	if areTeamMates(source, target) then
 		return false
 	end
 
 	return true
+end
+
+--[=[
+	victims 목록에서 source와 같은 팀인 플레이어만 반환합니다.
+	source 자신은 포함하지 않습니다.
+	InstantHit.apply의 victims를 onHitChecked에서 필터링할 때 사용합니다.
+
+	@param source Player
+	@param victims { Model }
+	@return { Player }
+]=]
+function TeamService:FilterTeammates(source: Player, victims: { Model }): { Player }
+	local result: { Player } = {}
+	for _, char in victims do
+		local player = Players:GetPlayerFromCharacter(char)
+		if player and player ~= source and areTeamMates(source, player) then
+			table.insert(result, player)
+		end
+	end
+	return result
+end
+
+--[=[
+	victims 목록에서 source가 공격 가능한 적 플레이어만 반환합니다.
+	CanDamage 규칙을 따릅니다 (FFA 포함).
+	InstantHit.apply의 victims를 onHitChecked에서 필터링할 때 사용합니다.
+
+	@param source Player
+	@param victims { Model }
+	@return { Player }
+]=]
+function TeamService:FilterEnemies(source: Player, victims: { Model }): { Player }
+	local result: { Player } = {}
+	for _, char in victims do
+		local player = Players:GetPlayerFromCharacter(char)
+		if player and self:CanDamage(source, player) then
+			table.insert(result, player)
+		end
+	end
+	return result
 end
 
 function TeamService.Destroy(self: TeamService)

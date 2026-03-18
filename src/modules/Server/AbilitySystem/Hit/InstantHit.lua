@@ -13,6 +13,8 @@
 	- arc 추가: 착탄 지점(origin + direction * range) 기준 원판 판정.
 	- wallCheck 기본 true: false 지정 시에만 벽 차단 비활성화.
 	  CollisionGroup "HitCheck" 사용 → "Characters" 그룹 파츠 자동 통과.
+	- attacker 자신 포함: getCharactersInSphere에서 attacker 제외 필터 제거.
+	  onHitChecked에서 victimModel == state.attacker로 자기자신 구별.
 
 	지원 shape:
 	- "cone":   부채꼴 (range, angleMin, angleMax)
@@ -64,7 +66,7 @@ export type HitConfig = {
 	-- 벽 차단 (false 지정 시만 비활성화, 기본 true)
 	wallCheck: boolean?,
 
-	delay: number?, -- ← 추가. nil / 0이면 즉발
+	delay: number?, -- nil / 0이면 즉발
 }
 
 -- ─── RaycastParams (모듈 로드 시 1회 생성) ───────────────────────────────────
@@ -78,11 +80,14 @@ WALL_CHECK_PARAMS.CollisionGroup = "HitCheck"
 
 local InstantHit = {}
 
--- 구 범위 내 생존 캐릭터 수집. 공격자 자신 제외.
-local function getCharactersInSphere(origin: Vector3, searchRadius: number, attacker: Model): { Model }
+--[=[
+	구 범위 내 생존 캐릭터 수집.
+	attacker 자신도 포함합니다.
+	onHitChecked에서 victimModel == state.attacker로 자기자신을 구별하세요.
+]=]
+local function getCharactersInSphere(origin: Vector3, searchRadius: number, _attacker: Model): { Model }
 	local params = OverlapParams.new()
-	params.FilterType = Enum.RaycastFilterType.Exclude
-	params.FilterDescendantsInstances = { attacker }
+	-- attacker 제외 없음 → 자기자신 포함
 
 	local parts = workspace:GetPartBoundsInRadius(origin, searchRadius, params)
 	local seen: { [Model]: boolean } = {}
@@ -90,7 +95,7 @@ local function getCharactersInSphere(origin: Vector3, searchRadius: number, atta
 
 	for _, part in parts do
 		local char = part:FindFirstAncestorOfClass("Model")
-		if not char or char == attacker or seen[char] then
+		if not char or seen[char] then
 			continue
 		end
 		local humanoid = char:FindFirstChildOfClass("Humanoid")
@@ -137,7 +142,7 @@ local function filterCone(
 		end
 
 		if horizontal.Magnitude < 0.001 then
-			-- origin과 거의 겹침 → 무조건 히트
+			-- origin과 거의 겹침 → 무조건 히트 (자기자신 포함)
 			table.insert(result, char)
 			continue
 		end
@@ -274,7 +279,6 @@ end
 
 -- shape에 따라 판정 후 적중 목록 반환
 local function doHit(attacker: Model, origin: Vector3, direction: Vector3, config: HitConfig): { Model }
-	-- wallCheck: nil / true → 활성화, false → 비활성화
 	local useWallCheck = config.wallCheck ~= false
 	local attackerHRP = if useWallCheck then attacker:FindFirstChild("HumanoidRootPart") :: BasePart? else nil
 
@@ -297,7 +301,6 @@ local function doHit(attacker: Model, origin: Vector3, direction: Vector3, confi
 		local arcRadius = config.arcRadius or 3
 		local dirH = Vector3.new(direction.X, 0, direction.Z)
 		dirH = if dirH.Magnitude < 0.001 then Vector3.new(0, 0, -1) else dirH.Unit
-		-- 착탄 지점 기준으로 후보 수집
 		local landingOrigin = Vector3.new(origin.X + dirH.X * range, origin.Y, origin.Z + dirH.Z * range)
 		local candidates = getCharactersInSphere(landingOrigin, arcRadius, attacker)
 		hits = filterArc(origin, direction, candidates, range, arcRadius)
@@ -305,7 +308,6 @@ local function doHit(attacker: Model, origin: Vector3, direction: Vector3, confi
 		hits = {}
 	end
 
-	-- 벽 차단 (모든 shape 공통 후처리)
 	if useWallCheck and attackerHRP then
 		hits = applyWallCheck(attackerHRP, hits)
 	end
@@ -317,6 +319,8 @@ end
 
 --[=[
 	범위 판정을 즉시 실행합니다.
+	attacker 자신도 victims에 포함됩니다.
+	onHitChecked에서 victimModel == state.attacker 비교로 자기자신을 구별하세요.
 
 	delay가 필요한 경우:
 	  호출부에서 task.delay + fireMaid로 처리.
@@ -337,7 +341,7 @@ function InstantHit.apply(
 	direction: Vector3,
 	config: HitConfig,
 	onHit: ((victims: { Model }) -> ())?,
-	fireMaid: any? -- ← 추가. delay 있을 때 취소 등록용. nil이면 취소 불가
+	fireMaid: any?
 ): ()
 	if config.delay and config.delay > 0 then
 		local cancel = cancellableDelay(config.delay, function()

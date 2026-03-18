@@ -17,24 +17,25 @@
 	ResourceSync 발송 시점:
 	- stack: 발사마다 + 장전 틱마다
 	- gauge: 발사마다 + 소진 시 + max 도달 시
+	- reloadRateMult / regenRateMult 변경 시 (PSC의 EffectiveMultipliersChanged)
+	- resourceDelta 적용 시 (PSC의 ResourceDeltaApplied)
+
+	리소스 배율:
+	- reloadRateMult: PSC에서 가져와 유효 reloadTime에 반영 (높을수록 빠른 장전)
+	- regenRateMult:  PSC에서 가져와 유효 regenRate에 반영  (높을수록 빠른 재생)
+	- ResourceSync에는 항상 유효 값(배율 적용됨)을 전송합니다.
 
 	Anti-exploit:
 	- FIRE_RATE_LIMIT (0.1초)
 	- direction 타입/크기 검증
-	- isAttackLocked 검증 (공격불가 상태)
+	- IsAbilityLocked("BasicAttack") 검증
 	- stack: currentStack > 0, interval 비율 검증
 	- gauge 시작: currentGauge >= minGauge
 	- gauge 루프 중: currentGauge > 0
-	- hold/toggle: 첫 Fire 수신 시 isFiring=true 설정
-
-	interval 예약 (stack만):
-	- interval 잔여 비율 ≤ INTERVAL_QUEUE_THRESHOLD(80%) 일 때 예약 발사
-	- hold/toggle: 예약 없음
 
 	fireMaid:
 	- _executeFire 시마다 새 Maid 생성. CancelCombatState 시 Destroy.
 	- 서버 모듈(onFire)이 GiveTask로 딜레이 히트 취소 등록 가능.
-	- attackLock(스턴 등) → CancelCombatState → fireMaid:Destroy() → 딜레이 히트 전부 취소.
 ]=]
 
 local require = require(script.Parent.loader).load(script)
@@ -56,9 +57,9 @@ local cancellableDelay = require("cancellableDelay")
 
 local FIRE_RATE_LIMIT = 0.1
 local MAX_DIRECTION_MAGNITUDE_DELTA = 0.1
+local MIN_RELOAD_RATE_MULT = 0.01  -- 0 나누기 방지
 
 -- ⚠️ 주의: BasicAttackClient.lua의 INTERVAL_QUEUE_THRESHOLD와 반드시 동일해야 합니다.
---          AbilityTypes에서 공통 참조합니다.
 local INTERVAL_QUEUE_THRESHOLD = AbilityTypes.INTERVAL_QUEUE_THRESHOLD
 
 -- ─── 타입 ────────────────────────────────────────────────────────────────────
@@ -184,7 +185,6 @@ function BasicAttackService.Start(self: BasicAttackService): ()
 		self:_onPlayerRemoving(player)
 	end))
 
-	-- dt 전달
 	self._maid:GiveTask(RunService.Heartbeat:Connect(function(dt: number)
 		self:_updateResources(dt)
 	end))
@@ -197,7 +197,6 @@ function BasicAttackService.Start(self: BasicAttackService): ()
 		self:_onFire(player, direction)
 	end))
 
-	-- FireStart 제거됨. hold/toggle 첫 Fire 수신 시 isFiring=true 자동 설정.
 	self._maid:GiveTask(BasicAttackRemoting.FireEnd:Connect(function(player: Player)
 		self:_onFireEnd(player)
 	end))
@@ -205,6 +204,19 @@ function BasicAttackService.Start(self: BasicAttackService): ()
 	LoadoutRemoting.RequestEquipBasicAttack:Bind(function(player: Player, attackId: unknown)
 		return self:_onRequestEquip(player, attackId)
 	end)
+
+	-- PSC 시그널 구독: resourceDelta 즉시 반영
+	self._maid:GiveTask(self._playerStateController.ResourceDeltaApplied:Connect(function(player: Player, amount: number)
+		self:_applyResourceDelta(player, amount)
+	end))
+
+	-- PSC 시그널 구독: reloadRateMult/regenRateMult 변경 시 ResourceSync 재발송
+	self._maid:GiveTask(self._playerStateController.EffectiveMultipliersChanged:Connect(function(player: Player)
+		local state = self._playerStates[player.UserId]
+		if state then
+			self:_fireResourceSync(player, state)
+		end
+	end))
 end
 
 -- ─── 플레이어 관리 ───────────────────────────────────────────────────────────
@@ -269,7 +281,6 @@ end
 
 function BasicAttackService:_onCharacterAdded(player: Player, char: Model)
 	local state = self._playerStates[player.UserId]
-
 	if not state then
 		return
 	end
@@ -310,13 +321,19 @@ function BasicAttackService:_updateStackRegen(userId: number, state: BasicAttack
 	if state.reloadTime <= 0 then
 		return
 	end
-	if now - state.lastRegenTime >= state.reloadTime then
+
+	local player = Players:GetPlayerByUserId(userId)
+	if not player then
+		return
+	end
+
+	local reloadRateMult = self._playerStateController:GetReloadRateMult(player)
+	local effectiveReloadTime = state.reloadTime / math.max(reloadRateMult, MIN_RELOAD_RATE_MULT)
+
+	if now - state.lastRegenTime >= effectiveReloadTime then
 		state.currentStack = math.min(state.currentStack + 1, state.maxStack)
 		state.lastRegenTime = now
-		local player = Players:GetPlayerByUserId(userId)
-		if player then
-			self:_fireResourceSync(player, state)
-		end
+		self:_fireResourceSync(player, state)
 	end
 end
 
@@ -328,7 +345,6 @@ function BasicAttackService:_updateGauge(userId: number, state: BasicAttackState
 	if state.isFiring and state.currentGauge > 0 then
 		state.currentGauge = math.max(0, state.currentGauge - state.drainRate * dt)
 
-		-- 소진 시: isFiring 종료 + ResourceSync 1회 (강제 캔슬 신호)
 		if state.currentGauge <= 0 then
 			state.isFiring = false
 			state.lastFireEndTime = now
@@ -339,19 +355,22 @@ function BasicAttackService:_updateGauge(userId: number, state: BasicAttackState
 		end
 	elseif not state.isFiring and state.currentGauge < state.maxGauge then
 		if now - state.lastFireEndTime >= state.regenDelay then
-			local prev = state.currentGauge
-			state.currentGauge = math.min(state.maxGauge, state.currentGauge + state.regenRate * dt)
+			local player = Players:GetPlayerByUserId(userId)
+			if not player then
+				return
+			end
 
-			-- max 도달 시: ResourceSync 1회
+			local regenRateMult = self._playerStateController:GetRegenRateMult(player)
+			local effectiveRegenRate = state.regenRate * regenRateMult
+
+			local prev = state.currentGauge
+			state.currentGauge = math.min(state.maxGauge, state.currentGauge + effectiveRegenRate * dt)
+
 			if prev < state.maxGauge and state.currentGauge >= state.maxGauge then
-				local player = Players:GetPlayerByUserId(userId)
-				if player then
-					self:_fireResourceSync(player, state)
-				end
+				self:_fireResourceSync(player, state)
 			end
 		end
 	end
-	-- 매프레임 발송 없음
 end
 
 -- ─── 조준 시작 처리 ──────────────────────────────────────────────────────────
@@ -372,7 +391,7 @@ function BasicAttackService:_onAimStarted(player: Player)
 	if not state.equippedAttackId then
 		return
 	end
-	if self._playerStateController:IsAttackLocked(player) then
+	if self._playerStateController:IsAbilityLocked(player, "BasicAttack") then
 		return
 	end
 
@@ -399,19 +418,17 @@ function BasicAttackService:_onFire(player: Player, direction: unknown)
 		return
 	end
 
-	-- 공격불가 상태 검증
-	if self._playerStateController:IsAttackLocked(player) then
+	-- 어빌리티 잠금 검증
+	if self._playerStateController:IsAbilityLocked(player, "BasicAttack") then
 		return
 	end
 
 	local now = os.clock()
 
-	-- 레이트 리밋
 	if now - state.lastFireTime < FIRE_RATE_LIMIT then
 		return
 	end
 
-	-- direction 검증
 	if typeof(direction) ~= "Vector3" then
 		return
 	end
@@ -431,32 +448,26 @@ function BasicAttackService:_onFire(player: Player, direction: unknown)
 
 	local fireType = state.fireType
 
-	-- hold/toggle: 첫 Fire 수신 시 isFiring=true 설정 (FireStart 대체)
 	if fireType == "hold" or fireType == "toggle" then
 		if not state.isFiring then
-			-- 첫 발사 시작: minGauge 체크
 			if not self:_hasResourceForStart(state) then
 				return
 			end
 			state.isFiring = true
 		else
-			-- 루프 중: currentGauge > 0 체크 (gauge 전용)
 			if state.resourceType == "gauge" and state.currentGauge <= 0 then
 				return
 			end
-			-- stack+hold/toggle: 일반 리소스 체크
 			if state.resourceType == "stack" and not self:_hasResourceForStart(state) then
 				return
 			end
 		end
 	else
-		-- stack fireType: 시작 리소스 체크
 		if not self:_hasResourceForStart(state) then
 			return
 		end
 	end
 
-	-- stack: interval 검증 및 예약 처리
 	if fireType == "stack" then
 		if now < state.intervalUntil then
 			local remaining = state.intervalUntil - now
@@ -501,30 +512,26 @@ function BasicAttackService:_executeFire(player: Player, state: BasicAttackState
 	state.lastFireTime = now
 	state.aimStartTime = 0
 
-	-- stack: 리소스 차감 + intervalUntil 설정 + ResourceSync
 	if state.fireType == "stack" then
 		state.currentStack -= 1
 		state.intervalUntil = now + state.interval
 		self:_fireResourceSync(player, state)
 	end
 
-	-- gauge: 발사마다 ResourceSync (클라이언트 drift 보정)
 	if state.resourceType == "gauge" then
 		self:_fireResourceSync(player, state)
 	end
 
-	-- fireMaid 갱신 (이전 발사의 딜레이 히트 취소 후 새 수명 시작)
 	if state.fireMaid then
 		state.fireMaid:Destroy()
 	end
 	state.fireMaid = Maid.new()
 
-	-- snapshot 생성
 	local snapshot = table.clone(state)
 	snapshot.victims = nil
 	snapshot.onHit = nil
 	snapshot.pendingFireCancel = nil
-	snapshot.fireMaid = state.fireMaid -- 모듈이 GiveTask로 딜레이 히트 취소 등록 가능
+	snapshot.fireMaid = state.fireMaid
 	snapshot.playerStateController = self._playerStateController
 	snapshot.attackerStates = self._playerStateController:GetActiveEffects(player)
 
@@ -560,11 +567,39 @@ function BasicAttackService:_executeFire(player: Player, state: BasicAttackState
 	end
 end
 
--- ─── 헬퍼 ────────────────────────────────────────────────────────────────────
+-- ─── 리소스 델타 적용 ────────────────────────────────────────────────────────
 
 --[=[
-	발사 시작 조건 체크. gauge는 minGauge 기준.
+	PSC의 ResourceDeltaApplied 시그널에서 호출됩니다.
+	stack → currentStack 직접 증감
+	gauge → currentGauge 직접 증감
+	양수=충전/회복, 음수=소모.
 ]=]
+function BasicAttackService:_applyResourceDelta(player: Player, amount: number)
+	local state = self._playerStates[player.UserId]
+	if not state then
+		return
+	end
+
+	if state.resourceType == "stack" then
+		state.currentStack = math.clamp(
+			state.currentStack + math.round(amount),
+			0,
+			state.maxStack
+		)
+	elseif state.resourceType == "gauge" then
+		state.currentGauge = math.clamp(
+			state.currentGauge + amount,
+			0,
+			state.maxGauge
+		)
+	end
+
+	self:_fireResourceSync(player, state)
+end
+
+-- ─── 헬퍼 ────────────────────────────────────────────────────────────────────
+
 function BasicAttackService:_hasResourceForStart(state: BasicAttackState): boolean
 	if state.resourceType == "stack" then
 		return state.currentStack > 0
@@ -574,25 +609,34 @@ function BasicAttackService:_hasResourceForStart(state: BasicAttackState): boole
 	return false
 end
 
+--[=[
+	유효 값(배율 적용)을 클라이언트에 전송합니다.
+	reloadTime → base / reloadRateMult
+	regenRate  → base * regenRateMult
+]=]
 function BasicAttackService:_fireResourceSync(player: Player, state: BasicAttackState)
 	local payload: { [string]: any }
 
 	if state.resourceType == "stack" then
+		local reloadRateMult = self._playerStateController:GetReloadRateMult(player)
+		local effectiveReloadTime = state.reloadTime / math.max(reloadRateMult, MIN_RELOAD_RATE_MULT)
 		payload = {
 			resourceType = "stack",
 			currentStack = state.currentStack,
 			maxStack = state.maxStack,
-			reloadTime = state.reloadTime,
+			reloadTime = effectiveReloadTime,
 			interval = state.interval,
 		}
 	else
+		local regenRateMult = self._playerStateController:GetRegenRateMult(player)
+		local effectiveRegenRate = state.regenRate * regenRateMult
 		payload = {
 			resourceType = "gauge",
 			currentGauge = state.currentGauge,
 			maxGauge = state.maxGauge,
 			minGauge = state.minGauge,
 			drainRate = state.drainRate,
-			regenRate = state.regenRate,
+			regenRate = effectiveRegenRate,
 			regenDelay = state.regenDelay,
 			interval = state.interval,
 		}
@@ -611,7 +655,6 @@ function BasicAttackService:_setPlayerAttack(player: Player, attackId: string)
 		return
 	end
 
-	-- 기존 전투 상태 초기화
 	self:CancelCombatState(player)
 
 	local def = entry.def
@@ -638,7 +681,6 @@ function BasicAttackService:_setPlayerAttack(player: Player, attackId: string)
 		state.reloadTime = r.reloadTime
 		state.currentStack = r.maxStack
 		state.lastRegenTime = os.clock()
-		-- gauge 초기화
 		state.currentGauge = 0
 		state.maxGauge = 0
 		state.minGauge = 0
@@ -653,7 +695,6 @@ function BasicAttackService:_setPlayerAttack(player: Player, attackId: string)
 		state.regenRate = r.regenRate
 		state.regenDelay = r.regenDelay
 		state.currentGauge = r.maxGauge
-		-- stack 초기화
 		state.currentStack = 0
 		state.maxStack = 0
 		state.reloadTime = 0
@@ -667,7 +708,6 @@ end
 
 --[=[
 	공격불가 등 외부 이벤트로 전투 상태를 강제 초기화합니다.
-	스턴, 클래스 변경, ability 교체 등 모든 캔슬 케이스에서 호출합니다.
 ]=]
 function BasicAttackService:CancelCombatState(player: Player)
 	local state = self._playerStates[player.UserId]
@@ -680,7 +720,6 @@ function BasicAttackService:CancelCombatState(player: Player)
 		state.pendingFireCancel = nil
 	end
 
-	-- 진행 중인 딜레이 히트 전부 취소
 	if state.fireMaid then
 		state.fireMaid:Destroy()
 		state.fireMaid = nil

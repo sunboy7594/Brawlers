@@ -30,7 +30,19 @@
 	  대상에 ignoreCC     → force=false effect의 cc계열 component 무시
 	  대상에 ignoreDamage → force=false effect의 damage component 무시
 	  force=true          → 위 두 경우 모두 뚫고 강제 적용
-	  cc계열: slow, moveLock, attackLock, knockback, cameraLock
+	  cc계열: walkSpeedMult, moveLock, abilityLock, knockback, cameraLock
+
+	─── abilityLock ────────────────────────────────────────────────
+	  abilityTypes = nil           → BasicAttack / Skill / Ultimate 전부 잠금
+	  abilityTypes = {"BasicAttack"} → 기본 공격만 잠금
+	  abilityTypes = {"Skill"}      → 스킬만 잠금
+	  abilityTypes = {"Ultimate"}   → 궁극기만 잠금
+
+	─── onHitReact ─────────────────────────────────────────────────
+	  공격을 받았을 때 콜백을 트리거하는 component.
+	  onHit: (incomingEffectDef: EffectDef) -> ()
+	  incomingEffectDef.source로 공격자 확인, 반사/카운터 등 자유롭게 구현.
+	  함수는 RemoteEvent 직렬화 불가이므로 클라이언트에 전달되지 않음 (서버 전용).
 
 	─── effect 열람 ────────────────────────────────────────────────
 	  GetActiveEffects(target) → { ActiveEffectView }  (instance 단위)
@@ -49,9 +61,9 @@ local PlayerStateDefs = {}
 
 PlayerStateDefs.ComponentType = {
 	Damage = "damage",
-	Slow = "slow",
+	WalkSpeedMult = "walkSpeedMult",
 	MoveLock = "moveLock",
-	AttackLock = "attackLock",
+	AbilityLock = "abilityLock",
 	Knockback = "knockback",
 	ReceiveDamageMult = "receiveDamageMult",
 	DealDamageMult = "dealDamageMult",
@@ -59,13 +71,26 @@ PlayerStateDefs.ComponentType = {
 	IgnoreDamage = "ignoreDamage",
 	Cleanse = "cleanse",
 	CameraLock = "cameraLock",
-	Vulnerable = "vulnerable",
+	OnHitReact = "onHitReact",
+	ReloadRateMult = "reloadRateMult",
+	RegenRateMult = "regenRateMult",
+	ResourceDelta = "resourceDelta",
+}
+
+--[=[
+	abilityLock에서 사용 가능한 어빌리티 타입.
+	nil을 전달하면 전부 잠금.
+]=]
+PlayerStateDefs.AbilityLockType = {
+	BasicAttack = "BasicAttack",
+	Skill = "Skill",
+	Ultimate = "Ultimate",
 }
 
 PlayerStateDefs.CC_TYPES = {
-	[PlayerStateDefs.ComponentType.Slow] = true,
+	[PlayerStateDefs.ComponentType.WalkSpeedMult] = true,
 	[PlayerStateDefs.ComponentType.MoveLock] = true,
-	[PlayerStateDefs.ComponentType.AttackLock] = true,
+	[PlayerStateDefs.ComponentType.AbilityLock] = true,
 	[PlayerStateDefs.ComponentType.Knockback] = true,
 	[PlayerStateDefs.ComponentType.CameraLock] = true,
 }
@@ -97,7 +122,7 @@ PlayerStateDefs.Tag = {
 	VfxStunStars = "vfx_stun_stars",
 	VfxShield = "vfx_shield",
 	VfxHyperArmor = "vfx_hyperarmor",
-	VfxVulnerable = "vfx_vulnerable",
+	VfxOnHitReact = "vfx_onhitreact",
 }
 
 --[=[
@@ -122,9 +147,9 @@ export type TagEntry = {
 
 export type Component =
 	{ type: "damage", amount: number, duration: number? }
-	| { type: "slow", multiplier: number, duration: number? }
+	| { type: "walkSpeedMult", multiplier: number, duration: number? }
 	| { type: "moveLock", duration: number? }
-	| { type: "attackLock", duration: number? }
+	| { type: "abilityLock", abilityTypes: { string }?, duration: number? }
 	| { type: "knockback", direction: Vector3, force: number, duration: number? }
 	| { type: "receiveDamageMult", multiplier: number, duration: number? }
 	| { type: "dealDamageMult", multiplier: number, duration: number? }
@@ -132,7 +157,10 @@ export type Component =
 	| { type: "ignoreDamage", duration: number? }
 	| { type: "cleanse", duration: number? }
 	| { type: "cameraLock", duration: number? }
-	| { type: "vulnerable", onHit: EffectDef, duration: number? }
+	| { type: "onHitReact", onHit: (incomingEffectDef: EffectDef) -> (), duration: number? }
+	| { type: "reloadRateMult", multiplier: number, duration: number? }
+	| { type: "regenRateMult", multiplier: number, duration: number? }
+	| { type: "resourceDelta", amount: number, duration: number? }
 
 export type EffectDef = {
 	force: boolean?,
@@ -144,7 +172,7 @@ export type EffectDef = {
 --[=[
 	EffectInstance 내부에서 각 component를 추적하는 상태.
 	expiresAt = nil    → 영구 (명시적 제거 필요)
-	expiresAt = 생성시각 → 즉시 처리된 컴포넌트 (damage, knockback, cleanse)
+	expiresAt = 생성시각 → 즉시 처리된 컴포넌트 (damage, knockback, cleanse, resourceDelta)
 ]=]
 export type ComponentState = {
 	component: Component,
