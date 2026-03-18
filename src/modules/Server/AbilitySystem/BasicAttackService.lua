@@ -13,6 +13,7 @@
 	- BasicAttackRemoting.FireEnd 수신 → hold/toggle 상태 관리
 	- 히트 체크 후 HitChecked:FireClient(공격자) 발송 (enemies만)
 	- LoadoutRemoting.RequestEquipBasicAttack → 유효성 검증 후 장착 처리
+	- onFire 이후 HitVisualRemoting.HitVisual:FireAllClients → 히트 비주얼
 
 	victims 구조 변경:
 	  기존 { Model } flat 배열 → VictimSet { enemies, teammates, self }
@@ -47,6 +48,7 @@ local AbilityTypes = require("AbilityTypes")
 local BasicAttackDefs = require("BasicAttackDefs")
 local BasicAttackRemoting = require("BasicAttackRemoting")
 local ClassService = require("ClassService")
+local HitVisualRemoting = require("HitVisualRemoting")
 local InstantHit = require("InstantHit")
 local LoadoutRemoting = require("LoadoutRemoting")
 local Maid = require("Maid")
@@ -65,6 +67,20 @@ local MIN_RELOAD_RATE_MULT = 0.01
 local INTERVAL_QUEUE_THRESHOLD = AbilityTypes.INTERVAL_QUEUE_THRESHOLD
 
 -- ─── 타입 ────────────────────────────────────────────────────────────────────
+
+--[=[
+	히트 비주얼 설정 타입.
+	onFire 훅에서 state.visualConfig에 설정하면
+	_executeFire 완료 후 FireAllClients로 전송됩니다.
+]=]
+export type VisualConfig = {
+	-- 두께: 프리셋 또는 스터드 단위 숫자
+	thick: "Thick" | "Normal" | "Thin" | number,
+	-- 높이 모드: "Floor"=바닥 밀착, "Air"=HRP 중앙, 숫자=HRP Y 기준 오프셋
+	heightMode: "Floor" | "Air" | number,
+	-- 그라디언트 이동 방향
+	gradientDir: "outward" | "inward" | "up" | "down",
+}
 
 export type BasicAttackState = {
 	-- 장착 정보
@@ -133,6 +149,12 @@ export type BasicAttackState = {
 	-- snapshot 전용 주입 필드
 	playerStateController: any?,
 	attackerStates: { any }?,
+
+	-- 히트 비주얼 설정 (onFire 훅에서 설정)
+	visualConfig: VisualConfig?,
+	-- 히트맵 (onFire 훅에서 InstantHit.applyMap에 전달한 것과 동일)
+	-- 비주얼 전송용으로 _executeFire에서 복사
+	_visualHitMap: InstantHit.HitMap?,
 }
 
 type AttackModule = {
@@ -285,6 +307,9 @@ function BasicAttackService:_onPlayerAdded(player: Player)
 		fireMaid = nil,
 		playerStateController = nil,
 		attackerStates = nil,
+
+		visualConfig = nil,
+		_visualHitMap = nil,
 	}
 	self._playerStates[player.UserId] = state
 
@@ -526,6 +551,8 @@ function BasicAttackService:_executeFire(player: Player, state: BasicAttackState
 	state.effectiveAimTime = 0
 	state.victims = nil
 	state.hitMap = nil
+	state.visualConfig = nil
+	state._visualHitMap = nil
 
 	state.lastFireTime = now
 	state.aimStartTime = 0
@@ -616,6 +643,27 @@ function BasicAttackService:_executeFire(player: Player, state: BasicAttackState
 		for _, fn in entry.module.onFire do
 			fn(state)
 		end
+	end
+
+	-- ─── 히트 비주얼 브로드캐스트 ────────────────────────────────────────────
+	-- onFire 훅 완료 후: visualConfig와 _visualHitMap이 설정되어 있으면 전송
+	if state.visualConfig and state._visualHitMap then
+		local attackerTeamIndex: number? = nil
+		if attackerPlayer and self._teamService then
+			attackerTeamIndex = self._teamService:GetTeamIndex(attackerPlayer)
+		end
+
+		HitVisualRemoting.HitVisual:FireAllClients({
+			attackerUserId = if attackerPlayer then attackerPlayer.UserId else 0,
+			attackerTeamIndex = attackerTeamIndex,
+			origin = state.origin,
+			direction = state.direction,
+			hitMap = state._visualHitMap,
+			visualConfig = state.visualConfig,
+		})
+
+		state.visualConfig = nil
+		state._visualHitMap = nil
 	end
 end
 
@@ -766,6 +814,8 @@ function BasicAttackService:CancelCombatState(player: Player)
 	state.aimStartTime = 0
 	state.effectiveAimTime = 0
 	state.onHit = nil
+	state.visualConfig = nil
+	state._visualHitMap = nil
 end
 
 function BasicAttackService:ForceEquip(player: Player, attackId: string): (boolean, string?)
