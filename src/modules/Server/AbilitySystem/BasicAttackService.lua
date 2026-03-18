@@ -30,6 +30,11 @@
 	interval 예약 (stack만):
 	- interval 잔여 비율 ≤ INTERVAL_QUEUE_THRESHOLD(80%) 일 때 예약 발사
 	- hold/toggle: 예약 없음
+
+	fireMaid:
+	- _executeFire 시마다 새 Maid 생성. CancelCombatState 시 Destroy.
+	- 서버 모듈(onFire)이 GiveTask로 딜레이 히트 취소 등록 가능.
+	- attackLock(스턴 등) → CancelCombatState → fireMaid:Destroy() → 딜레이 히트 전부 취소.
 ]=]
 
 local require = require(script.Parent.loader).load(script)
@@ -109,6 +114,9 @@ export type BasicAttackState = {
 
 	-- 예약 발사 취소 함수
 	pendingFireCancel: (() -> ())?,
+
+	-- 발사 수명 관리 (모듈이 GiveTask로 딜레이 히트 취소 등록)
+	fireMaid: any?,
 
 	-- snapshot 전용 주입 필드
 	playerStateController: any?,
@@ -245,6 +253,7 @@ function BasicAttackService:_onPlayerAdded(player: Player)
 
 		onHit = nil,
 		pendingFireCancel = nil,
+		fireMaid = nil,
 		playerStateController = nil,
 		attackerStates = nil,
 	}
@@ -504,11 +513,18 @@ function BasicAttackService:_executeFire(player: Player, state: BasicAttackState
 		self:_fireResourceSync(player, state)
 	end
 
+	-- fireMaid 갱신 (이전 발사의 딜레이 히트 취소 후 새 수명 시작)
+	if state.fireMaid then
+		state.fireMaid:Destroy()
+	end
+	state.fireMaid = Maid.new()
+
 	-- snapshot 생성
 	local snapshot = table.clone(state)
 	snapshot.victims = nil
 	snapshot.onHit = nil
 	snapshot.pendingFireCancel = nil
+	snapshot.fireMaid = state.fireMaid -- 모듈이 GiveTask로 딜레이 히트 취소 등록 가능
 	snapshot.playerStateController = self._playerStateController
 	snapshot.attackerStates = self._playerStateController:GetActiveEffects(player)
 
@@ -662,6 +678,12 @@ function BasicAttackService:CancelCombatState(player: Player)
 	if state.pendingFireCancel then
 		state.pendingFireCancel()
 		state.pendingFireCancel = nil
+	end
+
+	-- 진행 중인 딜레이 히트 전부 취소
+	if state.fireMaid then
+		state.fireMaid:Destroy()
+		state.fireMaid = nil
 	end
 
 	state.isFiring = false

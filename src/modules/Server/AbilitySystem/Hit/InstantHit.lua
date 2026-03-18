@@ -32,6 +32,10 @@
 	- onHit에는 항상 state.onHit 전달.
 ]=]
 
+local require = require(script.Parent.loader).load(script)
+
+local cancellableDelay = require("cancellableDelay")
+
 -- ─── 타입 정의 ───────────────────────────────────────────────────────────────
 
 export type HitConfig = {
@@ -59,6 +63,8 @@ export type HitConfig = {
 
 	-- 벽 차단 (false 지정 시만 비활성화, 기본 true)
 	wallCheck: boolean?,
+
+	delay: number?, -- ← 추가. nil / 0이면 즉발
 }
 
 -- ─── RaycastParams (모듈 로드 시 1회 생성) ───────────────────────────────────
@@ -330,11 +336,24 @@ function InstantHit.apply(
 	origin: Vector3,
 	direction: Vector3,
 	config: HitConfig,
-	onHit: ((victims: { Model }) -> ())?
+	onHit: ((victims: { Model }) -> ())?,
+	fireMaid: any? -- ← 추가. delay 있을 때 취소 등록용. nil이면 취소 불가
 ): ()
-	local hits = doHit(attacker, origin, direction, config)
-	if onHit then
-		onHit(hits)
+	if config.delay and config.delay > 0 then
+		local cancel = cancellableDelay(config.delay, function()
+			local hits = doHit(attacker, origin, direction, config)
+			if onHit then
+				onHit(hits)
+			end
+		end)
+		if fireMaid then
+			fireMaid:GiveTask(cancel)
+		end
+	else
+		local hits = doHit(attacker, origin, direction, config)
+		if onHit then
+			onHit(hits)
+		end
 	end
 end
 
