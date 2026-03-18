@@ -30,6 +30,18 @@ local BasicAttackDefs: { [string]: BasicAttackDef } = {
 		},
 		interval = 1,
 	},
+	Tank_CannonTest = {
+		id = "Tank_CannonTest",
+		rarity = "COMMON",
+		class = "TANK",
+		fireType = "stack",
+		resource = {
+			resourceType = "stack",
+			maxStack = 10,
+			reloadTime = 0.3,
+		},
+		interval = 0.3,
+	},
 }
 
 return BasicAttackDefs
