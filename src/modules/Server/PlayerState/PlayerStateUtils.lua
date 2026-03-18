@@ -307,14 +307,14 @@ local PlayerStateUtils = {}
 function PlayerStateUtils.PlayPlayerState(
 	service: PlayerStateControllerService.PlayerStateControllerService,
 	target: Player,
-	effect: string,
+	builderName: string,
 	params: Params?
 ): string
 	local p: Params = params or {}
-	local builder = BUILDERS[effect]
-	assert(builder, "[PlayerStateUtils] Unknown effect: " .. tostring(effect))
+	local builder = BUILDERS[builderName]
+	assert(builder, "[PlayerStateUtils] Unknown builderName: " .. tostring(builderName))
 	local effectDef = builder(p);
-	(effectDef :: any)._builderName = effect
+	(effectDef :: any)._builderName = builderName
 	return service:Play(target, effectDef)
 end
 
@@ -326,14 +326,14 @@ end
 function PlayerStateUtils.PlayPlayerStateRepeat(
 	service: PlayerStateControllerService.PlayerStateControllerService,
 	target: Player,
-	effect: string,
+	builderName: string,
 	params: Params?
 ): () -> ()
 	local p: Params = params or {}
-	local builder = BUILDERS[effect]
-	assert(builder, "[PlayerStateUtils] Unknown effect: " .. tostring(effect))
+	local builder = BUILDERS[builderName]
+	assert(builder, "[PlayerStateUtils] Unknown builderName: " .. tostring(builderName))
 	local effectDef = builder(p);
-	(effectDef :: any)._builderName = effect
+	(effectDef :: any)._builderName = builderName
 	local totalDuration = p.totalDuration or 5.0
 	local count = p.count or 5
 	return service:PlayRepeat(target, effectDef, totalDuration, count)

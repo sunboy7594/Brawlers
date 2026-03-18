@@ -26,6 +26,9 @@ function BrawlersService.Init(self: BrawlersService, serviceBag: ServiceBag.Serv
 
 	-- Internal
 	self._serviceBag:GetService(require("BrawlersTranslator"))
+
+	-- Dev (개발 완료 시 제거)
+	self._serviceBag:GetService(require("DevCommandService"))
 end
 
 return BrawlersService
