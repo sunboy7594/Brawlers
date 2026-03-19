@@ -20,6 +20,10 @@ serviceBag:GetService(require("CameraControllerClient"))
 serviceBag:GetService(require("BasicMovementClient"))
 serviceBag:GetService(require("AnimReplicationClient"))
 
+-- ─── WorldFX ─────────────────────────────────────
+-- TeamClient보다 먼저 등록 불필요 (ServiceBag이 Init 시 의존성 해결)
+serviceBag:GetService(require("WorldFX"))
+
 -- ─── Ability System ──────────────────────────────
 -- AimControllerClient는 BasicAttackClient보다 먼저 등록
 serviceBag:GetService(require("AimControllerClient"))
