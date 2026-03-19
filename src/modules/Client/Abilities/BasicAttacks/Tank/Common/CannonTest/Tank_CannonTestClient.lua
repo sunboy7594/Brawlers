@@ -2,106 +2,76 @@
 --[=[
 	@class Tank_CannonTestClient
 
-	line / arc / circle 인디케이터 시각 테스트용 기본공격.
-	실제 히트 판정 없음.
+	탱크 캐논 테스트 기본공격 클라이언트 모듈.
 
-	shapes:
-	  shot  (line)   : 직사 방향 표시
-	  trail (arc)    : 포물선 궤적 + 착탄 링
-	  zone  (circle) : 플레이어 주변 근접 범위 링
+	연이체 흐름:
+	  onFire:
+	    1. AbilityEffectPlayer.Play() → CannonBall 소환
+	       delay 없음 → 즉시 발사, spawnCFrame 반환
+	    2. params에 aimRatio 주입 (판정 크기 조정용)
+	    3. 비주얼은 클라이언트가 담당, 판정은 서버(AbilityEffectSimulatorService)가 담당
 
-	색상/투명도는 BasicAttackClient의 Heartbeat에서 리소스 상태에 따라
-	updateAll로 일괄 처리하므로 onAim에서 별도 설정 불필요.
+	state.abilityEffectMaid:
+	  delay가 있는 Play()에 넘기면 취소 시 대기 중 발사 취소됨.
+	  이미 발사된 쳤논볼은 독립 수명으로 계속 진행.
 ]=]
 
 local require = require(script.Parent.loader).load(script)
 
-type BasicAttackState = {
-	currentStack: number,
-	intervalUntil: number,
-	effectiveAimTime: number,
-	origin: Vector3,
-	direction: Vector3,
-	idleTime: number,
-	fireComboCount: number,
-	indicator: any,
-	animator: any?,
-	fireMaid: any?,
-	victims: { any }?,
-}
+local Players = game:GetService("Players")
+
+local AbilityEffectPlayer = require("AbilityEffectPlayer")
 
 -- ─── 설정 ────────────────────────────────────────────────────────────────────
 
--- line
-local LINE_RANGE = 15
-local LINE_WIDTH = 3
+local EFFECT_DEF_MODULE = "Tank_CannonEffectDef"
+local EFFECT_NAME       = "CannonBall"
+local ANGLE_EXPAND_TIME = 3.0  -- 조준 시간 만나에 판정 최대화
 
--- arc
-local ARC_RANGE = 20
-local ARC_BEAM_WIDTH = 0.25
-local ARC_RING_RADIUS = 3
-local ARC_RING_INNER = 1
+-- ─── 상태 타입 ───────────────────────────────────────────────────────────────
 
--- circle (플레이어 발 아래 근접 링)
-local ZONE_RADIUS = 10
-local ZONE_INNER_RADIUS = 3
+type BasicAttackState = {
+	origin            : Vector3,
+	direction         : Vector3,
+	effectiveAimTime  : number,
+	fireMaid          : any?,
+	abilityEffectMaid : any?,
+	indicator         : any,
+	animator          : any?,
+	teamContext       : any?,
+}
+
+-- ─── 모듈 정의 ───────────────────────────────────────────────────────────────
 
 return {
-	shapes = {
-		shot = "line",
-		trail = "arc",
-		zone = "circle",
-	},
+	shapes = {},
 
-	onAimStart = {
-		function(state: BasicAttackState)
-			-- 초기값 설정 후 표시
-			state.indicator:update("shot", {
-				range = LINE_RANGE,
-				width = LINE_WIDTH,
-			})
-			state.indicator:update("trail", {
-				range = ARC_RANGE,
-				beamWidth = ARC_BEAM_WIDTH,
-				arcRadius = ARC_RING_RADIUS,
-				arcInnerRadius = ARC_RING_INNER,
-			})
-			state.indicator:update("zone", {
-				radius = ZONE_RADIUS,
-				innerRadius = ZONE_INNER_RADIUS,
-			})
-			state.indicator:showAll()
-		end,
-	},
-
-	onAim = {
-		function(state: BasicAttackState)
-			state.indicator:update("shot", {
-				origin = state.origin,
-				direction = state.direction,
-			})
-			state.indicator:update("trail", {
-				origin = state.origin,
-				direction = state.direction,
-			})
-			state.indicator:update("zone", {
-				origin = state.origin,
-				direction = state.direction,
-			})
-		end,
-	},
+	onAimStart = {},
+	onAim = {},
 
 	onFire = {
-		function(_state: BasicAttackState)
-			-- 테스트용: 히트 판정 없음
-		end,
-	},
-
-	onCancel = {
 		function(state: BasicAttackState)
-			state.indicator:hideAll()
+			local localPlayer = Players.LocalPlayer
+			local char = localPlayer.Character
+			local hrp = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
+			if not hrp then return end
+
+			local origin = CFrame.new(hrp.Position, hrp.Position + state.direction)
+
+			-- aimRatio: effectiveAimTime 비례로 판정 크기 제어
+			local aimRatio = math.clamp(state.effectiveAimTime / ANGLE_EXPAND_TIME, 0, 1)
+
+			-- 클라이언트 연이첤 재생
+			-- isOwner=true → EffectFired + Register 서버 전송 자동
+			AbilityEffectPlayer.Play(EFFECT_DEF_MODULE, EFFECT_NAME, {
+				origin            = origin,
+				abilityEffectMaid = state.abilityEffectMaid,
+				params            = { aimRatio = aimRatio },
+				teamContext       = state.teamContext,
+			})
 		end,
 	},
 
+	onCancel = {},
 	onHitChecked = {},
 }
