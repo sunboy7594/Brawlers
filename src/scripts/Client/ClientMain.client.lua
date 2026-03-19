@@ -18,6 +18,7 @@ serviceBag:GetService(require("PlayerBinderClient"))
 serviceBag:GetService(require("AnimationControllerClient"))
 serviceBag:GetService(require("CameraControllerClient"))
 serviceBag:GetService(require("BasicMovementClient"))
+serviceBag:GetService(require("AnimReplicationClient"))
 
 -- ─── Ability System ──────────────────────────────
 -- AimControllerClient는 BasicAttackClient보다 먼저 등록
