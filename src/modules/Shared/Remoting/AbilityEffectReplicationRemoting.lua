@@ -5,14 +5,16 @@
 	AbilityEffect 복제용 Remote 채널. (Shared)
 
 	채널 목록:
-	- EffectFired     : (클라이언트 → 서버) 이펙트 발동 알림
-	  전달: defModuleName, effectName, origin(CFrame), sentAt(number), params(table?)
-	  서버가 firedAt을 스탬핑하여 EffectBroadcast에 포함.
-	  동시에 AbilityEffectSimulatorService에 시뮬 등록.
+	- Register      : (클라이언트 → 서버) 이펙트 등록
+	  전달: defModuleName, effectName, origin, sentAt, params?
+	  서버가 AbilityEffectSimulatorService에서 시뮬 시작.
+
+	- EffectFired   : (클라이언트 → 서버) 비주얼 복제 알림
+	  전달: defModuleName, effectName, origin, direction?, sentAt
+	  서버가 EffectBroadcast로 타 클라이언트에 포워딩.
 
 	- EffectBroadcast : (서버 → 클라이언트) 다른 플레이어 이펙트 전달
-	  전달: userId, defModuleName, effectName, origin, firedAt, params
-	  클라이언트는 수신 시 elapsed = GetServerTimeNow() - firedAt 으로 fast-forward.
+	  전달: userId, defModuleName, effectName, origin, direction?, sentAt
 ]=]
 
 local require = require(script.Parent.loader).load(script)
@@ -25,6 +27,7 @@ local Remoting = require("Remoting")
 local AbilityEffectReplicationRemoting
 if RunService:IsServer() then
 	AbilityEffectReplicationRemoting = Remoting.Server.new(ReplicatedStorage, "AbilityEffectReplication")
+	AbilityEffectReplicationRemoting.Register:DeclareEvent()
 	AbilityEffectReplicationRemoting.EffectFired:DeclareEvent()
 	AbilityEffectReplicationRemoting.EffectBroadcast:DeclareEvent()
 else
