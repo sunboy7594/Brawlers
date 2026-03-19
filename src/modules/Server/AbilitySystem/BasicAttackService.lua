@@ -14,24 +14,11 @@
 	- 히트 체크 후 HitChecked:FireClient(공격자) 발송 (enemies만)
 	- LoadoutRemoting.RequestEquipBasicAttack → 유효성 검증 후 장착 처리
 
-	victims 구조 변경:
-	  기존 { Model } flat 배열 → VictimSet { enemies, teammates, self }
-	  hitMap: { [shapeId]: VictimSet } — shape별 구분 접근 가능.
-	  HitChecked:FireClient에는 enemies만 전송 (기존 동작 유지).
-
-	ResourceSync 발송 시점:
-	- stack: 발사마다 + 장전 틱마다
-	- gauge: 발사마다 + 소진 시 + max 도달 시
-	- reloadRateMult / regenRateMult 변경 시 (PSC의 EffectiveMultipliersChanged)
-	- resourceDelta 적용 시 (PSC의 ResourceDeltaApplied)
-
-	Anti-exploit:
-	- FIRE_RATE_LIMIT (0.1초)
-	- direction 타입/크기 검증
-	- IsAbilityLocked("BasicAttack") 검증
-	- stack: currentStack > 0, interval 비율 검증
-	- gauge 시작: currentGauge >= minGauge
-	- gauge 루프 중: currentGauge > 0
+	sentAt (latency 보정):
+	- Fire 신호에 workspace:GetServerTimeNow() 기준 클라이언트 발송 시각 포함
+	- latency = GetServerTimeNow() - sentAt
+	- state.latency에 저장 → 어빌리티 모듈(onFire)에서 delay 보정에 활용
+	- AbilityEffectSimulatorService에 전달 → 투사체 시뮬 latency 보정
 
 	fireMaid:
 	- _executeFire 시마다 새 Maid 생성. CancelCombatState 시 Destroy.
@@ -42,6 +29,7 @@ local require = require(script.Parent.loader).load(script)
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
 
 local AbilityTypes = require("AbilityTypes")
 local BasicAttackDefs = require("BasicAttackDefs")
@@ -60,6 +48,7 @@ local cancellableDelay = require("cancellableDelay")
 local FIRE_RATE_LIMIT = 0.1
 local MAX_DIRECTION_MAGNITUDE_DELTA = 0.1
 local MIN_RELOAD_RATE_MULT = 0.01
+local MAX_LATENCY = 0.5
 
 -- ⚠️ 주의: BasicAttackClient.lua의 INTERVAL_QUEUE_THRESHOLD와 반드시 동일해야 합니다.
 local INTERVAL_QUEUE_THRESHOLD = AbilityTypes.INTERVAL_QUEUE_THRESHOLD
@@ -112,9 +101,11 @@ export type BasicAttackState = {
 	idleTime: number,
 	effectiveIdleTime: number,
 
+	-- latency 보정 (클라이언트 sentAt 기준)
+	latency: number,
+
 	-- 피격 결과 (enemies/teammates/self 분류)
 	victims: InstantHit.VictimSet?,
-	-- shape별 피격 결과
 	hitMap: InstantHit.HitMapResult?,
 
 	-- 판정 콜백 (HitMapResult를 받음)
@@ -164,6 +155,7 @@ export type BasicAttackService = typeof(setmetatable(
 		_playerStateController: any,
 		_classService: any,
 		_teamService: any,
+		_abilityEffectSimulator: any?,
 		_playerStates: { [number]: BasicAttackState },
 		_playerMaids: { [number]: any },
 	},
@@ -185,9 +177,19 @@ function BasicAttackService.Init(self: BasicAttackService, serviceBag: ServiceBa
 	self._teamService = serviceBag:GetService(TeamService)
 	self._playerStates = {}
 	self._playerMaids = {}
+	-- AbilityEffectSimulatorService는 Start에서 lazy 로드 (순환 의존 방지)
+	self._abilityEffectSimulator = nil
 end
 
 function BasicAttackService.Start(self: BasicAttackService): ()
+	-- AbilityEffectSimulatorService lazy 로드
+	local ok, simulator = pcall(function()
+		return self._serviceBag:GetService(require("AbilityEffectSimulatorService"))
+	end)
+	if ok then
+		self._abilityEffectSimulator = simulator
+	end
+
 	self._maid:GiveTask(Players.PlayerAdded:Connect(function(player)
 		self:_onPlayerAdded(player)
 	end))
@@ -206,8 +208,9 @@ function BasicAttackService.Start(self: BasicAttackService): ()
 		self:_onAimStarted(player)
 	end))
 
-	self._maid:GiveTask(BasicAttackRemoting.Fire:Connect(function(player: Player, direction: unknown)
-		self:_onFire(player, direction)
+	-- sentAt 추가: direction, sentAt? 수신
+	self._maid:GiveTask(BasicAttackRemoting.Fire:Connect(function(player: Player, direction: unknown, sentAt: unknown)
+		self:_onFire(player, direction, sentAt)
 	end))
 
 	self._maid:GiveTask(BasicAttackRemoting.FireEnd:Connect(function(player: Player)
@@ -275,6 +278,8 @@ function BasicAttackService:_onPlayerAdded(player: Player)
 		effectiveAimTime = 0,
 		idleTime = 0,
 		effectiveIdleTime = 0,
+
+		latency = 0,
 
 		victims = nil,
 		hitMap = nil,
@@ -429,7 +434,7 @@ end
 
 -- ─── 발사 처리 ───────────────────────────────────────────────────────────────
 
-function BasicAttackService:_onFire(player: Player, direction: unknown)
+function BasicAttackService:_onFire(player: Player, direction: unknown, sentAt: unknown)
 	local state = self._playerStates[player.UserId]
 	if not state or not state.humanoid or not state.rootPart then
 		return
@@ -451,6 +456,12 @@ function BasicAttackService:_onFire(player: Player, direction: unknown)
 	local dir = direction :: Vector3
 	if math.abs(dir.Magnitude - 1) > MAX_DIRECTION_MAGNITUDE_DELTA then
 		return
+	end
+
+	-- latency 계산 (sentAt이 유효하면 사용, 아니면 0)
+	local latency = 0
+	if type(sentAt) == "number" then
+		latency = math.clamp(Workspace:GetServerTimeNow() - sentAt, 0, MAX_LATENCY)
 	end
 
 	local attackId = state.equippedAttackId
@@ -493,7 +504,7 @@ function BasicAttackService:_onFire(player: Player, direction: unknown)
 				end
 				state.pendingFireCancel = cancellableDelay(remaining, function()
 					state.pendingFireCancel = nil
-					self:_executeFire(player, state, dir, entry)
+					self:_executeFire(player, state, dir, entry, latency)
 				end)
 			end
 			return
@@ -505,12 +516,18 @@ function BasicAttackService:_onFire(player: Player, direction: unknown)
 		end
 	end
 
-	self:_executeFire(player, state, dir, entry)
+	self:_executeFire(player, state, dir, entry, latency)
 end
 
 -- ─── 실제 발사 실행 ──────────────────────────────────────────────────────────
 
-function BasicAttackService:_executeFire(player: Player, state: BasicAttackState, dir: Vector3, entry: AttackEntry)
+function BasicAttackService:_executeFire(
+	player  : Player,
+	state   : BasicAttackState,
+	dir     : Vector3,
+	entry   : AttackEntry,
+	latency : number
+)
 	if not state.humanoid or not state.rootPart then
 		return
 	end
@@ -526,6 +543,7 @@ function BasicAttackService:_executeFire(player: Player, state: BasicAttackState
 	state.effectiveAimTime = 0
 	state.victims = nil
 	state.hitMap = nil
+	state.latency = latency
 
 	state.lastFireTime = now
 	state.aimStartTime = 0
@@ -545,7 +563,6 @@ function BasicAttackService:_executeFire(player: Player, state: BasicAttackState
 	end
 	state.fireMaid = Maid.new()
 
-	-- 팀 판정 주입
 	local attackerPlayer = Players:GetPlayerFromCharacter(state.attacker)
 	state.teamService = self._teamService
 	state.attackerPlayer = attackerPlayer
@@ -560,7 +577,6 @@ function BasicAttackService:_executeFire(player: Player, state: BasicAttackState
 	snapshot.attackerStates = self._playerStateController:GetActiveEffects(player)
 
 	state.onHit = function(hitMap: InstantHit.HitMapResult)
-		-- merged VictimSet 생성 (중복 제거)
 		local merged: InstantHit.VictimSet = { enemies = {}, teammates = {}, self = nil }
 		local seenEnemies: { [Model]: boolean } = {}
 		local seenTeammates: { [Model]: boolean } = {}
@@ -601,7 +617,6 @@ function BasicAttackService:_executeFire(player: Player, state: BasicAttackState
 			end
 		end
 
-		-- HitChecked: enemies만 클라이언트에 통보
 		local victimUserIds: { number } = {}
 		for _, victimModel in merged.enemies do
 			local victimPlayer = Players:GetPlayerFromCharacter(victimModel)
@@ -610,6 +625,30 @@ function BasicAttackService:_executeFire(player: Player, state: BasicAttackState
 			end
 		end
 		BasicAttackRemoting.HitChecked:FireClient(player, victimUserIds)
+	end
+
+	-- AbilityEffectSimulatorService에 onHit 콜백 등록
+	-- Register 수신 시 simulator가 pickup해서 hitDetect 판정 후 호출
+	if self._abilityEffectSimulator then
+		-- HitInfo 배열 → HitMapResult 변환 후 state.onHit 호출
+		self._abilityEffectSimulator:SetPendingOnHit(player.UserId, function(hits)
+			if state.onHit and #hits > 0 then
+				-- HitInfo { target, relation, position } → InstantHit.VictimSet 변환
+				local hitMapResult: InstantHit.HitMapResult = {}
+				local vs: InstantHit.VictimSet = { enemies = {}, teammates = {}, self = nil }
+				for _, hitInfo in hits do
+					if hitInfo.relation == "enemy" then
+						table.insert(vs.enemies, hitInfo.target)
+					elseif hitInfo.relation == "team" then
+						table.insert(vs.teammates, hitInfo.target)
+					elseif hitInfo.relation == "self" then
+						vs.self = hitInfo.target
+					end
+				end
+				hitMapResult["hit"] = vs
+				state.onHit(hitMapResult)
+			end
+		end)
 	end
 
 	if entry.module.onFire then
@@ -647,11 +686,6 @@ function BasicAttackService:_hasResourceForStart(state: BasicAttackState): boole
 	return false
 end
 
---[=[
-	유효 값(배율 적용)을 클라이언트에 전송합니다.
-	reloadTime → base / reloadRateMult
-	regenRate  → base * regenRateMult
-]=]
 function BasicAttackService:_fireResourceSync(player: Player, state: BasicAttackState)
 	local payload: { [string]: any }
 
@@ -712,6 +746,7 @@ function BasicAttackService:_setPlayerAttack(player: Player, attackId: string)
 	state.isFiring = false
 	state.lastFireEndTime = 0
 	state.lastFireTime = 0
+	state.latency = 0
 
 	if resource.resourceType == "stack" then
 		local r = resource :: AbilityTypes.StackResource
