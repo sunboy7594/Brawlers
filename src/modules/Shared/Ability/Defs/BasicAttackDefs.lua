@@ -6,9 +6,10 @@
     새 기본공격 추가 시 이 파일에만 항목을 추가하면 됩니다.
 
     관련 모듈 명명 규칙 (id 기반 자동 require):
-    - 서버 모듈:    id .. "Server"   예) Tank_PunchServer
-    - 클라이언트:   id .. "Client"   예) Tank_PunchClient
-    - 애니메이션:   id .. "AnimDef"  예) Tank_PunchAnimDef
+    - 서버 모듈:    id .. "Server"     예) Tank_PunchServer
+    - 클라이언트:   id .. "Client"     예) Tank_PunchClient
+    - 애니메이션:  id .. "AnimDef"    예) Tank_PunchAnimDef
+    - 이펙트 정의: effectDef 필드에 직접 지정된 모듈명
 ]=]
 
 local require = require(script.Parent.loader).load(script)
@@ -29,6 +30,7 @@ local BasicAttackDefs: { [string]: BasicAttackDef } = {
 			reloadTime = 2,
 		},
 		interval = 1,
+		-- effectDef 없음 → 비주얼 없음
 	},
 	Tank_CannonTest = {
 		id = "Tank_CannonTest",
@@ -41,6 +43,7 @@ local BasicAttackDefs: { [string]: BasicAttackDef } = {
 			reloadTime = 2,
 		},
 		interval = 0.3,
+		effectDef = "Tank_CannonEffectDef",
 	},
 }
 
