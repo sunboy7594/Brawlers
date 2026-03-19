@@ -2,205 +2,195 @@
 --[=[
 	@class AbilityEffectMover
 
-	투사체 이동 팩토리 모음. Shared.
+	투사체 이동 함수 팩토리 모음. (Shared)
 
-	MoveFactory = (handle) -> (dt: number) -> boolean
-	- true  = 계속 이동
-	- false = 수명 종료 → Controller가 onMiss 호출
+	반환 타입 MoveFunction:
+	  (dt: number, handle: any, params: { [string]: any }?) -> boolean
+	  true  = 계속 이동
+	  false = 수명 종료 → Controller가 onMiss 호출
 
-	spawnConfig의 방향/위치 랜덤은 AbilityEffectPlayer가 처리.
-	이동자는 handle.spawnCFrame 기준으로 동작.
+	mode:
+	  "linear" → speed (스터드/초) 기반 등속
+	  "spring" → speed = SpringSpeed, damper = SpringDamper
+
+	randomAngle:
+	  발사 방향 기준 최대 편차 각도 (도)
+	  내부적으로 발사 방향 수직 평면에서 균등분포 랜덤 회전 적용
 ]=]
 
-local require = require(script.Parent.loader).load(script)
+local RunService = game:GetService("RunService")
 
-local Spring = require("Spring")
+local IS_SERVER = RunService:IsServer()
 
 local AbilityEffectMover = {}
 
-export type MoveFactory = (handle: any) -> (dt: number) -> boolean
+-- ─── 타입 ────────────────────────────────────────────────────────────────────
 
--- ─── Linear: 직선 이동 ────────────────────────────────────────────────────────
+export type MoveFunction = (dt: number, handle: any, params: { [string]: any }?) -> boolean
 
---[=[
-	config:
-	  speed   : number           -- 초당 스터드 (linear) or SpringSpeed (spring)
-	  maxRange: number           -- 최대 사거리 (스터드)
-	  mode    : "linear"|"spring" -- 기본 "linear"
-	  damper  : number?          -- spring 모드 댐퍼 (기본 1.0)
-]=]
-function AbilityEffectMover.Linear(config: {
-	speed: number,
-	maxRange: number,
-	mode: ("linear" | "spring")?,
-	damper: number?,
-}): MoveFactory
-	return function(handle)
-		local origin    = handle.spawnCFrame.Position
-		local direction = handle.spawnCFrame.LookVector
-		local elapsed   = 0
+export type LinearConfig = {
+	speed       : number,
+	maxRange    : number,
+	mode        : ("linear" | "spring")?,
+	damper      : number?,
+	randomAngle : number?,
+}
 
-		if config.mode == "spring" then
-			local spring = Spring.new(origin)
-			spring.Speed  = config.speed
-			spring.Damper = config.damper or 1.0
-			spring.Target = origin + direction * config.maxRange
+export type ArcConfig = {
+	distance : number,
+	height   : number,
+	speed    : number,
+	mode     : ("linear" | "spring")?,
+	damper   : number?,
+}
 
-			return function(_dt: number): boolean
-				local pos  = spring.Position
-				local dist = (pos - origin).Magnitude
-				if dist >= config.maxRange * 0.99 then
-					return false
-				end
-				if handle.part then
-					handle.part:PivotTo(CFrame.new(pos, pos + direction))
-				end
-				return true
+export type SweepConfig = {
+	range       : number,
+	angleMin    : number,
+	angleMax    : number,
+	duration    : number,
+	mode        : ("linear" | "spring")?,
+	damper      : number?,
+	randomAngle : number?,
+}
+
+-- ─── 내부 유틸 ───────────────────────────────────────────────────────────────
+
+local function applyRandomAngle(direction: Vector3, maxAngleDeg: number): Vector3
+	if maxAngleDeg <= 0 then return direction end
+	local angle = math.rad(math.random() * maxAngleDeg)
+	local phi   = math.random() * math.pi * 2
+	local perp  = direction:Cross(Vector3.new(0, 1, 0))
+	if perp.Magnitude < 0.001 then
+		perp = direction:Cross(Vector3.new(1, 0, 0))
+	end
+	perp = perp.Unit
+	local rotated = (direction * math.cos(angle)
+		+ perp * math.sin(angle) * math.cos(phi)
+		+ direction:Cross(perp) * math.sin(angle) * math.sin(phi))
+	return rotated.Magnitude > 0.001 and rotated.Unit or direction
+end
+
+local function lerpNumber(a: number, b: number, t: number): number
+	return a + (b - a) * t
+end
+
+-- ─── Spring 상태 (서버/클라 공통) ─────────────────────────────────────────────
+-- Nevermore Spring을 쓰지 않고 단순 지수 감쇠로 근사
+local function springStep(current: number, target: number, velocity: number, speed: number, damper: number, dt: number): (number, number)
+	local stiffness = speed * speed
+	local dampingForce = 2 * damper * speed
+	local acc = -stiffness * (current - target) - dampingForce * velocity
+	velocity = velocity + acc * dt
+	current = current + velocity * dt
+	return current, velocity
+end
+
+-- ─── Linear ──────────────────────────────────────────────────────────────────
+
+function AbilityEffectMover.Linear(config: LinearConfig): MoveFunction
+	return function(dt: number, handle: any, _params: { [string]: any }?): boolean
+		local elapsed: number = (handle :: any)._moveElapsed or 0
+		local dir: Vector3    = (handle :: any)._moveDir
+
+		-- 첫 프레임: 방향 초기화
+		if elapsed == 0 and not (handle :: any)._moveDir then
+			local cf = handle.part and handle.part:GetPivot() or CFrame.identity
+			local baseDir = cf.LookVector
+			if config.randomAngle and config.randomAngle > 0 then
+				baseDir = applyRandomAngle(baseDir, config.randomAngle)
 			end
-		else
-			return function(dt: number): boolean
-				elapsed += dt
-				local dist = config.speed * elapsed
-				if dist >= config.maxRange then
-					return false
-				end
-				local newPos = origin + direction * dist
-				if handle.part then
-					handle.part:PivotTo(CFrame.new(newPos, newPos + direction))
-				end
-				return true
-			end
+			dir = baseDir;
+			(handle :: any)._moveDir = dir
 		end
+
+		elapsed += dt
+		;(handle :: any)._moveElapsed = elapsed
+
+		local dist = config.speed * elapsed
+		if dist >= config.maxRange then
+			return false
+		end
+
+		if handle.part then
+			local currentPos = (handle :: any)._moveOrigin + dir * dist
+			handle.part:PivotTo(CFrame.new(currentPos, currentPos + dir))
+		end
+
+		return true
 	end
 end
 
--- ─── Arc: 포물선 투척 ──────────────────────────────────────────────────────────
+-- ─── Arc ─────────────────────────────────────────────────────────────────────
 
---[=[
-	config:
-	  distance: number  -- 수평 도달 거리 (스터드)
-	  height  : number  -- 최고 높이 (스터드)
-	  speed   : number  -- 수평 속도 (초당 스터드)
-	  mode    : "linear"|"spring" -- 기본 "linear"
-	  damper  : number?
-]=]
-function AbilityEffectMover.Arc(config: {
-	distance: number,
-	height: number,
-	speed: number,
-	mode: ("linear" | "spring")?,
-	damper: number?,
-}): MoveFactory
-	return function(handle)
-		local origin  = handle.spawnCFrame.Position
-		local forward = handle.spawnCFrame.LookVector
-		local flatDir = Vector3.new(forward.X, 0, forward.Z)
-		if flatDir.Magnitude > 0.001 then
-			flatDir = flatDir.Unit
-		else
-			flatDir = Vector3.new(0, 0, -1)
+function AbilityEffectMover.Arc(config: ArcConfig): MoveFunction
+	return function(dt: number, handle: any, _params: { [string]: any }?): boolean
+		local elapsed: number = (handle :: any)._moveElapsed or 0
+
+		if elapsed == 0 then
+			local cf = handle.part and handle.part:GetPivot() or CFrame.identity;
+			(handle :: any)._moveDir    = cf.LookVector;
+			(handle :: any)._moveOrigin = cf.Position
 		end
 
-		local duration = config.distance / config.speed
-		local elapsed  = 0
+		elapsed += dt
+		;(handle :: any)._moveElapsed = elapsed
 
-		return function(dt: number): boolean
-			elapsed += dt
-			local t = elapsed / duration
-			if t >= 1 then
-				return false
+		local totalTime = config.distance / config.speed
+		local t = math.clamp(elapsed / totalTime, 0, 1)
+
+		local origin: Vector3 = (handle :: any)._moveOrigin
+		local dir: Vector3    = (handle :: any)._moveDir
+
+		local horizontal = origin + dir * (config.distance * t)
+		-- 포물선 높이: 4h * t * (1 - t)
+		local verticalY = 4 * config.height * t * (1 - t)
+		local newPos = Vector3.new(horizontal.X, origin.Y + verticalY, horizontal.Z)
+
+		if handle.part then
+			-- 진행 방향을 다음 위치 기준으로 계산
+			local nextT = math.min(t + 0.01, 1)
+			local nextH = origin + dir * (config.distance * nextT)
+			local nextVY = 4 * config.height * nextT * (1 - nextT)
+			local nextPos = Vector3.new(nextH.X, origin.Y + nextVY, nextH.Z)
+			local lookDir = (nextPos - newPos)
+			if lookDir.Magnitude > 0.001 then
+				handle.part:PivotTo(CFrame.new(newPos, newPos + lookDir.Unit))
+			else
+				handle.part:PivotTo(CFrame.new(newPos))
 			end
-
-			-- 포물선: y = height * 4*t*(1-t)
-			local h   = origin + flatDir * (config.distance * t)
-			local v   = config.height * 4 * t * (1 - t)
-			local pos = Vector3.new(h.X, origin.Y + v, h.Z)
-
-			-- 방향 계산 (다음 프레임 예측)
-			local t2  = math.min(t + 0.01, 0.999)
-			local h2  = origin + flatDir * (config.distance * t2)
-			local v2  = config.height * 4 * t2 * (1 - t2)
-			local pos2 = Vector3.new(h2.X, origin.Y + v2, h2.Z)
-
-			if handle.part then
-				local delta = pos2 - pos
-				if delta.Magnitude > 0.001 then
-					handle.part:PivotTo(CFrame.new(pos, pos + delta.Unit))
-				else
-					handle.part:PivotTo(CFrame.new(pos))
-				end
-			end
-			return true
 		end
+
+		return t < 1
 	end
 end
 
--- ─── Sweep: 원호 이동 (칼 휘두르기 등) ────────────────────────────────────────
+-- ─── Sweep ───────────────────────────────────────────────────────────────────
 
---[=[
-	config:
-	  range   : number           -- 중심에서 거리 (스터드)
-	  angleMin: number           -- 시작 각도 (도, 전방 기준)
-	  angleMax: number           -- 끝 각도 (도)
-	  duration: number           -- 소요 시간 (초) (linear 모드)
-	  mode    : "linear"|"spring" -- 기본 "linear"
-	  speed   : number?          -- spring 모드 SpringSpeed
-	  damper  : number?          -- spring 모드 댐퍼
-]=]
-function AbilityEffectMover.Sweep(config: {
-	range: number,
-	angleMin: number,
-	angleMax: number,
-	duration: number,
-	mode: ("linear" | "spring")?,
-	speed: number?,
-	damper: number?,
-}): MoveFactory
-	return function(handle)
-		local origin  = handle.spawnCFrame.Position
-		local baseDir = handle.spawnCFrame.LookVector
-		local elapsed = 0
+function AbilityEffectMover.Sweep(config: SweepConfig): MoveFunction
+	return function(dt: number, handle: any, _params: { [string]: any }?): boolean
+		local elapsed: number = (handle :: any)._moveElapsed or 0
 
-		if config.mode == "spring" then
-			local startAngle = math.rad(config.angleMin)
-			local endAngle   = math.rad(config.angleMax)
-			local spring = Spring.new(startAngle)
-			spring.Speed  = config.speed or 10
-			spring.Damper = config.damper or 1.0
-			spring.Target = endAngle
-
-			return function(_dt: number): boolean
-				local angle    = spring.Position
-				local rotCF    = CFrame.Angles(0, angle, 0) * CFrame.new(Vector3.zero, baseDir)
-				local dir      = rotCF.LookVector
-				local newPos   = origin + dir * config.range
-				if handle.part then
-					handle.part:PivotTo(CFrame.new(newPos, newPos + dir))
-				end
-				-- spring이 목표에 충분히 수렴하면 종료
-				if math.abs(angle - endAngle) < 0.005 then
-					return false
-				end
-				return true
-			end
-		else
-			return function(dt: number): boolean
-				elapsed += dt
-				local t = math.clamp(elapsed / config.duration, 0, 1)
-				if t >= 1 then
-					return false
-				end
-
-				local angle  = math.rad(config.angleMin + (config.angleMax - config.angleMin) * t)
-				local rotCF  = CFrame.Angles(0, angle, 0) * CFrame.new(Vector3.zero, baseDir)
-				local dir    = rotCF.LookVector
-				local newPos = origin + dir * config.range
-				if handle.part then
-					handle.part:PivotTo(CFrame.new(newPos, newPos + dir))
-				end
-				return true
-			end
+		if elapsed == 0 then
+			local cf = handle.part and handle.part:GetPivot() or CFrame.identity;
+			(handle :: any)._moveOrigin = cf.Position;
+			(handle :: any)._sweepBase  = cf
 		end
+
+		elapsed += dt
+		;(handle :: any)._moveElapsed = elapsed
+
+		local t = math.clamp(elapsed / config.duration, 0, 1)
+		local angle = math.rad(lerpNumber(config.angleMin, config.angleMax, t))
+
+		if handle.part then
+			local baseCF: CFrame = (handle :: any)._sweepBase
+			local origin: Vector3 = (handle :: any)._moveOrigin
+			local swept = baseCF * CFrame.Angles(0, angle, 0) * CFrame.new(0, 0, -config.range)
+			handle.part:PivotTo(CFrame.new(swept.Position, swept.Position + swept.LookVector))
+		end
+
+		return t < 1
 	end
 end
 
