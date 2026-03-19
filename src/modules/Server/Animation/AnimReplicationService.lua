@@ -2,34 +2,24 @@
 --[=[
 	@class AnimReplicationService
 
-	절차적 애니메이션 서버 복제 서비스.
+	절차적 애니메이션 복제 서비스 (서버).
 
 	동작:
-	- 클라이언트로부터 AnimChanged 수신
-	  → animDefModuleName으로 AnimDef require
-	  → factory(joint, defaultC0, serverAC, params) 실행 → onUpdate 클로저 생성
-	  → Heartbeat마다 onUpdate(joint, dt) 실행 → joint.C0 변경 → 자동 복제
-	- AnimStopped 수신 → 해당 애니메이션 클로저 제거
+	- 클라이언트로부터 AnimChanged 수신 → 검증 → 캐시 → AnimBroadcast로 전체 클라이언트에 포워딩
+	- 클라이언트로부터 AnimStopped 수신 → 캐시 제거 → AnimStopBroadcast 포워딩
+	- CharacterAdded 시 해당 플레이어에게 현재 진행 중인 다른 플레이어 상태 전송 (레이트 조인)
+	- 플레이어 퇴장 시 AnimStopBroadcast(userId, nil, nil) 전송 → 클라이언트가 전체 정지
 
-	serverAC:
-	- spring(joint, targetC0, speed, damper, dt) : Nevermore Spring 보간
-	- GetMoveDir()                                : humanoid.MoveDirection 로컬 좌표 변환
-	- GetDefaultC0(joint)                         : 전송받은 defaultC0Map에서 반환
-
-	params: { intensity: number?, direction: Vector3? }
-	  클라이언트 PlayAnimation 호출 시 전달된 params를 그대로 factory에 전달.
-	  BasicMovementAnimDef처럼 params를 사용하지 않는 factory는 무시.
+	서버는 factory를 실행하지 않음. Motor6D.C0 변경은 클라이언트(AnimReplicationClient)가 담당.
 ]=]
 
 local require = require(script.Parent.loader).load(script)
 
 local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
 
 local AnimReplicationRemoting = require("AnimReplicationRemoting")
 local Maid = require("Maid")
 local ServiceBag = require("ServiceBag")
-local Spring = require("Spring")
 
 -- ─── 타입 ────────────────────────────────────────────────────────────────────
 
@@ -38,26 +28,19 @@ type AnimParams = {
 	direction: Vector3?,
 }
 
-type JointEntry = {
-	onUpdate: (joint: Motor6D, dt: number) -> (),
-	posSpring: any,
-	rotSpring: any,
-}
-
-type AnimEntry = {
-	joints: { [string]: JointEntry },
-	layer: number,
+type CachedAnim = {
+	animDefModuleName: string,
+	animName: string,
+	animType: string,
+	layer: number?,
 	duration: number,
-	elapsed: number,
+	defaultC0Map: { [string]: CFrame },
+	params: AnimParams?,
+	startTime: number,
 }
 
-type PlayerAnimState = {
-	anims: { [string]: AnimEntry },
-	joints: { [string]: Motor6D },
-	defaultC0s: { [string]: CFrame },
-	jointSprings: { [Motor6D]: { pos: any, rot: any } },
-	humanoid: Humanoid?,
-	rootPart: BasePart?,
+type PlayerCache = {
+	anims: { [string]: CachedAnim },
 	maid: any,
 }
 
@@ -65,7 +48,7 @@ export type AnimReplicationService = typeof(setmetatable(
 	{} :: {
 		_serviceBag: ServiceBag.ServiceBag,
 		_maid: any,
-		_playerStates: { [number]: PlayerAnimState },
+		_playerCaches: { [number]: PlayerCache },
 	},
 	{} :: typeof({ __index = {} })
 ))
@@ -80,20 +63,22 @@ function AnimReplicationService.Init(self: AnimReplicationService, serviceBag: S
 	assert(not (self :: any)._serviceBag, "Already initialized")
 	self._serviceBag = serviceBag
 	self._maid = Maid.new()
-	self._playerStates = {}
+	self._playerCaches = {}
+end
 
+function AnimReplicationService.Start(self: AnimReplicationService): ()
+	for _, player in Players:GetPlayers() do
+		self:_onPlayerAdded(player)
+	end
+	self._maid:GiveTask(Players.PlayerAdded:Connect(function(player)
+		self:_onPlayerAdded(player)
+	end))
+	self._maid:GiveTask(Players.PlayerRemoving:Connect(function(player)
+		self:_onPlayerRemoving(player)
+	end))
 	self._maid:GiveTask(
 		AnimReplicationRemoting.AnimChanged:Connect(
-			function(
-				player: Player,
-				animDefModuleName: unknown,
-				animName: unknown,
-				animType: unknown,
-				layer: unknown,
-				duration: unknown,
-				defaultC0Map: unknown,
-				rawParams: unknown
-			)
+			function(player, animDefModuleName, animName, animType, layer, duration, defaultC0Map, rawParams)
 				self:_onAnimChanged(
 					player,
 					animDefModuleName,
@@ -107,78 +92,72 @@ function AnimReplicationService.Init(self: AnimReplicationService, serviceBag: S
 			end
 		)
 	)
-
 	self._maid:GiveTask(
-		AnimReplicationRemoting.AnimStopped:Connect(
-			function(player: Player, animDefModuleName: unknown, animName: unknown)
-				self:_onAnimStopped(player, animDefModuleName, animName)
-			end
-		)
+		AnimReplicationRemoting.AnimStopped:Connect(function(player, animDefModuleName, animName)
+			self:_onAnimStopped(player, animDefModuleName, animName)
+		end)
 	)
 end
 
-function AnimReplicationService.Start(self: AnimReplicationService): ()
-	for _, player in Players:GetPlayers() do
-		self:_onPlayerAdded(player)
-	end
-	self._maid:GiveTask(Players.PlayerAdded:Connect(function(player)
-		self:_onPlayerAdded(player)
-	end))
-	self._maid:GiveTask(Players.PlayerRemoving:Connect(function(player)
-		self:_onPlayerRemoving(player)
-	end))
-	self._maid:GiveTask(RunService.Heartbeat:Connect(function(dt)
-		self:_update(dt)
-	end))
-end
-
--- ─── 플레이어 라이프사이클 ────────────────────────────────────────────────────
+-- ─── 플레이어 관리 ────────────────────────────────────────────────────────────
 
 function AnimReplicationService:_onPlayerAdded(player: Player)
 	local pMaid = Maid.new()
+	self._maid:GiveTask(pMaid)
 
-	local state: PlayerAnimState = {
+	local cache: PlayerCache = {
 		anims = {},
-		joints = {},
-		defaultC0s = {},
-		jointSprings = {},
-		humanoid = nil,
-		rootPart = nil,
 		maid = pMaid,
 	}
-	self._playerStates[player.UserId] = state
+	self._playerCaches[player.UserId] = cache
 
-	local function onCharacterAdded(char: Model)
-		state.anims = {}
-		state.joints = {}
-		state.defaultC0s = {}
-		state.jointSprings = {}
-		state.humanoid = char:WaitForChild("Humanoid") :: Humanoid
-		state.rootPart = char:WaitForChild("HumanoidRootPart") :: BasePart
-		for _, desc in char:GetDescendants() do
-			if desc:IsA("Motor6D") then
-				state.joints[desc.Name] = desc
-			end
-		end
-	end
-
-	if player.Character then
-		onCharacterAdded(player.Character)
-	end
-	pMaid:GiveTask(player.CharacterAdded:Connect(onCharacterAdded))
-
-	self._playerStates[player.UserId] = state
+	-- 레이트 조인: 캐릭터 로드 시 현재 진행 중인 다른 플레이어 상태 전송
+	pMaid:GiveTask(player.CharacterAdded:Connect(function()
+		task.defer(function()
+			self:_sendExistingStateTo(player)
+		end)
+	end))
 end
 
 function AnimReplicationService:_onPlayerRemoving(player: Player)
-	local state = self._playerStates[player.UserId]
-	if state then
-		state.maid:Destroy()
+	local cache = self._playerCaches[player.UserId]
+	if cache then
+		cache.maid:Destroy()
 	end
-	self._playerStates[player.UserId] = nil
+	self._playerCaches[player.UserId] = nil
+
+	-- 다른 클라이언트에 해당 플레이어 애니메이션 전부 정지 알림 (nil = 전체)
+	AnimReplicationRemoting.AnimStopBroadcast:FireAllClients(player.UserId, nil, nil)
 end
 
--- ─── 수신 처리 ───────────────────────────────────────────────────────────────
+-- 레이트 조인: 접속한 플레이어에게 다른 플레이어들의 현재 상태 전송
+function AnimReplicationService:_sendExistingStateTo(player: Player)
+	local now = os.clock()
+	for userId, cache in self._playerCaches do
+		if userId == player.UserId then
+			continue
+		end
+		for _, cached in cache.anims do
+			local remaining = cached.duration - (now - cached.startTime)
+			if remaining <= 0 then
+				continue
+			end
+			AnimReplicationRemoting.AnimBroadcast:FireClient(
+				player,
+				userId,
+				cached.animDefModuleName,
+				cached.animName,
+				cached.animType,
+				cached.layer,
+				remaining,
+				cached.defaultC0Map,
+				cached.params
+			)
+		end
+	end
+end
+
+-- ─── 수신 → 브로드캐스트 ─────────────────────────────────────────────────────
 
 function AnimReplicationService:_onAnimChanged(
 	player: Player,
@@ -203,8 +182,8 @@ function AnimReplicationService:_onAnimChanged(
 		return
 	end
 
-	local state = self._playerStates[player.UserId]
-	if not state then
+	local cache = self._playerCaches[player.UserId]
+	if not cache then
 		return
 	end
 
@@ -222,121 +201,41 @@ function AnimReplicationService:_onAnimChanged(
 		animParams = parsed
 	end
 
-	-- defaultC0Map 병합
-	for jointName, c0 in defaultC0Map :: { [string]: unknown } do
-		if type(jointName) == "string" and typeof(c0) == "CFrame" then
-			state.defaultC0s[jointName] = c0 :: CFrame
-		end
-	end
-
-	-- AnimDef 로드
-	local ok, animDefs = pcall(require, animDefModuleName)
-	if not ok or type(animDefs) ~= "table" then
-		warn("[AnimReplicationService] AnimDef 로드 실패:", animDefModuleName)
-		return
-	end
-
-	local def = animDefs[animName :: string]
-	if not def then
-		return
-	end
-
-	local serverAC = self:_makeServerAC(state)
+	local animDuration = type(duration) == "number" and duration or math.huge
 	local animKey = animDefModuleName .. "_" .. animName
 
-	if animType == "anim" then
-		if type(layer) ~= "number" then
-			return
-		end
-
-		for existingKey, existing in state.anims do
-			if existing.layer == layer then
-				state.anims[existingKey] = nil
+	-- anim 타입: 같은 layer 기존 캐시 제거
+	if animType == "anim" and type(layer) == "number" then
+		for key, cached in cache.anims do
+			if cached.animType == "anim" and cached.layer == layer then
+				cache.anims[key] = nil
 				break
 			end
 		end
-
-		local jointEntries: { [string]: JointEntry } = {}
-		for jointName, factory in def.joints do
-			local joint = state.joints[jointName]
-			if not joint then
-				continue
-			end
-
-			local defaultC0 = state.defaultC0s[jointName] or joint.C0
-
-			if not state.jointSprings[joint] then
-				local rx0, ry0, rz0 = defaultC0:ToEulerAnglesXYZ()
-				local posSpring = Spring.new(joint.C0.Position)
-				posSpring.Speed = 20
-				posSpring.Damper = 1
-				local rotSpring = Spring.new(Vector3.new(rx0, ry0, rz0))
-				rotSpring.Speed = 20
-				rotSpring.Damper = 1
-				state.jointSprings[joint] = { pos = posSpring, rot = rotSpring }
-			end
-
-			serverAC._springs[joint] = state.jointSprings[joint]
-			serverAC._defaultC0s[joint] = defaultC0
-
-			local onUpdate = factory(joint, defaultC0, serverAC, animParams)
-			jointEntries[jointName] = {
-				onUpdate = onUpdate,
-				posSpring = state.jointSprings[joint].pos,
-				rotSpring = state.jointSprings[joint].rot,
-			}
-		end
-
-		state.anims[animKey] = {
-			joints = jointEntries,
-			layer = layer :: number,
-			duration = type(duration) == "number" and duration or math.huge,
-			elapsed = 0,
-		}
-	elseif animType == "modify" then
-		local jointEntries: { [string]: JointEntry } = {}
-		for jointName, factory in def.joints do
-			local joint = state.joints[jointName]
-			if not joint then
-				continue
-			end
-
-			local defaultC0 = state.defaultC0s[jointName] or joint.C0
-
-			if not state.jointSprings[joint] then
-				local rx0, ry0, rz0 = defaultC0:ToEulerAnglesXYZ()
-				local posSpring = Spring.new(joint.C0.Position)
-				posSpring.Speed = 20
-				posSpring.Damper = 1
-				local rotSpring = Spring.new(Vector3.new(rx0, ry0, rz0))
-				rotSpring.Speed = 20
-				rotSpring.Damper = 1
-				state.jointSprings[joint] = { pos = posSpring, rot = rotSpring }
-			end
-
-			serverAC._springs[joint] = state.jointSprings[joint]
-			serverAC._defaultC0s[joint] = defaultC0
-
-			local modCallback = factory(joint, defaultC0, serverAC, animParams)
-
-			local function onUpdate(j: Motor6D, _dt: number)
-				j.C0 = modCallback(j.C0, _dt)
-			end
-
-			jointEntries[jointName] = {
-				onUpdate = onUpdate,
-				posSpring = state.jointSprings[joint].pos,
-				rotSpring = state.jointSprings[joint].rot,
-			}
-		end
-
-		state.anims[animKey] = {
-			joints = jointEntries,
-			layer = -1,
-			duration = math.huge,
-			elapsed = 0,
-		}
 	end
+
+	cache.anims[animKey] = {
+		animDefModuleName = animDefModuleName :: string,
+		animName = animName :: string,
+		animType = animType :: string,
+		layer = type(layer) == "number" and layer or nil,
+		duration = animDuration,
+		defaultC0Map = defaultC0Map :: { [string]: CFrame },
+		params = animParams,
+		startTime = os.clock(),
+	}
+
+	-- 모든 클라이언트에 포워딩 (로컬 플레이어 포함 — 클라이언트에서 자기 자신 걸러냄)
+	AnimReplicationRemoting.AnimBroadcast:FireAllClients(
+		player.UserId,
+		animDefModuleName,
+		animName,
+		animType,
+		layer,
+		animDuration,
+		defaultC0Map,
+		animParams
+	)
 end
 
 function AnimReplicationService:_onAnimStopped(player: Player, animDefModuleName: unknown, animName: unknown)
@@ -347,117 +246,14 @@ function AnimReplicationService:_onAnimStopped(player: Player, animDefModuleName
 		return
 	end
 
-	local state = self._playerStates[player.UserId]
-	if not state then
+	local cache = self._playerCaches[player.UserId]
+	if not cache then
 		return
 	end
 
-	local animKey = animDefModuleName .. "_" .. animName
-	state.anims[animKey] = nil
-end
+	cache.anims[animDefModuleName .. "_" .. animName] = nil
 
--- ─── Heartbeat 업데이트 ───────────────────────────────────────────────────────
-
-function AnimReplicationService:_update(dt: number)
-	for _, state in self._playerStates do
-		local activeJoints: { [Motor6D]: boolean } = {}
-
-		local toRemove: { string } = {}
-		for animKey, animEntry in state.anims do
-			animEntry.elapsed += dt
-
-			if animEntry.elapsed >= animEntry.duration then
-				table.insert(toRemove, animKey)
-				continue
-			end
-
-			for jointName, jointEntry in animEntry.joints do
-				local joint = state.joints[jointName]
-				if not joint then
-					continue
-				end
-				activeJoints[joint] = true
-				jointEntry.onUpdate(joint, dt)
-			end
-		end
-
-		for _, animKey in toRemove do
-			state.anims[animKey] = nil
-		end
-
-		for jointName, joint in state.joints do
-			if activeJoints[joint] then
-				continue
-			end
-			local springs = state.jointSprings[joint]
-			if not springs then
-				continue
-			end
-			local defaultC0 = state.defaultC0s[jointName] or joint.C0
-
-			springs.pos.Speed = 20
-			springs.pos.Damper = 0.8
-			springs.rot.Speed = 20
-			springs.rot.Damper = 0.8
-
-			local tx, ty, tz = defaultC0:ToEulerAnglesXYZ()
-			springs.pos.Target = defaultC0.Position
-			springs.rot.Target = Vector3.new(tx, ty, tz)
-
-			local p = springs.pos.Position
-			local r = springs.rot.Position
-			joint.C0 = CFrame.new(p) * CFrame.fromEulerAnglesXYZ(r.X, r.Y, r.Z)
-		end
-	end
-end
-
--- ─── serverAC 생성 ────────────────────────────────────────────────────────────
-
-function AnimReplicationService:_makeServerAC(state: PlayerAnimState): any
-	local serverAC = {
-		_springs = {} :: { [Motor6D]: { pos: any, rot: any } },
-		_defaultC0s = {} :: { [Motor6D]: CFrame },
-	}
-
-	function serverAC:spring(joint: Motor6D, targetC0: CFrame, speed: number, damper: number, _dt: number)
-		local springs = self._springs[joint]
-		if not springs then
-			return
-		end
-
-		springs.pos.Speed = speed
-		springs.pos.Damper = damper
-		springs.rot.Speed = speed
-		springs.rot.Damper = damper
-
-		local tx, ty, tz = targetC0:ToEulerAnglesXYZ()
-		springs.pos.Target = targetC0.Position
-		springs.rot.Target = Vector3.new(tx, ty, tz)
-
-		local p = springs.pos.Position
-		local r = springs.rot.Position
-		joint.C0 = CFrame.new(p) * CFrame.fromEulerAnglesXYZ(r.X, r.Y, r.Z)
-	end
-
-	function serverAC:GetMoveDir(): Vector3
-		local humanoid = state.humanoid
-		local rootPart = state.rootPart
-		if not humanoid or not rootPart then
-			return Vector3.zero
-		end
-
-		local worldDir = humanoid.MoveDirection
-		if worldDir.Magnitude < 0.01 then
-			return Vector3.zero
-		end
-		return rootPart.CFrame:VectorToObjectSpace(worldDir)
-	end
-
-	function serverAC:GetDefaultC0(joint: Motor6D): CFrame
-		return self._defaultC0s[joint] or joint.C0
-	end
-
-	return serverAC
+	AnimReplicationRemoting.AnimStopBroadcast:FireAllClients(player.UserId, animDefModuleName, animName)
 end
 
 function AnimReplicationService.Destroy(self: AnimReplicationService)

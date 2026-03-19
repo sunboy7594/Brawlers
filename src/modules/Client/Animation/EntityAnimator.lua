@@ -12,12 +12,13 @@
 	params:
 	  { intensity: number?, direction: Vector3? }
 	  factory 호출 시 전달. intensity는 애니메이션 강도, direction은 방향 기반 연출용.
-	  서버 복제 시에도 params가 함께 전송되어 서버에서도 동일하게 적용됩니다.
+	  서버 복제 시에도 params가 함께 전송되어 다른 클라이언트에도 동일하게 적용됩니다.
 	  BasicMovementAnimDef처럼 CycleRef 참조 공유가 필요한 경우 params 없이 nil 전달.
 
-	서버 복제:
+	복제 구조:
 	  PlayAnimation/StopAnimation 시 AnimReplicationRemoting으로 서버에 알림.
-	  서버는 AnimReplicationService가 동일한 AnimDef로 joint.C0를 계산/변경하여 복제.
+	  서버(AnimReplicationService)는 다른 클라이언트에 설계도(AnimDef + params)를 포워딩.
+	  클라이언트(AnimReplicationClient)가 로컬에서 동일한 factory를 실행하여 joint.C0 변경.
 	  카메라 애니메이션(CameraAnimator)은 복제 불필요이므로 전송하지 않음.
 	  replicates = false 옵션으로 복제 제외 가능.
 ]=]
@@ -230,6 +231,7 @@ function EntityAnimator:PlayAnimation(
 				name,
 				"modify",
 				nil,
+				math.huge,
 				defaultC0Map,
 				params
 			)
