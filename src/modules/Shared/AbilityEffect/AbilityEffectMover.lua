@@ -15,7 +15,6 @@
 
 	randomAngle:
 	  발사 방향 기준 최대 편차 각도 (도)
-	  내부적으로 발사 방향 수직 평면에서 균등분포 랜덤 회전 적용
 ]=]
 
 local AbilityEffectMover = {}
@@ -71,15 +70,15 @@ local function lerpNumber(a: number, b: number, t: number): number
 	return a + (b - a) * t
 end
 
--- ─── Linear ──────────────────────────────────────────────────────────────────
+-- ─── Linear ────────────────────────────────────────────────────────────────────
 
 function AbilityEffectMover.Linear(config: LinearConfig): MoveFunction
 	return function(dt: number, handle: any, _params: { [string]: any }?): boolean
 		local h = handle :: any
 		local elapsed: number = h._moveElapsed or 0
 
-		-- 첫 프레임: 방향 초기화
-		if elapsed == 0 and not h._moveDir then
+		-- 첫 프레임: _moveDir 초기화 (아직 설정되지 않은 경우)
+		if not h._moveDir then
 			local cf = h.part and h.part:GetPivot() or CFrame.identity
 			local baseDir = cf.LookVector
 			if config.randomAngle and config.randomAngle > 0 then
@@ -87,18 +86,24 @@ function AbilityEffectMover.Linear(config: LinearConfig): MoveFunction
 			end
 			h._moveDir = baseDir
 		end
+		-- _moveOrigin이 없으면 파트 현재 위치로 초기화
+		if not h._moveOrigin then
+			h._moveOrigin = h.part and h.part:GetPivot().Position or Vector3.zero
+		end
 
 		elapsed += dt
 		h._moveElapsed = elapsed
 
-		local dir: Vector3 = h._moveDir
+		local dir: Vector3    = h._moveDir
+		local origin: Vector3 = h._moveOrigin
 		local dist = config.speed * elapsed
+
 		if dist >= config.maxRange then
 			return false
 		end
 
-		if h.part then
-			local currentPos = h._moveOrigin + dir * dist
+		if h.part and dir and origin then
+			local currentPos = origin + dir * dist
 			h.part:PivotTo(CFrame.new(currentPos, currentPos + dir))
 		end
 
@@ -106,14 +111,14 @@ function AbilityEffectMover.Linear(config: LinearConfig): MoveFunction
 	end
 end
 
--- ─── Arc ─────────────────────────────────────────────────────────────────────
+-- ─── Arc ───────────────────────────────────────────────────────────────────────
 
 function AbilityEffectMover.Arc(config: ArcConfig): MoveFunction
 	return function(dt: number, handle: any, _params: { [string]: any }?): boolean
 		local h = handle :: any
 		local elapsed: number = h._moveElapsed or 0
 
-		if elapsed == 0 then
+		if not h._moveDir or not h._moveOrigin then
 			local cf = h.part and h.part:GetPivot() or CFrame.identity
 			h._moveDir    = cf.LookVector
 			h._moveOrigin = cf.Position
@@ -127,6 +132,8 @@ function AbilityEffectMover.Arc(config: ArcConfig): MoveFunction
 
 		local origin: Vector3 = h._moveOrigin
 		local dir: Vector3    = h._moveDir
+
+		if not origin or not dir then return true end
 
 		local horizontal = origin + dir * (config.distance * t)
 		local verticalY  = 4 * config.height * t * (1 - t)
@@ -156,7 +163,7 @@ function AbilityEffectMover.Sweep(config: SweepConfig): MoveFunction
 		local h = handle :: any
 		local elapsed: number = h._moveElapsed or 0
 
-		if elapsed == 0 then
+		if not h._sweepBase then
 			local cf = h.part and h.part:GetPivot() or CFrame.identity
 			h._moveOrigin = cf.Position
 			h._sweepBase  = cf
@@ -168,8 +175,8 @@ function AbilityEffectMover.Sweep(config: SweepConfig): MoveFunction
 		local t     = math.clamp(elapsed / config.duration, 0, 1)
 		local angle = math.rad(lerpNumber(config.angleMin, config.angleMax, t))
 
-		if h.part then
-			local baseCF: CFrame  = h._sweepBase
+		if h.part and h._sweepBase then
+			local baseCF: CFrame = h._sweepBase
 			local swept = baseCF * CFrame.Angles(0, angle, 0) * CFrame.new(0, 0, -config.range)
 			h.part:PivotTo(CFrame.new(swept.Position, swept.Position + swept.LookVector))
 		end
