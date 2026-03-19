@@ -43,7 +43,7 @@ local BasicAttackDefs: { [string]: BasicAttackDef } = {
 			reloadTime = 2,
 		},
 		interval = 0.3,
-		effectDef = "Tank_CannonEffectDef",
+		effectDef = "Tank_CannonTestEffectDef",
 	},
 }
 
