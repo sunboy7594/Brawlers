@@ -32,6 +32,7 @@ serviceBag:GetService(require("SkillService"))
 serviceBag:GetService(require("UltimateService"))
 serviceBag:GetService(require("AnimReplicationService"))
 serviceBag:GetService(require("PlayerStateControllerService"))
+serviceBag:GetService(require("ProjectileHitService"))
 
 -- ─── WorldFX ─────────────────────────────────────
 serviceBag:GetService(require("WorldFXReplicationService"))
