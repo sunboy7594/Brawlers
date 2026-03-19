@@ -4,7 +4,7 @@
 
 	탱크 캐논 기본공격 이펙트 정의. (Shared)
 
-	ReplicatedStorage.AbilityEffects.CannonBall 모델 필요.
+	ReplicatedStorage.AbilityTestEffects.CannonBall 모델 필요.
 
 	투사체 흐름:
 	  Linear 직선 이동 → Box 판정 (activateAt=0)
@@ -17,16 +17,16 @@
 
 local require = require(script.Parent.loader).load(script)
 
-local AbilityEffectMover           = require("AbilityEffectMover")
+local AbilityEffectColorUtils = require("AbilityEffectColorUtils")
 local AbilityEffectHitDetectionUtil = require("AbilityEffectHitDetectionUtil")
-local AbilityEffectHitOrMissUtil   = require("AbilityEffectHitOrMissUtil")
-local AbilityEffectTransformUtil   = require("AbilityEffectTransformUtil")
-local AbilityEffectColorUtils      = require("AbilityEffectColorUtils")
+local AbilityEffectHitOrMissUtil = require("AbilityEffectHitOrMissUtil")
+local AbilityEffectMover = require("AbilityEffectMover")
+local AbilityEffectTransformUtil = require("AbilityEffectTransformUtil")
 
 local PROJECTILE_SPEED = 40
-local MAX_RANGE        = 100
-local BASE_HIT_SIZE    = 3
-local MAX_HIT_SIZE     = 6   -- params.aimRatio=1 일 때
+local MAX_RANGE = 100
+local BASE_HIT_SIZE = 3
+local MAX_HIT_SIZE = 6 -- params.aimRatio=1 일 때
 
 return {
 	models = { "CannonBall", "CannonExplosion" },
@@ -35,13 +35,13 @@ return {
 		model = "CannonBall",
 
 		move = AbilityEffectMover.Linear({
-			speed    = PROJECTILE_SPEED,
+			speed = PROJECTILE_SPEED,
 			maxRange = MAX_RANGE,
-			mode     = "linear",
+			mode = "linear",
 		}),
 
 		onMove = AbilityEffectTransformUtil.Rotate({
-			axis  = Vector3.new(1, 0, 0),
+			axis = Vector3.new(1, 0, 0),
 			speed = 360,
 		}),
 
@@ -66,23 +66,23 @@ return {
 
 	CannonExplosion = {
 		model = "CannonExplosion",
-		move  = nil,
+		move = nil,
 
 		onMove = AbilityEffectTransformUtil.Sequence({
 			AbilityEffectTransformUtil.ScaleTo({
-				from     = Vector3.one,
-				target   = Vector3.new(2.5, 2.5, 2.5),
+				from = Vector3.one,
+				target = Vector3.new(2.5, 2.5, 2.5),
 				duration = 0.2,
-				mode     = "spring",
-				speed    = 20,
-				damper   = 0.7,
+				mode = "spring",
+				speed = 20,
+				damper = 0.7,
 			}),
 			AbilityEffectTransformUtil.Fade({
-				from     = 0,
-				to       = 1,
+				from = 0,
+				to = 1,
 				duration = 0.4,
-				mode     = "linear",
-				speed    = 1,
+				mode = "linear",
+				speed = 1,
 			}),
 		}),
 

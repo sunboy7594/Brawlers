@@ -24,21 +24,21 @@ local AbilityEffectPlayer = require("AbilityEffectPlayer")
 
 -- ─── 설정 ────────────────────────────────────────────────────────────────────
 
-local EFFECT_DEF_MODULE = "Tank_CannonEffectDef"
-local EFFECT_NAME       = "CannonBall"
-local ANGLE_EXPAND_TIME = 3.0  -- 조준 시간 만나에 판정 최대화
+local EFFECT_DEF_MODULE = "Tank_CannonTestEffectDef"
+local EFFECT_NAME = "CannonBall"
+local ANGLE_EXPAND_TIME = 3.0 -- 조준 시간 만나에 판정 최대화
 
 -- ─── 상태 타입 ───────────────────────────────────────────────────────────────
 
 type BasicAttackState = {
-	origin            : Vector3,
-	direction         : Vector3,
-	effectiveAimTime  : number,
-	fireMaid          : any?,
-	abilityEffectMaid : any?,
-	indicator         : any,
-	animator          : any?,
-	teamContext       : any?,
+	origin: Vector3,
+	direction: Vector3,
+	effectiveAimTime: number,
+	fireMaid: any?,
+	abilityEffectMaid: any?,
+	indicator: any,
+	animator: any?,
+	teamContext: any?,
 }
 
 -- ─── 모듈 정의 ───────────────────────────────────────────────────────────────
@@ -54,7 +54,9 @@ return {
 			local localPlayer = Players.LocalPlayer
 			local char = localPlayer.Character
 			local hrp = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
-			if not hrp then return end
+			if not hrp then
+				return
+			end
 
 			local origin = CFrame.new(hrp.Position, hrp.Position + state.direction)
 
@@ -64,10 +66,10 @@ return {
 			-- 클라이언트 연이첤 재생
 			-- isOwner=true → EffectFired + Register 서버 전송 자동
 			AbilityEffectPlayer.Play(EFFECT_DEF_MODULE, EFFECT_NAME, {
-				origin            = origin,
+				origin = origin,
 				abilityEffectMaid = state.abilityEffectMaid,
-				params            = { aimRatio = aimRatio },
-				teamContext       = state.teamContext,
+				params = { aimRatio = aimRatio },
+				teamContext = state.teamContext,
 			})
 		end,
 	},
