@@ -11,7 +11,7 @@
 	  Despawn()             → 즉시 소멸 (onMiss 없음)
 	  StopMove()            → 이동 중단, 위치 고정
 	  FadeOut({ duration }) → 서서히 소멸 (onMiss 없음)
-	  SpawnEffect(def, name, options?) → 현재 위치에 2차 이펙트 소환
+	  SpawnEffect(def, name, options?) → 현재 위치에 2차 이펙트 소환 (클라이언트 전용)
 	  Sequence({ ... })     → 여러 콜백 순서대로 실행
 
 	onHit 전용:
@@ -22,6 +22,8 @@
 	  - move 함수가 false 반환 (사거리 초과 등 자연 종료)
 	  Despawn, FadeOut은 onMiss 발동하지 않음.
 ]=]
+
+local require = require(script.Parent.loader).load(script)
 
 local RunService = game:GetService("RunService")
 
@@ -42,9 +44,7 @@ export type MissCallback = (handle: any) -> ()
 
 -- ─── 내부 ────────────────────────────────────────────────────────────────────
 
--- 서버에선 AbilityEffectPlayer를 쓸 수 없으므로 SpawnEffect는 클라이언트 전용
--- 서버 시뮬에서는 SpawnEffect 호출 시 아무것도 하지 않음
-local IS_CLIENT = not game:GetService("RunService"):IsServer()
+local IS_CLIENT = not RunService:IsServer()
 
 -- ─── 공통 유틸 ───────────────────────────────────────────────────────────────
 
@@ -72,7 +72,7 @@ end
 
 --[=[
 	서서히 소멸. onMiss 없음.
-	이동/onMove는 계속 진행, duration 후 onHit 발동 불가 상태로 소멸.
+	이동/onMove는 계속 진행, duration 후 소멸.
 ]=]
 function AbilityEffectHitOrMissUtil.FadeOut(config: { duration: number }): HitCallback & MissCallback
 	return function(handle: any, _hitInfo: any?)
@@ -112,16 +112,18 @@ function AbilityEffectHitOrMissUtil.SpawnEffect(
 ): HitCallback & MissCallback
 	return function(handle: any, _hitInfo: any?)
 		if not IS_CLIENT then return end
-		local ok, AbilityEffectPlayer = pcall(require, script.Parent.Parent.Client.AbilityEffect.AbilityEffectPlayer)
+		-- loader 기반 require (클라이언트에서만 실행되므로 안전)
+		local ok, AbilityEffectPlayer = pcall(require, "AbilityEffectPlayer")
 		if not ok then
 			warn("[AbilityEffectHitOrMissUtil] AbilityEffectPlayer require 실패:", AbilityEffectPlayer)
 			return
 		end
 		local spawnCF = handle.part and handle.part:GetPivot() or CFrame.identity
-		local opts = options or {}
+		local opts: { [string]: any } = options and table.clone(options) or {}
 		opts.origin = spawnCF
 		opts.isOwner = handle.isOwner
-		;(AbilityEffectPlayer :: any).Play(defModuleName, effectName, opts)
+		local player = AbilityEffectPlayer :: any
+		player.Play(defModuleName, effectName, opts)
 	end :: any
 end
 
@@ -131,7 +133,8 @@ end
 function AbilityEffectHitOrMissUtil.Sequence(callbacks: { HitCallback | MissCallback }): HitCallback & MissCallback
 	return function(handle: any, hitInfo: any?)
 		for _, cb in callbacks do
-			;(cb :: any)(handle, hitInfo)
+			local fn = cb :: any
+			fn(handle, hitInfo)
 		end
 	end :: any
 end
@@ -153,7 +156,6 @@ function AbilityEffectHitOrMissUtil.Penetrate(config: {
 			local cb = config.onMaxHit or AbilityEffectHitOrMissUtil.Despawn()
 			cb(handle, hitInfo)
 		end
-		-- maxCount 미만이면 아무것도 안 함 (통과)
 	end
 end
 
