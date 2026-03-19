@@ -42,6 +42,7 @@
 	  - _stopFireLoop()
 	  - _pendingFireCancel 취소
 	  - fireMaid Destroy
+	  - abilityEffectMaid Destroy (대기 중 이펙트 발사 취소)
 	  - onCancel 훅 실행
 	  - _stackReloadTimer 리셋
 
@@ -52,7 +53,13 @@
 
 	fireMaid:
 	  onFire 실행 시 새 Maid 생성. CancelCombatState 시 Destroy.
-	  모듈이 GiveTask로 cleanup 등록 가능 (애니메이션 중단, 딜레이 히트 취소 등).
+	  모듈이 GiveTask로 cleanup 등록 가능 (애니메이션 중단 등).
+
+	abilityEffectMaid:
+	  장착 시 생성. CancelCombatState 시 Destroy.
+	  AbilityEffectPlayer.Play()에 delay가 있을 때 넘기면
+	  캔슬 시 대기 중인 이펙트 발사가 취소됨.
+	  이미 발사된 이펙트는 독립 수명으로 계속 진행.
 ]=]
 
 local require = require(script.Parent.loader).load(script)
@@ -60,6 +67,7 @@ local require = require(script.Parent.loader).load(script)
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
 
 local AbilityCoordinator = require("AbilityCoordinator")
 local AbilityExecutor = require("AbilityExecutor")
@@ -76,6 +84,7 @@ local Maid = require("Maid")
 local PlayerBinderClient = require("PlayerBinderClient")
 local PlayerStateClient = require("PlayerStateClient")
 local ServiceBag = require("ServiceBag")
+local TeamClient = require("TeamClient")
 local cancellableDelay = require("cancellableDelay")
 
 -- ─── 상수 ────────────────────────────────────────────────────────────────────
@@ -136,12 +145,19 @@ export type BasicAttackState = {
 	-- 피격 결과
 	victims: { Player }?,
 
-	-- 발사 수명 관리 (모듈이 GiveTask로 cleanup 등록)
+	-- 발사 수명 관리 (애니메이션, 사운드 등 1회 발사 단위 cleanup)
 	fireMaid: any?,
+
+	-- 대기 중인 이펙트 발사 취소 (delay가 있는 AbilityEffectPlayer.Play용)
+	-- 이미 발사된 이펙트는 독립 수명으로 영향 없음
+	abilityEffectMaid: any?,
 
 	-- 인디케이터 / 애니메이터
 	indicator: any,
 	animator: any?,
+
+	-- 팀 컨텍스트 (AbilityEffectPlayer에 teamContext로 전달)
+	teamContext: { attackerChar: Model?, attackerPlayer: any?, teamService: any? }?,
 }
 
 -- ─── 타입 ────────────────────────────────────────────────────────────────────
@@ -152,7 +168,8 @@ export type BasicAttackClient = typeof(setmetatable(
 		_maid: any,
 		_aimController: AimControllerClient.AimControllerClient,
 		_animController: AnimationControllerClient.AnimationControllerClient,
-		_coordinator: any, -- AbilityCoordinator
+		_coordinator: any,
+		_teamClient: any,
 		_equippedAttackId: string?,
 		_joints: { [string]: Motor6D }?,
 		_attackAnimator: any?,
@@ -186,6 +203,7 @@ function BasicAttackClient.Init(self: BasicAttackClient, serviceBag: ServiceBag.
 	self._animController = serviceBag:GetService(AnimationControllerClient)
 	self._coordinator = serviceBag:GetService(AbilityCoordinator)
 	self._playerStateClient = serviceBag:GetService(PlayerStateClient)
+	self._teamClient = serviceBag:GetService(TeamClient)
 
 	self._equippedAttackId = nil
 	self._joints = nil
@@ -221,20 +239,16 @@ function BasicAttackClient.Init(self: BasicAttackClient, serviceBag: ServiceBag.
 end
 
 function BasicAttackClient.Start(self: BasicAttackClient): ()
-	-- AbilityCoordinator에 자신 등록
 	self._coordinator:Register(self)
 
-	-- Heartbeat: 인디케이터 갱신 + 로컬 리소스 추적
 	self._maid:GiveTask(RunService.Heartbeat:Connect(function(dt: number)
 		local state = self._attackState
 		if not state then
 			return
 		end
 
-		-- 로컬 리소스 추적
 		self:_updateLocalResource(state, dt)
 
-		-- 인디케이터 갱신 (조준 중에만)
 		if not self._aimController:IsAiming() then
 			state.effectiveAimTime = 0
 			return
@@ -262,7 +276,6 @@ function BasicAttackClient.Start(self: BasicAttackClient): ()
 		end
 	end))
 
-	-- 입력 처리
 	self._maid:GiveTask(UserInputService.InputBegan:Connect(function(input: InputObject, processed: boolean)
 		if processed then
 			return
@@ -299,19 +312,24 @@ function BasicAttackClient:SetEquippedAttack(attackId: string)
 
 	local resourceType = if def then def.resource.resourceType else "stack"
 
+	-- 팀 컨텍스트 (AbilityEffectPlayer teamContext용)
+	local localPlayer = Players.LocalPlayer
+	local teamContext = {
+		attackerChar   = localPlayer.Character,
+		attackerPlayer = localPlayer,
+		teamService    = nil, -- 서버가 처리, 클라이언트는 nil 가능
+	}
+
 	self._attackState = {
-		-- 리소스 공통
 		resourceType = resourceType,
 		interval = if def then def.interval else 0,
 		intervalUntil = 0,
 		isFiring = false,
 
-		-- stack 초기값
 		currentStack = 0,
 		maxStack = 0,
 		reloadTime = 0,
 
-		-- gauge 초기값
 		currentGauge = 0,
 		maxGauge = 0,
 		minGauge = 0,
@@ -319,16 +337,13 @@ function BasicAttackClient:SetEquippedAttack(attackId: string)
 		regenRate = 0,
 		regenDelay = 0,
 
-		-- 로컬 추적용
 		lastFireEndTime = 0,
 
-		-- 콤보
 		lastFireTime = 0,
 		lastHitTime = 0,
 		fireComboCount = 0,
 		hitComboCount = 0,
 
-		-- 조준
 		origin = Vector3.zero,
 		direction = Vector3.new(0, 0, -1),
 		aimTime = 0,
@@ -337,8 +352,10 @@ function BasicAttackClient:SetEquippedAttack(attackId: string)
 
 		victims = nil,
 		fireMaid = nil,
+		abilityEffectMaid = Maid.new(),
 		indicator = indicator,
 		animator = nil,
+		teamContext = teamContext,
 	}
 
 	self:_rebuildAnimator()
@@ -364,10 +381,15 @@ function BasicAttackClient:CancelCombatState()
 	if state then
 		state.isFiring = false
 		state.lastFireEndTime = os.clock()
-		-- fireMaid Destroy (모듈이 등록한 cleanup 자동 실행)
 		if state.fireMaid then
 			state.fireMaid:Destroy()
 			state.fireMaid = nil
+		end
+		-- abilityEffectMaid: 대기 중인 이펙트 발사 취소
+		-- 이미 발사된 이펙트는 독립 수명으로 영향 없음
+		if state.abilityEffectMaid then
+			state.abilityEffectMaid:Destroy()
+			state.abilityEffectMaid = Maid.new()
 		end
 	end
 
@@ -449,7 +471,6 @@ function BasicAttackClient:_onMouseDown()
 		if not state then
 			return
 		end
-		-- interval 중이면 hold 시작 불가
 		if os.clock() < state.intervalUntil then
 			return
 		end
@@ -464,13 +485,11 @@ function BasicAttackClient:_onMouseDown()
 			return
 		end
 		if self._fireLoopCancel then
-			-- 두번째 클릭: 루프 종료 (interval 허용 구간에서만)
 			local now = os.clock()
 			local remaining = state.intervalUntil - now
 			if now >= state.intervalUntil then
 				self:_stopFireLoop()
 			elseif remaining / state.interval <= INTERVAL_QUEUE_THRESHOLD then
-				-- 예약 종료
 				if self._pendingFireCancel then
 					self._pendingFireCancel()
 				end
@@ -479,9 +498,7 @@ function BasicAttackClient:_onMouseDown()
 					self:_stopFireLoop()
 				end)
 			end
-			-- 아직 threshold 안 됐으면 무시
 		else
-			-- 첫번째 클릭: StartAim (toggle은 화면 고정 없음)
 			if os.clock() < state.intervalUntil then
 				return
 			end
@@ -512,10 +529,8 @@ function BasicAttackClient:_onMouseUp()
 		self._aimController:Cancel()
 	elseif fireType == "toggle" then
 		if self._fireLoopCancel then
-			-- 루프 진행 중: 업 이벤트 무시 (다운이 처리)
 			return
 		end
-		-- 첫번째 업: 발사 루프 시작
 		local direction = self._aimController:ConfirmAim()
 		if direction then
 			local state = self._attackState
@@ -549,7 +564,6 @@ function BasicAttackClient:_executeStack(entry: { def: any, module: any, animDef
 		return
 	end
 
-	-- 리소스 부족: aim 실패 처리
 	if not self:_hasResourceForStart(state) then
 		return
 	end
@@ -559,12 +573,10 @@ function BasicAttackClient:_executeStack(entry: { def: any, module: any, animDef
 
 	if now < state.intervalUntil then
 		local remaining = state.intervalUntil - now
-		-- threshold 미만이면 거부
 		if remaining / def.interval > INTERVAL_QUEUE_THRESHOLD then
 			return
 		end
 
-		-- 예약 발사
 		local scheduledAt = state.intervalUntil
 		state.intervalUntil = scheduledAt + def.interval
 		local capturedDir = direction
@@ -580,16 +592,14 @@ function BasicAttackClient:_executeStack(entry: { def: any, module: any, animDef
 			state.currentStack = math.max(0, state.currentStack - 1)
 			self:_onFireExecuted(entry, state)
 			AbilityExecutor.OnFire(entry.module, state)
-
-			-- 예약 실행 시점에 비로소 방향 전환
 			self._aimController:StartIntervalLock(capturedDir, def.interval)
 		end)
 
-		BasicAttackRemoting.Fire:FireServer(direction)
+		-- sentAt: 서버 latency 보정용
+		BasicAttackRemoting.Fire:FireServer(direction, Workspace:GetServerTimeNow())
 		return
 	end
 
-	-- 즉시 발사
 	if self._pendingFireCancel then
 		self._pendingFireCancel()
 		self._pendingFireCancel = nil
@@ -600,13 +610,12 @@ function BasicAttackClient:_executeStack(entry: { def: any, module: any, animDef
 	state.lastFireTime = now
 	state.effectiveAimTime = 0
 
-	-- 로컬 리소스 차감
 	state.currentStack = math.max(0, state.currentStack - 1)
-	self._stackReloadTimer = 0 -- 차감 시 타이머 리셋
+	self._stackReloadTimer = 0
 
 	self:_onFireExecuted(entry, state)
 
-	BasicAttackRemoting.Fire:FireServer(direction)
+	BasicAttackRemoting.Fire:FireServer(direction, Workspace:GetServerTimeNow())
 	AbilityExecutor.OnFire(entry.module, state)
 	self._aimController:StartIntervalLock(direction, def.interval)
 end
@@ -624,9 +633,7 @@ function BasicAttackClient:_startFireLoop(entry: { def: any, module: any, animDe
 	end
 
 	state.isFiring = true
-	self:_onFireExecuted(entry, state) -- coordinator 알림
-
-	-- FireStart 제거됨. 서버는 첫 Fire 수신 시 isFiring=true 자동 설정.
+	self:_onFireExecuted(entry, state)
 
 	local running = true
 	self._fireLoopCancel = function()
@@ -639,7 +646,6 @@ function BasicAttackClient:_startFireLoop(entry: { def: any, module: any, animDe
 		while running do
 			local now = os.clock()
 
-			-- 루프 지속 조건: gauge는 currentGauge > 0, stack은 시작 조건과 동일
 			if state.resourceType == "gauge" then
 				if state.currentGauge <= 0 then
 					self:_stopFireLoop()
@@ -652,13 +658,11 @@ function BasicAttackClient:_startFireLoop(entry: { def: any, module: any, animDe
 				end
 			end
 
-			-- interval 대기
 			if now >= state.intervalUntil then
 				state.intervalUntil = now + def.interval
 				state.lastFireTime = now
 				state.effectiveAimTime = 0
 
-				-- toggle: HRP 방향, hold: aimController의 현재 direction
 				if def.fireType == "toggle" then
 					local char = Players.LocalPlayer.Character
 					local hrp = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
@@ -670,25 +674,22 @@ function BasicAttackClient:_startFireLoop(entry: { def: any, module: any, animDe
 						end
 					end
 				end
-				-- hold: state.direction은 _onRenderStep(AimController)에서 매 프레임 갱신됨
 
-				-- 로컬 리소스 차감
 				if state.resourceType == "stack" then
 					state.currentStack = math.max(0, state.currentStack - 1)
 					self._stackReloadTimer = 0
 				end
 
-				-- fireMaid 갱신
 				if state.fireMaid then
 					state.fireMaid:Destroy()
 				end
 				state.fireMaid = Maid.new()
 
-				BasicAttackRemoting.Fire:FireServer(state.direction)
+				BasicAttackRemoting.Fire:FireServer(state.direction, Workspace:GetServerTimeNow())
 				AbilityExecutor.OnFire(entry.module, state)
 			end
 
-			task.wait(0.016) -- ~60fps 간격으로 체크
+			task.wait(0.016)
 		end
 	end)
 end
@@ -703,7 +704,6 @@ function BasicAttackClient:_stopFireLoop()
 	if state then
 		state.isFiring = false
 		state.lastFireEndTime = os.clock()
-		-- hold/toggle은 화면 고정 없음 → CancelIntervalLock 호출 안 함
 	end
 
 	BasicAttackRemoting.FireEnd:FireServer()
@@ -712,7 +712,6 @@ end
 -- ─── 내부: fire 공통 처리 ────────────────────────────────────────────────────
 
 function BasicAttackClient:_onFireExecuted(entry: { def: any, module: any, animDef: any }, state: BasicAttackState)
-	-- stack의 경우 fireMaid 갱신
 	if not state.isFiring then
 		if state.fireMaid then
 			state.fireMaid:Destroy()
@@ -720,7 +719,11 @@ function BasicAttackClient:_onFireExecuted(entry: { def: any, module: any, animD
 		state.fireMaid = Maid.new()
 	end
 
-	-- coordinator에 발동 알림
+	-- teamContext의 attackerChar를 현재 캐릭터로 갱신
+	if state.teamContext then
+		state.teamContext.attackerChar = Players.LocalPlayer.Character
+	end
+
 	self._coordinator:OnFireExecuted(self)
 end
 
@@ -757,23 +760,21 @@ function BasicAttackClient:_onResourceSync(payload: { [string]: any })
 
 	if rt == "stack" then
 		if type(payload.currentStack) == "number" then
-			state.currentStack = payload.currentStack -- 서버 기준 보정
+			state.currentStack = payload.currentStack
 		end
 		if type(payload.maxStack) == "number" then
 			state.maxStack = payload.maxStack
 		end
 		if type(payload.reloadTime) == "number" then
 			state.reloadTime = payload.reloadTime
-			self._stackReloadTimer = 0 -- 보정 시 타이머 리셋 (서버 기준 재시작)
+			self._stackReloadTimer = 0
 		end
-
-		-- 소진 보정 수신 시 즉시 루프 캔슬
 		if state.currentStack <= 0 then
 			self:_stopFireLoop()
 		end
 	elseif rt == "gauge" then
 		if type(payload.currentGauge) == "number" then
-			state.currentGauge = payload.currentGauge -- 서버 기준 보정
+			state.currentGauge = payload.currentGauge
 		end
 		if type(payload.maxGauge) == "number" then
 			state.maxGauge = payload.maxGauge
@@ -790,8 +791,6 @@ function BasicAttackClient:_onResourceSync(payload: { [string]: any })
 		if type(payload.regenDelay) == "number" then
 			state.regenDelay = payload.regenDelay
 		end
-
-		-- 소진 보정 수신 시 즉시 루프 캔슬
 		if state.currentGauge <= 0 then
 			self:_stopFireLoop()
 		end
