@@ -53,11 +53,6 @@
 	fireMaid:
 	  onFire 실행 시 새 Maid 생성. CancelCombatState 시 Destroy.
 	  모듈이 GiveTask로 cleanup 등록 가능 (애니메이션 중단, 딜레이 히트 취소 등).
-
-	abilityEffect:
-	  AbilityEffect.new(worldFX)로 생성된 유틸 인스턴스.
-	  state.abilityEffect로 각 어빌리티 모듈에서 접근 가능.
-	  3D 이펙트 소환/이동/충돌 콜백 처리에 사용.
 ]=]
 
 local require = require(script.Parent.loader).load(script)
@@ -67,7 +62,6 @@ local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 
 local AbilityCoordinator = require("AbilityCoordinator")
-local AbilityEffect = require("AbilityEffect")
 local AbilityExecutor = require("AbilityExecutor")
 local AbilityTypes = require("AbilityTypes")
 local AimControllerClient = require("AimControllerClient")
@@ -82,7 +76,6 @@ local Maid = require("Maid")
 local PlayerBinderClient = require("PlayerBinderClient")
 local PlayerStateClient = require("PlayerStateClient")
 local ServiceBag = require("ServiceBag")
-local WorldFX = require("WorldFX")
 local cancellableDelay = require("cancellableDelay")
 
 -- ─── 상수 ────────────────────────────────────────────────────────────────────
@@ -149,9 +142,6 @@ export type BasicAttackState = {
 	-- 인디케이터 / 애니메이터
 	indicator: any,
 	animator: any?,
-
-	-- AbilityEffect 유틸 (WorldFX 기반 3D 이펙트 재생)
-	abilityEffect: any?,
 }
 
 -- ─── 타입 ────────────────────────────────────────────────────────────────────
@@ -170,7 +160,6 @@ export type BasicAttackClient = typeof(setmetatable(
 		_pendingFireCancel: (() -> ())?,
 		_fireLoopCancel: (() -> ())?,
 		_stackReloadTimer: number,
-		_abilityEffect: any?,
 	},
 	{} :: typeof({ __index = {} })
 ))
@@ -205,13 +194,6 @@ function BasicAttackClient.Init(self: BasicAttackClient, serviceBag: ServiceBag.
 	self._pendingFireCancel = nil
 	self._fireLoopCancel = nil
 	self._stackReloadTimer = 0
-
-	-- AbilityEffect 유틸 생성 (WorldFX 서비스에서 모델 소환)
-	local worldFX = serviceBag:GetService(WorldFX)
-	self._abilityEffect = AbilityEffect.new(worldFX)
-	self._maid:GiveTask(function()
-		self._abilityEffect:Destroy()
-	end)
 
 	local playerBinder = serviceBag:GetService(PlayerBinderClient)
 	self._maid:GiveTask(playerBinder.JointsChanged:Connect(function(joints)
@@ -357,7 +339,6 @@ function BasicAttackClient:SetEquippedAttack(attackId: string)
 		fireMaid = nil,
 		indicator = indicator,
 		animator = nil,
-		abilityEffect = self._abilityEffect,
 	}
 
 	self:_rebuildAnimator()
@@ -644,6 +625,8 @@ function BasicAttackClient:_startFireLoop(entry: { def: any, module: any, animDe
 
 	state.isFiring = true
 	self:_onFireExecuted(entry, state) -- coordinator 알림
+
+	-- FireStart 제거됨. 서버는 첫 Fire 수신 시 isFiring=true 자동 설정.
 
 	local running = true
 	self._fireLoopCancel = function()

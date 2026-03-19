@@ -24,6 +24,7 @@ serviceBag:GetService(require("TeamService"))
 serviceBag:GetService(require("HpService"))
 
 -- ─── Movement ────────────────────────────────────
+-- BasicMovementService는 ClassService를 GetService
 serviceBag:GetService(require("BasicMovementService"))
 
 -- ─── Ability System ──────────────────────────────
@@ -32,10 +33,6 @@ serviceBag:GetService(require("SkillService"))
 serviceBag:GetService(require("UltimateService"))
 serviceBag:GetService(require("AnimReplicationService"))
 serviceBag:GetService(require("PlayerStateControllerService"))
-serviceBag:GetService(require("ProjectileHitService"))
-
--- ─── WorldFX ─────────────────────────────────────
-serviceBag:GetService(require("WorldFXReplicationService"))
 
 serviceBag:Init()
 serviceBag:Start()
