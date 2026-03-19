@@ -5,19 +5,14 @@
 	투사체 판정 서비스 (서버).
 
 	동작:
-	- RegisterProjectile 수신 → 클라이언트 보고 전 검증 + ProjectileHit.register() 위임
+	- RegisterProjectile 수신 → 검증 + ProjectileHit.takePendingOnHit로 onHit callback 픽업 + register() 위임
 	- ProjectileHit 수신 → ProjectileHit.onHitReport() 위임
 	- 플레이어 퇴장 시 ProjectileHit.clearPlayer() 호출
 
-	RegisterProjectile 사전 검증:
-	- 레이트 리밋: 플레이어당 REGISTER_RATE_LIMIT_INTERVAL 당 1회
-	- origin 거리: 캐릭터 HRP로부터 MAX_ORIGIN_DISTANCE 이상이면 거부
-	- direction: 단위벡터 체크
-	- speed/hitRadius/maxRange: 양수 체크
-
-	ProjectileHit 사전 검증:
-	- 레이트 리밋: 플레이어당 HIT_RATE_LIMIT_INTERVAL 당 1회
-	- hitPosition: Vector3 타입 체크
+	어빌리티 모듈 통합 패턴:
+	  서버 onFire 모듈 → ProjectileHit.setPendingOnHit(userId, state.onHit)
+	  클라이언트 onFire 모듈 → RegisterProjectile:FireServer(id, config)
+	  여기서 둘을 연결하여 register(onHit 포함)
 ]=]
 
 local require = require(script.Parent.loader).load(script)
@@ -28,6 +23,7 @@ local Maid = require("Maid")
 local ProjectileHit = require("ProjectileHit")
 local ProjectileHitRemoting = require("ProjectileHitRemoting")
 local ServiceBag = require("ServiceBag")
+local TeamService = require("TeamService")
 
 -- ─── 상수 ────────────────────────────────────────────────────────────────────
 
@@ -50,6 +46,7 @@ export type ProjectileHitService = typeof(setmetatable(
 	{} :: {
 		_serviceBag   : ServiceBag.ServiceBag,
 		_maid         : any,
+		_teamService  : any,
 		_playerCaches : { [number]: PlayerCache },
 	},
 	{} :: typeof({ __index = {} })
@@ -65,6 +62,7 @@ function ProjectileHitService.Init(self: ProjectileHitService, serviceBag: Servi
 	assert(not (self :: any)._serviceBag, "Already initialized")
 	self._serviceBag = serviceBag
 	self._maid = Maid.new()
+	self._teamService = serviceBag:GetService(TeamService)
 	self._playerCaches = {}
 end
 
@@ -79,14 +77,12 @@ function ProjectileHitService.Start(self: ProjectileHitService)
 		self:_onPlayerRemoving(player)
 	end))
 
-	-- RegisterProjectile 수신
 	self._maid:GiveTask(
 		ProjectileHitRemoting.RegisterProjectile:Connect(function(player, projectileId, netConfig)
 			self:_onRegisterProjectile(player, projectileId, netConfig)
 		end)
 	)
 
-	-- ProjectileHit 수신
 	self._maid:GiveTask(
 		ProjectileHitRemoting.ProjectileHit:Connect(function(player, projectileId, hitPosition)
 			self:_onProjectileHit(player, projectileId, hitPosition)
@@ -115,23 +111,11 @@ end
 
 -- ─── RegisterProjectile ───────────────────────────────────────────────────────
 
---[=[
-	투사체 등록 요청 처리.
-	netConfig는 클라이언트가 보낸 최소 정보 (사전 검증할 것만 포함).
-	ProjectileHit.register에는 firedAt과 attacker/teamService를
-	포함한 완전한 config를 다른 쾼에서 서버가 직접 제공해야 합니다.
-	
-	❗ 현재는 클라이언트가 netConfig를 보내는 방식으로 동작.
-	  어빌리티 서버 모듈(onFire)에서 ProjectileHit.register()를
-	  직접 호출하는 방식으로 통합할 때까지는
-	  클라이언트가 보낸 netConfig를 기반으로 등록합니다.
-]=]
 function ProjectileHitService:_onRegisterProjectile(
 	player       : Player,
 	projectileId : unknown,
 	netConfig    : unknown
 )
-	-- 타입 검증
 	if type(projectileId) ~= "string" or #projectileId == 0 then return end
 	if type(netConfig) ~= "table" then return end
 
@@ -142,19 +126,16 @@ function ProjectileHitService:_onRegisterProjectile(
 	if type(cfg.hitRadius) ~= "number" or cfg.hitRadius <= 0 or cfg.hitRadius > MAX_HIT_RADIUS then return end
 	if type(cfg.maxRange) ~= "number" or cfg.maxRange <= 0 or cfg.maxRange > MAX_RANGE then return end
 
-	-- direction 단위벡터 체크
 	local dirMag = cfg.direction.Magnitude
 	if dirMag < 0.99 or dirMag > 1.01 then return end
 
 	local cache = self._playerCaches[player.UserId]
 	if not cache then return end
 
-	-- 레이트 리밋
 	local now = os.clock()
 	if now - cache.lastRegisterTime < REGISTER_RATE_LIMIT_INTERVAL then return end
 	cache.lastRegisterTime = now
 
-	-- origin 거리 체크
 	local char = player.Character
 	local hrp = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
 	if hrp then
@@ -165,9 +146,10 @@ function ProjectileHitService:_onRegisterProjectile(
 		end
 	end
 
-	-- attacker, firedAt은 서버가 직접 채움
-	local attacker = char
-	if not attacker then return end
+	if not char then return end
+
+	-- 서버 onFire 모듈이 저장한 onHit callback 픽업
+	local onHit = ProjectileHit.takePendingOnHit(player.UserId)
 
 	ProjectileHit.register(player, projectileId :: string, {
 		origin         = cfg.origin :: Vector3,
@@ -176,13 +158,13 @@ function ProjectileHitService:_onRegisterProjectile(
 		hitRadius      = cfg.hitRadius :: number,
 		maxRange       = cfg.maxRange :: number,
 		firedAt        = now,
-		attacker       = attacker :: Model,
+		attacker       = char :: Model,
 		latencyBuffer  = nil,
 		wallCheck      = nil,
 		maxHitCount    = nil,
-		teamService    = nil,    -- TODO: 어빌리티 모듈 통합 시 TeamService 주입
+		teamService    = self._teamService,
 		attackerPlayer = player,
-		onHit          = nil,    -- TODO: 어빌리티 모듈 통합 시 onHit 콜백 주입
+		onHit          = onHit,
 	}, nil)
 end
 
@@ -199,7 +181,6 @@ function ProjectileHitService:_onProjectileHit(
 	local cache = self._playerCaches[player.UserId]
 	if not cache then return end
 
-	-- 레이트 리밋
 	local now = os.clock()
 	if now - cache.lastHitTime < HIT_RATE_LIMIT_INTERVAL then return end
 	cache.lastHitTime = now
