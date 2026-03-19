@@ -6,7 +6,7 @@
 
 	팀 ID 규칙:
 	- 팀 인스턴스 이름: "Team1", "Team2", ... (teamIndex 기반 자동 생성)
-	- 팀 없음 (FFA): player.Neutral = true
+	- 팀 없음: player.Neutral = true
 
 	흐름:
 	  CreateTeams(count) → Teams 서비스에 Team 인스턴스 동적 생성
@@ -14,8 +14,8 @@
 	  ClearTeams() → 모든 Team 인스턴스 제거, 플레이어 Neutral 처리
 
 	IsEnemy 규칙:
-	  source or target 팀 없음 → true  (FFA는 모두 적)
-	  같은 팀               → false (팀킬 방지)
+	  source or target 팀 없음 → true
+	  같은 팀               → false
 	  다른 팀               → true
 	  (nil / self 처리는 호출 측 담당)
 
@@ -27,10 +27,14 @@
 	  player.Team은 Roblox가 자동으로 클라이언트에 복제하므로
 	  별도 RemoteEvent 불필요.
 
+	색상:
+	  팀 색상은 클라이언트(TeamClient)가 관리합니다.
+	  서버는 색상을 다루지 않습니다.
+
 	사용 예 (게임 모드 로직에서):
 	  TeamService:CreateTeams(2)
-	  TeamService:AssignTeam(playerA, 1)  -- 레드팀
-	  TeamService:AssignTeam(playerB, 2)  -- 블루팀
+	  TeamService:AssignTeam(playerA, 1)  -- 팀1
+	  TeamService:AssignTeam(playerB, 2)  -- 팀2
 ]=]
 
 local require = require(script.Parent.loader).load(script)
@@ -67,17 +71,6 @@ local TeamService = {}
 TeamService.ServiceName = "TeamService"
 TeamService.__index = TeamService
 
-local TEAM_COLORS: { BrickColor } = {
-	BrickColor.new("Bright red"),
-	BrickColor.new("Bright blue"),
-	BrickColor.new("Bright green"),
-	BrickColor.new("Bright yellow"),
-	BrickColor.new("Hot pink"),
-	BrickColor.new("Cyan"),
-	BrickColor.new("Lime green"),
-	BrickColor.new("Orange"),
-}
-
 function TeamService.Init(self: TeamService, serviceBag: ServiceBag.ServiceBag): ()
 	assert(not (self :: any)._serviceBag, "Already initialized")
 	self._serviceBag = serviceBag
@@ -96,7 +89,6 @@ function TeamService:CreateTeams(count: number)
 	for i = 1, count do
 		local team = Instance.new("Team")
 		team.Name = "Team" .. i
-		team.TeamColor = TEAM_COLORS[((i - 1) % #TEAM_COLORS) + 1]
 		team.AutoAssignable = false
 		team.Parent = Teams
 		self._teams[i] = team
@@ -153,13 +145,11 @@ end
 	source와 target이 서로 적 관계인지 반환합니다.
 
 	규칙:
-	  source or target 팀 없음 → true  (FFA)
+	  source or target 팀 없음 → true
 	  같은 팀               → false
 	  다른 팀               → true
 
 	nil / self 케이스는 호출 측에서 처리하세요.
-	  (HpService: source ~= nil and source ~= target 가드 후 호출)
-	  (classifyHits: char ~= attacker 가드 후 호출)
 
 	@param source Player
 	@param target Player
@@ -196,7 +186,7 @@ end
 
 --[=[
 	victims 목록에서 source의 적 캐릭터만 반환합니다.
-	IsEnemy 규칙을 따릅니다 (FFA 포함).
+	IsEnemy 규칙을 따릅니다.
 	source 자신은 포함하지 않습니다.
 
 	@param source Player
