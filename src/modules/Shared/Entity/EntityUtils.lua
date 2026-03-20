@@ -78,9 +78,13 @@ end
 
 local function getAllBaseParts(model: any): { BasePart }
 	local parts: { BasePart } = {}
-	if typeof(model) ~= "Instance" then return parts end
+	if typeof(model) ~= "Instance" then
+		return parts
+	end
 	for _, d in (model :: Instance):GetDescendants() do
-		if d:IsA("BasePart") then table.insert(parts, d :: BasePart) end
+		if d:IsA("BasePart") then
+			table.insert(parts, d :: BasePart)
+		end
 	end
 	return parts
 end
@@ -92,10 +96,14 @@ local function setTransparency(model: any, t: number)
 end
 
 local function setSize(model: any, scale: Vector3)
-	if typeof(model) ~= "Instance" then return end
+	if typeof(model) ~= "Instance" then
+		return
+	end
 	local m = model :: any
 	local primary = m.PrimaryPart
-	if not primary then return end
+	if not primary then
+		return
+	end
 	local baseSize: Vector3 = m._baseSize or primary.Size
 	m._baseSize = baseSize
 	primary.Size = Vector3.new(baseSize.X * scale.X, baseSize.Y * scale.Y, baseSize.Z * scale.Z)
@@ -104,27 +112,31 @@ end
 -- ─── Move ────────────────────────────────────────────────────────────────────
 
 export type LinearConfig = {
-	speed       : number,
-	maxRange    : number,
-	randomAngle : number?,
-	delay       : number?,
+	speed: number,
+	maxRange: number,
+	randomAngle: number?,
+	delay: number?,
 }
 
 function EntityUtils.Linear(config: LinearConfig)
 	return function(dt: number, handle: any, _params: { [string]: any }?): boolean
-		local h       = handle :: any
+		local h = handle :: any
 		local elapsed = h._moveElapsed or 0
-		local delay   = config.delay or 0
-		if elapsed < delay then return true end
+		local delay = config.delay or 0
+		if elapsed < delay then
+			return true
+		end
 
 		if not h._moveDir then
-			local cf      = h.part and h.part:GetPivot() or CFrame.identity
+			local cf = h.part and h.part:GetPivot() or CFrame.identity
 			local baseDir = cf.LookVector
 			if config.randomAngle and config.randomAngle > 0 then
 				local angle = math.rad(math.random() * config.randomAngle)
-				local phi   = math.random() * math.pi * 2
-				local perp  = baseDir:Cross(Vector3.new(0, 1, 0))
-				if perp.Magnitude < 0.001 then perp = baseDir:Cross(Vector3.new(1, 0, 0)) end
+				local phi = math.random() * math.pi * 2
+				local perp = baseDir:Cross(Vector3.new(0, 1, 0))
+				if perp.Magnitude < 0.001 then
+					perp = baseDir:Cross(Vector3.new(1, 0, 0))
+				end
 				perp = perp.Unit
 				local rotated = baseDir * math.cos(angle)
 					+ perp * math.sin(angle) * math.cos(phi)
@@ -138,50 +150,54 @@ function EntityUtils.Linear(config: LinearConfig)
 		end
 
 		local activeElapsed = elapsed - delay
-		local dist          = config.speed * activeElapsed
-		if dist >= config.maxRange then return false end
+		local dist = config.speed * activeElapsed
+		if dist >= config.maxRange then
+			return false
+		end
 
-		local dir: Vector3    = h._moveDir
+		local dir: Vector3 = h._moveDir
 		local origin: Vector3 = h._moveOrigin
-		local currentPos      = origin + dir * dist
+		local currentPos = origin + dir * dist
 		h.part:PivotTo(CFrame.new(currentPos, currentPos + dir))
 		return true
 	end
 end
 
 export type ArcConfig = {
-	distance : number,
-	height   : number,
-	speed    : number,
-	delay    : number?,
+	distance: number,
+	height: number,
+	speed: number,
+	delay: number?,
 }
 
 function EntityUtils.Arc(config: ArcConfig)
 	return function(dt: number, handle: any, _params: { [string]: any }?): boolean
-		local h       = handle :: any
+		local h = handle :: any
 		local elapsed = h._moveElapsed or 0
-		local delay   = config.delay or 0
-		if elapsed < delay then return true end
+		local delay = config.delay or 0
+		if elapsed < delay then
+			return true
+		end
 
 		if not h._moveDir or not h._moveOrigin then
-			local cf   = h.part and h.part:GetPivot() or CFrame.identity
-			h._moveDir    = cf.LookVector
+			local cf = h.part and h.part:GetPivot() or CFrame.identity
+			h._moveDir = cf.LookVector
 			h._moveOrigin = cf.Position
 		end
 
 		local activeElapsed = elapsed - delay
-		local totalTime     = config.distance / config.speed
-		local t             = math.clamp(activeElapsed / totalTime, 0, 1)
+		local totalTime = config.distance / config.speed
+		local t = math.clamp(activeElapsed / totalTime, 0, 1)
 
 		local origin: Vector3 = h._moveOrigin
-		local dir: Vector3    = h._moveDir
-		local horizontal      = origin + dir * (config.distance * t)
-		local verticalY       = 4 * config.height * t * (1 - t)
-		local newPos          = Vector3.new(horizontal.X, origin.Y + verticalY, horizontal.Z)
+		local dir: Vector3 = h._moveDir
+		local horizontal = origin + dir * (config.distance * t)
+		local verticalY = 4 * config.height * t * (1 - t)
+		local newPos = Vector3.new(horizontal.X, origin.Y + verticalY, horizontal.Z)
 
-		local nextT   = math.min(t + 0.01, 1)
-		local nextH   = origin + dir * (config.distance * nextT)
-		local nextVY  = 4 * config.height * nextT * (1 - nextT)
+		local nextT = math.min(t + 0.01, 1)
+		local nextH = origin + dir * (config.distance * nextT)
+		local nextVY = 4 * config.height * nextT * (1 - nextT)
 		local nextPos = Vector3.new(nextH.X, origin.Y + nextVY, nextH.Z)
 		local lookDir = nextPos - newPos
 		if lookDir.Magnitude > 0.001 then
@@ -195,30 +211,32 @@ function EntityUtils.Arc(config: ArcConfig)
 end
 
 export type SweepConfig = {
-	range       : number,
-	angleMin    : number,
-	angleMax    : number,
-	duration    : number,
-	randomAngle : number?,
-	delay       : number?,
+	range: number,
+	angleMin: number,
+	angleMax: number,
+	duration: number,
+	randomAngle: number?,
+	delay: number?,
 }
 
 function EntityUtils.Sweep(config: SweepConfig)
 	return function(dt: number, handle: any, _params: { [string]: any }?): boolean
-		local h       = handle :: any
+		local h = handle :: any
 		local elapsed = h._moveElapsed or 0
-		local delay   = config.delay or 0
-		if elapsed < delay then return true end
+		local delay = config.delay or 0
+		if elapsed < delay then
+			return true
+		end
 
 		if not h._sweepBase then
-			local cf      = h.part and h.part:GetPivot() or CFrame.identity
+			local cf = h.part and h.part:GetPivot() or CFrame.identity
 			h._moveOrigin = cf.Position
-			h._sweepBase  = cf
+			h._sweepBase = cf
 		end
 
 		local activeElapsed = elapsed - delay
-		local t             = math.clamp(activeElapsed / config.duration, 0, 1)
-		local angle         = math.rad(lerpNumber(config.angleMin, config.angleMax, t))
+		local t = math.clamp(activeElapsed / config.duration, 0, 1)
+		local angle = math.rad(lerpNumber(config.angleMin, config.angleMax, t))
 
 		local baseCF: CFrame = h._sweepBase
 		local swept = baseCF * CFrame.Angles(0, angle, 0) * CFrame.new(0, 0, -config.range)
@@ -230,29 +248,29 @@ end
 -- ─── Detect ──────────────────────────────────────────────────────────────────
 
 export type GrowConfig = {
-	from     : Vector3,
-	to       : Vector3,
-	duration : number,
-	mode     : ("linear" | "spring")?,
-	speed    : number,
-	damper   : number?,
+	from: Vector3,
+	to: Vector3,
+	duration: number,
+	mode: ("linear" | "spring")?,
+	speed: number,
+	damper: number?,
 }
 
 export type BoxConfig = {
-	size         : Vector3,
-	offset       : CFrame?,
-	activateAt   : number?,
-	deactivateAt : number?,
-	sizeGrow     : GrowConfig?,
-	relations    : { string }?,
+	size: Vector3,
+	offset: CFrame?,
+	activateAt: number?,
+	deactivateAt: number?,
+	sizeGrow: GrowConfig?,
+	relations: { string }?,
 }
 
 export type SphereConfig = {
-	radius       : number,
-	offset       : CFrame?,
-	activateAt   : number?,
-	deactivateAt : number?,
-	relations    : { string }?,
+	radius: number,
+	offset: CFrame?,
+	activateAt: number?,
+	deactivateAt: number?,
+	relations: { string }?,
 }
 
 function EntityUtils.Box(config: BoxConfig): BoxConfig
@@ -289,7 +307,9 @@ end
 function EntityUtils.Despawn(config: { delay: number? }?)
 	local delay = config and config.delay or 0
 	return function(handle: any, _hitInfo: any?)
-		if not handle or not handle.IsAlive or not handle:IsAlive() then return end
+		if not handle or not handle.IsAlive or not handle:IsAlive() then
+			return
+		end
 		if delay and delay > 0 then
 			local elapsed = 0
 			local conn: RBXScriptConnection
@@ -297,7 +317,9 @@ function EntityUtils.Despawn(config: { delay: number? }?)
 				elapsed += dt
 				if elapsed >= delay then
 					conn:Disconnect()
-					if handle:IsAlive() then handle:_destroyNoMiss() end
+					if handle:IsAlive() then
+						handle:_destroyNoMiss()
+					end
 				end
 			end)
 			handle._maid:GiveTask(conn)
@@ -317,7 +339,9 @@ end
 ]=]
 function EntityUtils.AutoDespawn(duration: number)
 	return function(handle: any)
-		if not handle or not handle._maid then return end
+		if not handle or not handle._maid then
+			return
+		end
 		local elapsed = 0
 		local conn: RBXScriptConnection
 		conn = RunService.Heartbeat:Connect(function(dt)
@@ -343,7 +367,9 @@ end
 
 function EntityUtils.StopMove()
 	return function(handle: any, _hitInfo: any?)
-		if handle then handle._moveStopped = true end
+		if handle then
+			handle._moveStopped = true
+		end
 	end
 end
 
@@ -352,9 +378,9 @@ function EntityUtils.SpawnEntity(defModule: string, defName: string, options: { 
 		local ep = getEntityPlayer()
 		local spawnCF = handle.part and handle.part:GetPivot() or CFrame.identity
 		local opts: { [string]: any } = options and table.clone(options) or {}
-		opts.origin           = opts.origin or spawnCF
+		opts.origin = opts.origin or spawnCF
 		opts.attackerPlayerId = opts.attackerPlayerId or handle.ownerId
-		opts.color            = opts.color or handle._spawnColor
+		opts.color = opts.color or handle._spawnColor
 		ep.Play(defModule, defName, opts)
 	end
 end
@@ -364,9 +390,9 @@ function EntityUtils.FireEntity(defModule: string, defName: string, options: { [
 		local ep = getEntityPlayer()
 		local spawnCF = handle.part and handle.part:GetPivot() or CFrame.identity
 		local opts: { [string]: any } = options and table.clone(options) or {}
-		opts.origin           = opts.origin or spawnCF
+		opts.origin = opts.origin or spawnCF
 		opts.attackerPlayerId = opts.attackerPlayerId or handle.ownerId
-		opts.color            = opts.color or handle._spawnColor
+		opts.color = opts.color or handle._spawnColor
 		ep.Play(defModule, defName, opts)
 	end
 end
@@ -374,15 +400,17 @@ end
 -- ─── Transform ───────────────────────────────────────────────────────────────
 
 export type RotateToConfig = {
-	axis  : Vector3,
-	speed : number,
-	delay : number?,
+	axis: Vector3,
+	speed: number,
+	delay: number?,
 }
 
 -- RotateTo는 매 프레임 delta를 누적하는 stateless 연산이므로 클로저 공유 안전
 function EntityUtils.RotateTo(config: RotateToConfig)
 	return function(model: any, dt: number, _params: { [string]: any }?, _handle: any?)
-		if typeof(model) ~= "Instance" then return end
+		if typeof(model) ~= "Instance" then
+			return
+		end
 		local m = model :: any
 		local delta = math.rad(config.speed * dt)
 		m:PivotTo(m:GetPivot() * CFrame.fromAxisAngle(config.axis.Unit, delta))
@@ -390,16 +418,20 @@ function EntityUtils.RotateTo(config: RotateToConfig)
 end
 
 export type RandomRotateToConfig = {
-	maxAngle : number,
-	duration : number?,
-	delay    : number?,
+	maxAngle: number,
+	duration: number?,
+	delay: number?,
 }
 
 function EntityUtils.RandomRotateTo(config: RandomRotateToConfig)
 	local sk = newStateKey()
 	return function(model: any, dt: number, _params: { [string]: any }?, handle: any?)
-		if typeof(model) ~= "Instance" then return end
-		if not handle then return end
+		if typeof(model) ~= "Instance" then
+			return
+		end
+		if not handle then
+			return
+		end
 		-- handle에 per-instance 상태 저장
 		local s: any = handle[sk]
 		if not s then
@@ -408,7 +440,9 @@ function EntityUtils.RandomRotateTo(config: RandomRotateToConfig)
 		end
 		s.totalElapsed += dt
 		local delay = config.delay or 0
-		if s.totalElapsed < delay then return end
+		if s.totalElapsed < delay then
+			return
+		end
 		if not s.initialized then
 			s.initialized = true
 			s.targetAngle = (math.random() * 2 - 1) * config.maxAngle
@@ -421,34 +455,40 @@ function EntityUtils.RandomRotateTo(config: RandomRotateToConfig)
 end
 
 export type ScaleToConfig = {
-	from     : Vector3?,
-	target   : Vector3,
-	duration : number?,
-	mode     : ("linear" | "spring")?,
-	speed    : number,
-	damper   : number?,
-	delay    : number?,
+	from: Vector3?,
+	target: Vector3,
+	duration: number?,
+	mode: ("linear" | "spring")?,
+	speed: number,
+	damper: number?,
+	delay: number?,
 }
 
 function EntityUtils.ScaleTo(config: ScaleToConfig)
 	local sk = newStateKey()
 	return function(model: any, dt: number, _params: { [string]: any }?, handle: any?)
-		if not handle then return end
+		if not handle then
+			return
+		end
 		-- handle에 per-instance 상태 저장
 		local s: any = handle[sk]
 		if not s then
 			s = {
-				initialized  = false,
+				initialized = false,
 				currentScale = config.from or Vector3.new(1, 1, 1),
-				velX = 0, velY = 0, velZ = 0,
-				rotElapsed   = 0,
+				velX = 0,
+				velY = 0,
+				velZ = 0,
+				rotElapsed = 0,
 				totalElapsed = 0,
 			}
 			handle[sk] = s
 		end
 		s.totalElapsed += dt
 		local delay = config.delay or 0
-		if s.totalElapsed < delay then return end
+		if s.totalElapsed < delay then
+			return
+		end
 		if not s.initialized then
 			s.initialized = true
 			s.currentScale = config.from or Vector3.new(1, 1, 1)
@@ -456,7 +496,7 @@ function EntityUtils.ScaleTo(config: ScaleToConfig)
 		s.rotElapsed += dt
 		if config.mode == "spring" then
 			local damper = config.damper or 1
-			local sp     = config.speed
+			local sp = config.speed
 			local function step(cur: number, vel: number, tgt: number): (number, number)
 				local acc = -sp * sp * (cur - tgt) - 2 * damper * sp * vel
 				return cur + (vel + acc * dt) * dt, vel + acc * dt
@@ -467,7 +507,7 @@ function EntityUtils.ScaleTo(config: ScaleToConfig)
 			s.currentScale = Vector3.new(nx, ny, nz)
 			s.velX, s.velY, s.velZ = vx, vy, vz
 		else
-			local t    = config.duration and math.clamp(s.rotElapsed / config.duration, 0, 1) or 1
+			local t = config.duration and math.clamp(s.rotElapsed / config.duration, 0, 1) or 1
 			local from = config.from or Vector3.new(1, 1, 1)
 			s.currentScale = from:Lerp(config.target, t)
 		end
@@ -476,19 +516,21 @@ function EntityUtils.ScaleTo(config: ScaleToConfig)
 end
 
 export type FadeToConfig = {
-	from     : number,
-	to       : number,
-	duration : number?,
-	mode     : ("linear" | "spring")?,
-	speed    : number,
-	damper   : number?,
-	delay    : number?,
+	from: number,
+	to: number,
+	duration: number?,
+	mode: ("linear" | "spring")?,
+	speed: number,
+	damper: number?,
+	delay: number?,
 }
 
 function EntityUtils.FadeTo(config: FadeToConfig)
 	local sk = newStateKey()
 	return function(model: any, dt: number, _params: { [string]: any }?, handle: any?)
-		if not handle then return end
+		if not handle then
+			return
+		end
 		-- handle에 per-instance 상태 저장
 		local s: any = handle[sk]
 		if not s then
@@ -497,59 +539,62 @@ function EntityUtils.FadeTo(config: FadeToConfig)
 		end
 		s.totalElapsed += dt
 		local delay = config.delay or 0
-		if s.totalElapsed < delay then return end
+		if s.totalElapsed < delay then
+			return
+		end
 		s.rotElapsed += dt
 		if config.mode == "spring" then
 			local damper = config.damper or 1
-			local acc    = -config.speed * config.speed * (s.current - config.to)
-				- 2 * damper * config.speed * s.velocity
+			local acc = -config.speed * config.speed * (s.current - config.to) - 2 * damper * config.speed * s.velocity
 			s.velocity += acc * dt
-			s.current  += s.velocity * dt
+			s.current += s.velocity * dt
 		else
-			local t = config.duration
-				and math.clamp(s.rotElapsed / config.duration, 0, 1)
-				or 1
+			local t = config.duration and math.clamp(s.rotElapsed / config.duration, 0, 1) or 1
 			s.current = lerpNumber(config.from, config.to, t)
 		end
-		s.current = math.clamp(
-			s.current,
-			math.min(config.from, config.to),
-			math.max(config.from, config.to)
-		)
+		s.current = math.clamp(s.current, math.min(config.from, config.to), math.max(config.from, config.to))
 		setTransparency(model, s.current)
 	end
 end
 
 export type MoveToConfig = {
-	offset   : Vector3,
-	duration : number?,
-	mode     : ("linear" | "spring")?,
-	speed    : number,
-	damper   : number?,
-	delay    : number?,
+	offset: Vector3,
+	duration: number?,
+	mode: ("linear" | "spring")?,
+	speed: number,
+	damper: number?,
+	delay: number?,
 }
 
 function EntityUtils.MoveTo(config: MoveToConfig)
 	local sk = newStateKey()
 	return function(model: any, dt: number, _params: { [string]: any }?, handle: any?)
-		if typeof(model) ~= "Instance" then return end
-		if not handle then return end
+		if typeof(model) ~= "Instance" then
+			return
+		end
+		if not handle then
+			return
+		end
 		-- handle에 per-instance 상태 저장
 		local s: any = handle[sk]
 		if not s then
 			s = {
-				initialized   = false,
-				origin        = CFrame.identity,
-				velX = 0, velY = 0, velZ = 0,
+				initialized = false,
+				origin = CFrame.identity,
+				velX = 0,
+				velY = 0,
+				velZ = 0,
 				currentOffset = Vector3.zero,
-				rotElapsed    = 0,
-				totalElapsed  = 0,
+				rotElapsed = 0,
+				totalElapsed = 0,
 			}
 			handle[sk] = s
 		end
 		s.totalElapsed += dt
 		local delay = config.delay or 0
-		if s.totalElapsed < delay then return end
+		if s.totalElapsed < delay then
+			return
+		end
 		if not s.initialized then
 			s.initialized = true
 			s.origin = (model :: any):GetPivot()
@@ -557,7 +602,7 @@ function EntityUtils.MoveTo(config: MoveToConfig)
 		s.rotElapsed += dt
 		if config.mode == "spring" then
 			local damper = config.damper or 1
-			local sp     = config.speed
+			local sp = config.speed
 			local function step(cur: number, vel: number, tgt: number): (number, number)
 				local acc = -sp * sp * (cur - tgt) - 2 * damper * sp * vel
 				return cur + (vel + acc * dt) * dt, vel + acc * dt
@@ -568,41 +613,45 @@ function EntityUtils.MoveTo(config: MoveToConfig)
 			s.currentOffset = Vector3.new(nx, ny, nz)
 			s.velX, s.velY, s.velZ = vx, vy, vz
 		else
-			local t = config.duration
-				and math.clamp(s.rotElapsed / config.duration, 0, 1)
-				or 1
-			s.currentOffset = Vector3.zero:Lerp(config.offset, t)
+			local t = config.duration and math.clamp(s.rotElapsed / config.duration, 0, 1) or 1
+			s.currentOffset = Vector3.new(0, 0, 0):Lerp(config.offset, t)
 		end
-		;(model :: any):PivotTo(s.origin * CFrame.new(s.currentOffset))
+		(model :: any):PivotTo(s.origin * CFrame.new(s.currentOffset))
 	end
 end
 
 export type RandomOffsetToConfig = {
-	range    : Vector3,
-	duration : number?,
-	delay    : number?,
+	range: Vector3,
+	duration: number?,
+	delay: number?,
 }
 
 function EntityUtils.RandomOffsetTo(config: RandomOffsetToConfig)
 	local sk = newStateKey()
 	return function(model: any, dt: number, _params: { [string]: any }?, handle: any?)
-		if typeof(model) ~= "Instance" then return end
-		if not handle then return end
+		if typeof(model) ~= "Instance" then
+			return
+		end
+		if not handle then
+			return
+		end
 		-- handle에 per-instance 상태 저장
 		local s: any = handle[sk]
 		if not s then
 			s = {
-				initialized  = false,
+				initialized = false,
 				targetOffset = Vector3.zero,
-				origin       = CFrame.identity,
-				rotElapsed   = 0,
+				origin = CFrame.identity,
+				rotElapsed = 0,
 				totalElapsed = 0,
 			}
 			handle[sk] = s
 		end
 		s.totalElapsed += dt
 		local delay = config.delay or 0
-		if s.totalElapsed < delay then return end
+		if s.totalElapsed < delay then
+			return
+		end
 		if not s.initialized then
 			s.initialized = true
 			s.origin = (model :: any):GetPivot()
@@ -613,11 +662,9 @@ function EntityUtils.RandomOffsetTo(config: RandomOffsetToConfig)
 			)
 		end
 		s.rotElapsed += dt
-		local t = config.duration
-			and math.clamp(s.rotElapsed / config.duration, 0, 1)
-			or 1
-		local currentOffset = Vector3.zero:Lerp(s.targetOffset, t)
-		;(model :: any):PivotTo(s.origin * CFrame.new(currentOffset))
+		local t = config.duration and math.clamp(s.rotElapsed / config.duration, 0, 1) or 1
+		local currentOffset = Vector3.new(0, 0, 0):Lerp(s.targetOffset, t);
+		(model :: any):PivotTo(s.origin * CFrame.new(currentOffset))
 	end
 end
 
@@ -639,7 +686,9 @@ end
 -- handle을 각 콜백에 전달하여 per-instance 상태가 정상 동작하도록 함
 function EntityUtils.TransformSequence(callbacks: { (any, number, { [string]: any }?, any?) -> () })
 	return function(model: any, dt: number, params: { [string]: any }?, handle: any?)
-		if _stopped[model] then return end
+		if _stopped[model] then
+			return
+		end
 		for _, cb in callbacks do
 			cb(model, dt, params, handle)
 		end
