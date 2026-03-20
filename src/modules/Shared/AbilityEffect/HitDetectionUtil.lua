@@ -4,32 +4,9 @@
 
 	박스 판정 유틸. (Shared)
 	클라이언트 AbilityEffect, 서버 ProjectileHit 공용.
-
-	사용법:
-	  hitDetect = HitDetectionUtil.Box({
-	      size         = Vector3.new(3, 3, 3),
-	      offset       = CFrame.new(0, 0, -1.5),
-	      activateAt   = 0.1,
-	      deactivateAt = 0.5,
-	      relations    = { "enemy" },
-	      sizeGrow     = { from = Vector3.new(1,3,1), to = Vector3.new(6,3,6), duration = 0.3, mode = "linear", speed = 1 },
-	  })
-
-	  hitDetect = function(elapsed, handle, params)
-	      return HitDetectionUtil.Box({ size = Vector3.new(elapsed * 2, 3, elapsed * 2) })
-	  end
-
-	relations:
-	  nil            → { "enemy" } 기본값
-	  { "enemy" }    → 적만
-	  { "team" }     → 아군만 (힐 스킬 등)
-	  { "self" }     → 자기 자신만
-	  { "enemy", "team", "self" } → 전체
 ]=]
 
 local HitDetectionUtil = {}
-
--- ─── 타입 ────────────────────────────────────────────────────────────────────
 
 export type HitRelation = "enemy" | "self" | "team" | "wall"
 
@@ -59,8 +36,6 @@ export type BoxConfig = {
 
 export type HitDetectFunction = BoxConfig | (elapsed: number, handle: any, params: { [string]: any }?) -> BoxConfig?
 
--- ─── 내부 유틸 ───────────────────────────────────────────────────────────────
-
 local function lerpVec3(a: Vector3, b: Vector3, t: number): Vector3
 	return a:Lerp(b, t)
 end
@@ -76,13 +51,9 @@ local function resolveSize(config: BoxConfig, elapsed: number): Vector3
 	return lerpVec3(grow.from, grow.to, t)
 end
 
--- ─── Box ─────────────────────────────────────────────────────────────────────
-
 function HitDetectionUtil.Box(config: BoxConfig): BoxConfig
 	return config
 end
-
--- ─── 판정 실행 ────────────────────────────────────────────────────────────────
 
 function HitDetectionUtil.Detect(
 	hitDetect : HitDetectFunction?,
@@ -133,7 +104,8 @@ function HitDetectionUtil.Detect(
 		local char = part:FindFirstAncestorOfClass("Model")
 		if not char or seen[char] then continue end
 		local humanoid = char:FindFirstChildOfClass("Humanoid")
-		if not humanoid or humanoid.Health < 0 then continue end
+		-- ✅ <= 0: Roblox에서 Health는 0이 최솟값 (음수 불가). < 0이면 시체도 통과되는 버그 발생.
+		if not humanoid or humanoid.Health <= 0 then continue end
 		seen[char] = true
 
 		local relation: HitRelation = "enemy"
