@@ -56,7 +56,7 @@ return {
 			local aimRatio = params and params.aimRatio or 0
 			local size = BASE_HIT_SIZE + (MAX_HIT_SIZE - BASE_HIT_SIZE) * aimRatio
 			return AbilityEffectHitDetectionUtil.Box({
-				size = Vector3.new(size, size, size),
+				size = Vector3.new(4, 4, 4),
 			})
 		end,
 

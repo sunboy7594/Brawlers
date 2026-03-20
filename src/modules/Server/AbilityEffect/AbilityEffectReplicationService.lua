@@ -1,69 +1,49 @@
 --!strict
 --[=[
-	@class AbilityEffectReplicationClient
+	@class AbilityEffectReplicationService
 ]=]
 
 local require = require(script.Parent.loader).load(script)
 
 local Players = game:GetService("Players")
-local Workspace = game:GetService("Workspace")
 
-local AbilityEffectPlayer = require("AbilityEffectPlayer")
 local AbilityEffectReplicationRemoting = require("AbilityEffectReplicationRemoting")
 local Maid = require("Maid")
 local ServiceBag = require("ServiceBag")
-local TeamClient = require("TeamClient")
 
-local AbilityEffectReplicationClient = {}
-AbilityEffectReplicationClient.ServiceName = "AbilityEffectReplicationClient"
-AbilityEffectReplicationClient.__index = AbilityEffectReplicationClient
+local AbilityEffectReplicationService = {}
+AbilityEffectReplicationService.ServiceName = "AbilityEffectReplicationService"
+AbilityEffectReplicationService.__index = AbilityEffectReplicationService
 
-function AbilityEffectReplicationClient.Init(self: any, serviceBag: any)
+function AbilityEffectReplicationService.Init(self: any, serviceBag: any)
 	self._maid = Maid.new()
-	self._teamClient = serviceBag:GetService(TeamClient)
 end
 
-function AbilityEffectReplicationClient.Start(self: any)
+function AbilityEffectReplicationService.Start(self: any)
 	self._maid:GiveTask(
-		AbilityEffectReplicationRemoting.EffectBroadcast:Connect(
-			function(userId: number, defModuleName: string, effectName: string, origin: CFrame, sentAt: number)
-				if userId == Players.LocalPlayer.UserId then
-					return
+		AbilityEffectReplicationRemoting.EffectFired:Connect(
+			function(player: Player, defModuleName: string, effectName: string, origin: CFrame, sentAt: number)
+				-- 발사자 제외 모든 클라이언트에 포워딩
+				for _, other in Players:GetPlayers() do
+					if other == player then
+						continue
+					end
+					AbilityEffectReplicationRemoting.EffectBroadcast:FireClient(
+						other,
+						player.UserId,
+						defModuleName,
+						effectName,
+						origin,
+						sentAt
+					)
 				end
-
-				local elapsed = math.max(0, Workspace:GetServerTimeNow() - sentAt)
-
-				local player = Players:GetPlayerByUserId(userId)
-				local color: Color3? = nil
-				if player and self._teamClient then
-					color = self._teamClient:GetRelationColor(player)
-				end
-
-				local tc = self._teamClient
-				local teamContext = {
-					attackerChar = player and player.Character,
-					attackerPlayer = player,
-					color = color,
-					isEnemy = function(a: Player, b: Player): boolean
-						return tc:IsEnemy(a, b)
-					end,
-				}
-
-				AbilityEffectPlayer.Play(defModuleName, effectName, {
-					origin = origin,
-					color = color,
-					isOwner = false,
-					userId = userId,
-					firedAt = sentAt,
-					teamContext = teamContext,
-				})
 			end
 		)
 	)
 end
 
-function AbilityEffectReplicationClient.Destroy(self: any)
+function AbilityEffectReplicationService.Destroy(self: any)
 	self._maid:Destroy()
 end
 
-return AbilityEffectReplicationClient
+return AbilityEffectReplicationService
