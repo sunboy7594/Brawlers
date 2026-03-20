@@ -2,38 +2,28 @@
 --[=[
 	@class Tank_CannonTestEffectDef
 
-	탱크 캐논 기본공격 이펙트 정의. (Shared)
+	탱크 캐논 기본공격 이펙트 정의. (Shared / 클라이언트 연출 전용)
 
 	ReplicatedStorage.AbilityEffects.CannonBall 모델 필요.
 
-	투사체 흐름:
-	  Linear 직선 이동 → Box 판정
-	  히트: SpawnEffect(Explosion) → Despawn
-	  미스: FadeOut
-
-	params 지원:
-	  params.aimRatio (0~1): effectiveAimTime에 비례해 판정 크기 확대
-
-	AbilityEffectColorUtils:
-	  클라이언트 전용 모듈이므로 서버에서는 nil. 랜더링에만 사용됨.
+	서버 히트판정은 Tank_CannonTestServer에서 ProjectileHit.fire()로 독립 처리.
+	이 파일은 클라이언트 연출(AbilityEffectPlayer)용으로만 사용.
 ]=]
 
 local require = require(script.Parent.loader).load(script)
 
 local RunService = game:GetService("RunService")
 
-local AbilityEffectHitDetectionUtil = require("AbilityEffectHitDetectionUtil")
-local AbilityEffectHitOrMissUtil = require("AbilityEffectHitOrMissUtil")
-local AbilityEffectMover = require("AbilityEffectMover")
-local AbilityEffectTransformUtil = require("AbilityEffectTransformUtil")
+local HitDetectionUtil = require("HitDetectionUtil")
+local HitOrMissUtil    = require("HitOrMissUtil")
+local MoverUtil        = require("MoverUtil")
+local TransformUtil    = require("TransformUtil")
 
 -- 클라이언트 전용: 서버에서는 nil 반환
 local AbilityEffectColorUtils = not RunService:IsServer() and require("AbilityEffectColorUtils") or nil
 
 local PROJECTILE_SPEED = 40
-local MAX_RANGE = 100
-local BASE_HIT_SIZE = 3
-local MAX_HIT_SIZE = 6
+local MAX_RANGE        = 100
 
 return {
 	models = { "CannonBall", "CannonExplosion" },
@@ -41,59 +31,53 @@ return {
 	CannonBall = {
 		model = "CannonBall",
 
-		move = AbilityEffectMover.Linear({
-			speed = PROJECTILE_SPEED,
+		move = MoverUtil.Linear({
+			speed    = PROJECTILE_SPEED,
 			maxRange = MAX_RANGE,
-			mode = "linear",
+			mode     = "linear",
 		}),
 
-		onMove = AbilityEffectTransformUtil.Rotate({
-			axis = Vector3.new(1, 0, 0),
+		onMove = TransformUtil.Rotate({
+			axis  = Vector3.new(1, 0, 0),
 			speed = 360,
 		}),
 
-		hitDetect = function(elapsed: number, _handle: any, params: { [string]: any }?)
-			local aimRatio = params and params.aimRatio or 0
-			local size = BASE_HIT_SIZE + (MAX_HIT_SIZE - BASE_HIT_SIZE) * aimRatio
-			return AbilityEffectHitDetectionUtil.Box({
-				size = Vector3.new(4, 4, 4),
-			})
-		end,
+		-- 클라이언트 연출용 hitDetect
+		hitDetect = HitDetectionUtil.Box({ size = Vector3.new(4, 4, 4) }),
 
-		onHit = AbilityEffectHitOrMissUtil.Sequence({
-			AbilityEffectHitOrMissUtil.SpawnEffect("Tank_CannonTestEffectDef", "CannonExplosion"),
-			AbilityEffectHitOrMissUtil.Despawn(),
+		onHit = HitOrMissUtil.Sequence({
+			HitOrMissUtil.SpawnEffect("Tank_CannonTestEffectDef", "CannonExplosion"),
+			HitOrMissUtil.Despawn(),
 		}),
 
-		onMiss = AbilityEffectHitOrMissUtil.FadeOut({ duration = 0.3 }),
+		onMiss = HitOrMissUtil.FadeOut({ duration = 0.3 }),
 
-		-- 서버에서는 nil, 클라이언트에서만 Highlight 적용
 		colorFilter = AbilityEffectColorUtils and AbilityEffectColorUtils.Highlight(0.5) or nil,
 	},
 
 	CannonExplosion = {
 		model = "CannonExplosion",
-		move = nil,
+		move  = nil,
 
-		onMove = AbilityEffectTransformUtil.Sequence({
-			AbilityEffectTransformUtil.ScaleTo({
-				from = Vector3.one,
-				target = Vector3.new(2.5, 2.5, 2.5),
+		onMove = TransformUtil.Sequence({
+			TransformUtil.ScaleTo({
+				from     = Vector3.new(1, 1, 1),
+				target   = Vector3.new(2.5, 2.5, 2.5),
 				duration = 0.2,
-				mode = "spring",
-				speed = 20,
-				damper = 0.7,
+				mode     = "spring",
+				speed    = 20,
+				damper   = 0.7,
 			}),
-			AbilityEffectTransformUtil.Fade({
-				from = 0,
-				to = 1,
+			TransformUtil.Fade({
+				from     = 0,
+				to       = 1,
 				duration = 0.4,
-				mode = "linear",
-				speed = 1,
+				mode     = "linear",
+				speed    = 1,
 			}),
 		}),
 
-		onMiss = AbilityEffectHitOrMissUtil.Despawn(),
+		onMiss      = HitOrMissUtil.Despawn(),
 		colorFilter = nil,
 	},
 }
