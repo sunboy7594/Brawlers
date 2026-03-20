@@ -13,9 +13,24 @@
 	  latency      : 레이턴시 보정값
 	  delay        : 발사 지연
 
-	주의: _moveElapsed는 MoverUtil가 직접 관리합니다.
-	tickHandle에서 pre-increment 하지 않습니다.
-	(이중 증가 방지 → 투사체가 2배 빠르게 이동하는 버그 방지)
+	delay + latency 보정:
+	  effectiveDelay = max(0, delay - latency)
+	    → 서버는 클라이언트가 delay 후 발사하는 것을 latency만큼 앞당김
+	    → InstantHit.verdict와 동일한 방식
+
+	fast-forward (simB):
+	  forwardTime = max(0, latency - delay)
+	    → delay=0        : forwardTime = latency (기존과 동일)
+	    → delay>=latency : forwardTime = 0 (클라이언트와 동시 발사, 보정 불필요)
+	    → 0<delay<latency: forwardTime = latency - delay
+
+	  타임라인:
+	    t=0         클라이언트: Fire Remote 전송
+	    t=delay     클라이언트: 투사체 시각 발사
+	    t=latency   서버: Fire Remote 수신 → onFire 실행
+	    t=latency+effectiveDelay = max(latency,delay)
+	                서버: 투사체 발사 (클라이언트와 동일 시점)
+	  서버 발사 직후 클라이언트 투사체가 이미 forwardTime만큼 날아있으므로 simB로 보상.
 ]=]
 
 local require = require(script.Parent.loader).load(script)
@@ -123,15 +138,13 @@ end
 local function tickHandle(handle: any, dt: number): boolean
 	if not handle._alive then return false end
 
-	-- 이동
-	-- ✅ _moveElapsed는 MoverUtil가 직접 관리함 — 여기서 pre-increment 하지 않음.
-	-- tickHandle에서 += dt 하고 MoverUtil에서 또 += dt 하면 매 프레임 2dt색 증가함 → 2배 빠를.
+	-- 이동 (_moveElapsed는 MoverUtil가 내부에서 관리 — 여기서 pre-increment 하지 않음)
 	local continues = true
 	if not handle._moveStopped and handle._def.move then
 		continues = handle._def.move(dt, handle, handle._def.params)
 	end
 
-	-- 히트 판정 (_moveElapsed는 MoverUtil이 업데이트한 값 사용)
+	-- 히트 판정
 	if not handle._fadingOut and handle._def.hitDetect then
 		local hits = HitDetectionUtil.Detect(
 			handle._def.hitDetect,
@@ -140,19 +153,15 @@ local function tickHandle(handle: any, dt: number): boolean
 			handle._def.params
 		)
 		if #hits > 0 then
-			-- 1. onHitResult: HitMapResult → onHitChecked 트리거 (데미지 적용)
 			if handle._def.onHitResult then
 				handle._def.onHitResult(toHitMapResult(hits))
 			end
-
-			-- 2. onHit: per-hit HitOrMissUtil 콜백 (Despawn 등)
 			if handle._onHit and handle._alive then
 				for _, hitInfo in hits do
 					handle._onHit(handle, hitInfo)
 					if not handle._alive then break end
 				end
 			end
-
 			return false
 		end
 	end
@@ -181,11 +190,14 @@ local function ensureHeartbeat()
 	end)
 end
 
-local function simB(handle: any): boolean
-	local latency = handle._def.latency
-	if latency <= 0 then return false end
+-- forwardTime: 클라이언트 투사체가 이미 날아간 시간만큼 fast-forward
+-- delay=0        → forwardTime = latency
+-- delay>=latency → forwardTime = 0  (클라이언트와 동시 발사)
+-- 0<delay<latency → forwardTime = latency - delay
+local function simB(handle: any, forwardTime: number): boolean
+	if forwardTime <= 0 then return false end
 	local steps  = 10
-	local stepDt = latency / steps
+	local stepDt = forwardTime / steps
 	for _ = 1, steps do
 		if not tickHandle(handle, stepDt) then return true end
 	end
@@ -202,9 +214,18 @@ function ProjectileHit.fire(
 	teamService    : any?,
 	attackerPlayer : Player?
 ): any?
+	local latency = def.latency
+	local delay   = def.delay or 0
+
+	-- ✅ effectiveDelay: latency만큼 delay를 앞당김 (InstantHit.verdict와 동일)
+	local effectiveDelay = math.max(0, delay - latency)
+
+	-- ✅ forwardTime: 서버가 발사할 때 클라이언트 투사체가 이미 날아간 시간
+	local forwardTime = math.max(0, latency - delay)
+
 	local function launch(): any?
 		local handle = newHandle(attacker, origin, def, teamService, attackerPlayer)
-		if simB(handle) then return nil end
+		if simB(handle, forwardTime) then return nil end
 		if handle._alive then
 			_counter += 1
 			local id = tostring(_counter)
@@ -215,12 +236,12 @@ function ProjectileHit.fire(
 		return handle
 	end
 
-	local delay = def.delay
-	if delay and delay > 0 then
-		local cancel = cancellableDelay(delay, function() launch() end)
+	if effectiveDelay > 0 then
+		local cancel = cancellableDelay(effectiveDelay, function() launch() end)
 		if fireMaid then fireMaid:GiveTask(cancel) end
 		return nil
 	end
+
 	return launch()
 end
 
