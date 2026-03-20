@@ -5,11 +5,11 @@
 	탱크 캐논 테스트 기본공격 서버 모듈.
 
 	onFire:
-	  ProjectileHit.fire()로 서버 독립 투사체 판정.
+	  ProjectileHit.verdict()로 서버 독립 투사체 판정.
 	  origin       = 서버 HRP 기준으로 직접 계산.
 	  aimRatio     = state.aimTime 기준으로 서버가 직접 계산.
 	  onHitResult  = state.onHit → 히트 시 onHitChecked 트리거 (데미지 적용)
-	  onHit        = HitOrMissUtil.Despawn() → 시각 처리 (서버에서는 무의미, 하위 호환)
+	  onHit        = HitOrMissUtil.Despawn() → 시각 처리
 
 	onHitChecked:
 	  적 맞추면 damage 30 적용.
@@ -55,14 +55,12 @@ return {
 			local hrp = state.rootPart
 			if not hrp or not state.attacker then return end
 
-			-- 서버 독립 origin: HRP 위치 + 검증된 direction
 			local origin = CFrame.new(hrp.Position, hrp.Position + state.direction)
 
-			-- 서버 독립 aimRatio: state.aimTime으로 직접 계산
 			local aimRatio = math.clamp(state.aimTime / ANGLE_EXPAND_TIME, 0, 1)
 			local hitSize  = BASE_HIT_SIZE + (MAX_HIT_SIZE - BASE_HIT_SIZE) * aimRatio
 
-			ProjectileHit.fire(
+			ProjectileHit.verdict(
 				state.attacker,
 				origin,
 				{
@@ -74,7 +72,6 @@ return {
 					hitDetect = HitDetectionUtil.Box({
 						size = Vector3.new(hitSize, hitSize, hitSize),
 					}),
-					-- ✅ state.onHit: 히트 시 onHitChecked 트리거 → 데미지 적용
 					onHitResult = state.onHit,
 					onHit       = HitOrMissUtil.Despawn(),
 					onMiss      = nil,
