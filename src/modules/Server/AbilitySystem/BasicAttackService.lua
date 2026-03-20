@@ -18,7 +18,6 @@
 	- Fire 신호에 workspace:GetServerTimeNow() 기준 클라이언트 발송 시각 포함
 	- latency = GetServerTimeNow() - sentAt
 	- state.latency에 저장 → 어빌리티 모듈(onFire)에서 delay 보정에 활용
-	- AbilityEffectSimulatorService에 전달 → 투사체 시뮬 latency 보정
 
 	fireMaid:
 	- _executeFire 시마다 새 Maid 생성. CancelCombatState 시 Destroy.
@@ -292,15 +291,24 @@ end
 
 function BasicAttackService:_onCharacterAdded(player: Player, char: Model)
 	local state = self._playerStates[player.UserId]
-	if not state then
-		return
-	end
+	if not state then return end
 
-	local hum = char:WaitForChild("Humanoid") :: Humanoid
-	local hrp = char:WaitForChild("HumanoidRootPart") :: BasePart
+	-- ✅ WaitForChild는 yield를 유발하므로 task.spawn으로 분리.
+	-- 완료 후 반드시 현재 캐릭터가 맞는지 확인.
+	-- 리스폰이 빠르게 여러 번 일어나면 이전 코루틴이 늦게 완료되어
+	-- 죽은 캐릭터의 humanoid/rootPart로 state를 덮어쓰는 버그 방지.
+	task.spawn(function()
+		local hum = char:WaitForChild("Humanoid") :: Humanoid
+		local hrp = char:WaitForChild("HumanoidRootPart") :: BasePart
 
-	state.humanoid = hum
-	state.rootPart = hrp
+		-- WaitForChild 완료 후 이 캐릭터가 여전히 현재 캐릭터인지 확인
+		if player.Character ~= char then return end
+		-- 플레이어가 이미 퇴장했으면 무시
+		if not self._playerStates[player.UserId] then return end
+
+		state.humanoid = hum
+		state.rootPart = hrp
+	end)
 end
 
 function BasicAttackService:_onPlayerRemoving(player: Player)
