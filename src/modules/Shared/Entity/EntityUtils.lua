@@ -18,14 +18,15 @@
 	TriggerMiss()          → onHit 내에서 onMiss 강제
 
 	─── 공용 콜백 ──────────────────────────────────────────────────────────────
-	Despawn(config?)       → delay 포함 즐시 소멸
+	Despawn(config?)       → delay 포함 즉시 소멸
+	AutoDespawn(duration)  → onSpawn에서 사용. duration 후 자동 소멸 (move=nil 엔티티 수명 관리)
 	Sequence(callbacks)    → 순서 실행
 	StopMove()             → 이동 중단
 	SpawnEntity(...)       → 그 자리에서 새 엔티티 생성
 	FireEntity(...)        → 새 방향으로 엔티티 발사
 
 	─── Transform ────────────────────────────────────────────────────────────
-	RotateTo(config)       → 방향 기준 회전 (도/초)
+	RotateTo(config)       → 방향 기준 회전 (도/초) — 상태 없음, 공유 안전
 	RandomRotateTo(config) → 랜덤 회전
 	ScaleTo(config)        → 크기 변화
 	FadeTo(config)         → 투명도 변화
@@ -36,6 +37,12 @@
 	TransformSequence(cbs) → 여러 onMove 합치기
 
 	모든 유틸에 delay?: number 옵션 포함.
+
+	─── per-instance 상태 관리 ────────────────────────────────────────────────
+	ScaleTo/FadeTo/RandomRotateTo/MoveTo/RandomOffsetTo는 클로저 로컬 변수 대신
+	handle에 고유 키(_s<N>)로 상태를 저장합니다.
+	이로 인해 require 캐싱에 의한 클로저 공유 버그가 해결됩니다.
+	(EntityController.tickHandle이 onMove에 handle을 4번째 인자로 전달)
 ]=]
 
 -- Quenty 로더 로드 (SpawnEntity/FireEntity에서 EntityPlayer require 필요)
@@ -52,6 +59,15 @@ local function getEntityPlayer(): any
 		_entityPlayer = require("EntityPlayer")
 	end
 	return _entityPlayer
+end
+
+-- ─── per-instance 상태 키 생성 ───────────────────────────────────────────────
+-- EntityUtils.ScaleTo() 같은 팩토리를 호출할 때마다 고유 키를 부여.
+-- 같은 def가 require 캐싱으로 공유되더라도 각 handle이 독립 상태를 가짐.
+local _cbCounter = 0
+local function newStateKey(): string
+	_cbCounter += 1
+	return "_s" .. tostring(_cbCounter)
 end
 
 -- ─── 내부 유틸 ───────────────────────────────────────────────────────────────
@@ -291,6 +307,32 @@ function EntityUtils.Despawn(config: { delay: number? }?)
 	end
 end
 
+--[=[
+	AutoDespawn(duration)
+	  onSpawn 콜백으로 사용. move=nil인 이펙트 엔티티에 수명을 부여합니다.
+	  duration 초 후 자동으로 _destroyNoMiss() 호출.
+
+	  예)
+	    onSpawn = EntityUtils.AutoDespawn(1.5),
+]=]
+function EntityUtils.AutoDespawn(duration: number)
+	return function(handle: any)
+		if not handle or not handle._maid then return end
+		local elapsed = 0
+		local conn: RBXScriptConnection
+		conn = RunService.Heartbeat:Connect(function(dt)
+			elapsed += dt
+			if elapsed >= duration then
+				conn:Disconnect()
+				if handle.IsAlive and handle:IsAlive() then
+					handle:_destroyNoMiss()
+				end
+			end
+		end)
+		handle._maid:GiveTask(conn)
+	end
+end
+
 function EntityUtils.Sequence(callbacks: { any })
 	return function(handle: any, hitInfo: any?)
 		for _, cb in callbacks do
@@ -337,8 +379,9 @@ export type RotateToConfig = {
 	delay : number?,
 }
 
+-- RotateTo는 매 프레임 delta를 누적하는 stateless 연산이므로 클로저 공유 안전
 function EntityUtils.RotateTo(config: RotateToConfig)
-	return function(model: any, dt: number, _params: { [string]: any }?)
+	return function(model: any, dt: number, _params: { [string]: any }?, _handle: any?)
 		if typeof(model) ~= "Instance" then return end
 		local m = model :: any
 		local delta = math.rad(config.speed * dt)
@@ -353,23 +396,27 @@ export type RandomRotateToConfig = {
 }
 
 function EntityUtils.RandomRotateTo(config: RandomRotateToConfig)
-	local initialized = false
-	local targetAngle = 0
-	local rotElapsed  = 0
-	local totalElapsed = 0
-	return function(model: any, dt: number, _params: { [string]: any }?)
+	local sk = newStateKey()
+	return function(model: any, dt: number, _params: { [string]: any }?, handle: any?)
 		if typeof(model) ~= "Instance" then return end
-		totalElapsed += dt
-		local delay = config.delay or 0
-		if totalElapsed < delay then return end
-		if not initialized then
-			initialized = true
-			targetAngle = (math.random() * 2 - 1) * config.maxAngle
+		if not handle then return end
+		-- handle에 per-instance 상태 저장
+		local s: any = handle[sk]
+		if not s then
+			s = { initialized = false, targetAngle = 0, rotElapsed = 0, totalElapsed = 0 }
+			handle[sk] = s
 		end
-		rotElapsed += dt
-		local t = config.duration and math.clamp(rotElapsed / config.duration, 0, 1) or 1
+		s.totalElapsed += dt
+		local delay = config.delay or 0
+		if s.totalElapsed < delay then return end
+		if not s.initialized then
+			s.initialized = true
+			s.targetAngle = (math.random() * 2 - 1) * config.maxAngle
+		end
+		s.rotElapsed += dt
+		local t = config.duration and math.clamp(s.rotElapsed / config.duration, 0, 1) or 1
 		local m = model :: any
-		m:PivotTo(m:GetPivot() * CFrame.Angles(0, math.rad(targetAngle * t), 0))
+		m:PivotTo(m:GetPivot() * CFrame.Angles(0, math.rad(s.targetAngle * t), 0))
 	end
 end
 
@@ -384,38 +431,47 @@ export type ScaleToConfig = {
 }
 
 function EntityUtils.ScaleTo(config: ScaleToConfig)
-	local initialized  = false
-	local currentScale = config.from or Vector3.new(1, 1, 1)
-	local velX, velY, velZ = 0, 0, 0
-	local rotElapsed   = 0
-	local totalElapsed = 0
-	return function(model: any, dt: number, _params: { [string]: any }?)
-		totalElapsed += dt
-		local delay = config.delay or 0
-		if totalElapsed < delay then return end
-		if not initialized then
-			initialized = true
-			currentScale = config.from or Vector3.new(1, 1, 1)
+	local sk = newStateKey()
+	return function(model: any, dt: number, _params: { [string]: any }?, handle: any?)
+		if not handle then return end
+		-- handle에 per-instance 상태 저장
+		local s: any = handle[sk]
+		if not s then
+			s = {
+				initialized  = false,
+				currentScale = config.from or Vector3.new(1, 1, 1),
+				velX = 0, velY = 0, velZ = 0,
+				rotElapsed   = 0,
+				totalElapsed = 0,
+			}
+			handle[sk] = s
 		end
-		rotElapsed += dt
+		s.totalElapsed += dt
+		local delay = config.delay or 0
+		if s.totalElapsed < delay then return end
+		if not s.initialized then
+			s.initialized = true
+			s.currentScale = config.from or Vector3.new(1, 1, 1)
+		end
+		s.rotElapsed += dt
 		if config.mode == "spring" then
 			local damper = config.damper or 1
-			local s      = config.speed
+			local sp     = config.speed
 			local function step(cur: number, vel: number, tgt: number): (number, number)
-				local acc = -s * s * (cur - tgt) - 2 * damper * s * vel
+				local acc = -sp * sp * (cur - tgt) - 2 * damper * sp * vel
 				return cur + (vel + acc * dt) * dt, vel + acc * dt
 			end
-			local nx, vx = step(currentScale.X, velX, config.target.X)
-			local ny, vy = step(currentScale.Y, velY, config.target.Y)
-			local nz, vz = step(currentScale.Z, velZ, config.target.Z)
-			currentScale = Vector3.new(nx, ny, nz)
-			velX, velY, velZ = vx, vy, vz
+			local nx, vx = step(s.currentScale.X, s.velX, config.target.X)
+			local ny, vy = step(s.currentScale.Y, s.velY, config.target.Y)
+			local nz, vz = step(s.currentScale.Z, s.velZ, config.target.Z)
+			s.currentScale = Vector3.new(nx, ny, nz)
+			s.velX, s.velY, s.velZ = vx, vy, vz
 		else
-			local t    = config.duration and math.clamp(rotElapsed / config.duration, 0, 1) or 1
+			local t    = config.duration and math.clamp(s.rotElapsed / config.duration, 0, 1) or 1
 			local from = config.from or Vector3.new(1, 1, 1)
-			currentScale = from:Lerp(config.target, t)
+			s.currentScale = from:Lerp(config.target, t)
 		end
-		setSize(model, currentScale)
+		setSize(model, s.currentScale)
 	end
 end
 
@@ -430,33 +486,37 @@ export type FadeToConfig = {
 }
 
 function EntityUtils.FadeTo(config: FadeToConfig)
-	local current      = config.from
-	local velocity     = 0
-	local rotElapsed   = 0
-	local totalElapsed = 0
-	return function(model: any, dt: number, _params: { [string]: any }?)
-		totalElapsed += dt
+	local sk = newStateKey()
+	return function(model: any, dt: number, _params: { [string]: any }?, handle: any?)
+		if not handle then return end
+		-- handle에 per-instance 상태 저장
+		local s: any = handle[sk]
+		if not s then
+			s = { current = config.from, velocity = 0, rotElapsed = 0, totalElapsed = 0 }
+			handle[sk] = s
+		end
+		s.totalElapsed += dt
 		local delay = config.delay or 0
-		if totalElapsed < delay then return end
-		rotElapsed += dt
+		if s.totalElapsed < delay then return end
+		s.rotElapsed += dt
 		if config.mode == "spring" then
 			local damper = config.damper or 1
-			local acc    = -config.speed * config.speed * (current - config.to)
-				- 2 * damper * config.speed * velocity
-			velocity += acc * dt
-			current  += velocity * dt
+			local acc    = -config.speed * config.speed * (s.current - config.to)
+				- 2 * damper * config.speed * s.velocity
+			s.velocity += acc * dt
+			s.current  += s.velocity * dt
 		else
 			local t = config.duration
-				and math.clamp(rotElapsed / config.duration, 0, 1)
+				and math.clamp(s.rotElapsed / config.duration, 0, 1)
 				or 1
-			current = lerpNumber(config.from, config.to, t)
+			s.current = lerpNumber(config.from, config.to, t)
 		end
-		current = math.clamp(
-			current,
+		s.current = math.clamp(
+			s.current,
 			math.min(config.from, config.to),
 			math.max(config.from, config.to)
 		)
-		setTransparency(model, current)
+		setTransparency(model, s.current)
 	end
 end
 
@@ -470,41 +530,50 @@ export type MoveToConfig = {
 }
 
 function EntityUtils.MoveTo(config: MoveToConfig)
-	local initialized   = false
-	local origin: CFrame = CFrame.identity
-	local velX, velY, velZ = 0, 0, 0
-	local currentOffset = Vector3.zero
-	local rotElapsed    = 0
-	local totalElapsed  = 0
-	return function(model: any, dt: number, _params: { [string]: any }?)
+	local sk = newStateKey()
+	return function(model: any, dt: number, _params: { [string]: any }?, handle: any?)
 		if typeof(model) ~= "Instance" then return end
-		totalElapsed += dt
-		local delay = config.delay or 0
-		if totalElapsed < delay then return end
-		if not initialized then
-			initialized = true
-			origin = (model :: any):GetPivot()
+		if not handle then return end
+		-- handle에 per-instance 상태 저장
+		local s: any = handle[sk]
+		if not s then
+			s = {
+				initialized   = false,
+				origin        = CFrame.identity,
+				velX = 0, velY = 0, velZ = 0,
+				currentOffset = Vector3.zero,
+				rotElapsed    = 0,
+				totalElapsed  = 0,
+			}
+			handle[sk] = s
 		end
-		rotElapsed += dt
+		s.totalElapsed += dt
+		local delay = config.delay or 0
+		if s.totalElapsed < delay then return end
+		if not s.initialized then
+			s.initialized = true
+			s.origin = (model :: any):GetPivot()
+		end
+		s.rotElapsed += dt
 		if config.mode == "spring" then
 			local damper = config.damper or 1
-			local s      = config.speed
+			local sp     = config.speed
 			local function step(cur: number, vel: number, tgt: number): (number, number)
-				local acc = -s * s * (cur - tgt) - 2 * damper * s * vel
+				local acc = -sp * sp * (cur - tgt) - 2 * damper * sp * vel
 				return cur + (vel + acc * dt) * dt, vel + acc * dt
 			end
-			local nx, vx = step(currentOffset.X, velX, config.offset.X)
-			local ny, vy = step(currentOffset.Y, velY, config.offset.Y)
-			local nz, vz = step(currentOffset.Z, velZ, config.offset.Z)
-			currentOffset = Vector3.new(nx, ny, nz)
-			velX, velY, velZ = vx, vy, vz
+			local nx, vx = step(s.currentOffset.X, s.velX, config.offset.X)
+			local ny, vy = step(s.currentOffset.Y, s.velY, config.offset.Y)
+			local nz, vz = step(s.currentOffset.Z, s.velZ, config.offset.Z)
+			s.currentOffset = Vector3.new(nx, ny, nz)
+			s.velX, s.velY, s.velZ = vx, vy, vz
 		else
 			local t = config.duration
-				and math.clamp(rotElapsed / config.duration, 0, 1)
+				and math.clamp(s.rotElapsed / config.duration, 0, 1)
 				or 1
-			currentOffset = Vector3.zero:Lerp(config.offset, t)
+			s.currentOffset = Vector3.zero:Lerp(config.offset, t)
 		end
-		;(model :: any):PivotTo(origin * CFrame.new(currentOffset))
+		;(model :: any):PivotTo(s.origin * CFrame.new(s.currentOffset))
 	end
 end
 
@@ -515,53 +584,64 @@ export type RandomOffsetToConfig = {
 }
 
 function EntityUtils.RandomOffsetTo(config: RandomOffsetToConfig)
-	local initialized   = false
-	local targetOffset  = Vector3.zero
-	local origin: CFrame = CFrame.identity
-	local rotElapsed    = 0
-	local totalElapsed  = 0
-	return function(model: any, dt: number, _params: { [string]: any }?)
+	local sk = newStateKey()
+	return function(model: any, dt: number, _params: { [string]: any }?, handle: any?)
 		if typeof(model) ~= "Instance" then return end
-		totalElapsed += dt
+		if not handle then return end
+		-- handle에 per-instance 상태 저장
+		local s: any = handle[sk]
+		if not s then
+			s = {
+				initialized  = false,
+				targetOffset = Vector3.zero,
+				origin       = CFrame.identity,
+				rotElapsed   = 0,
+				totalElapsed = 0,
+			}
+			handle[sk] = s
+		end
+		s.totalElapsed += dt
 		local delay = config.delay or 0
-		if totalElapsed < delay then return end
-		if not initialized then
-			initialized = true
-			origin = (model :: any):GetPivot()
-			targetOffset = Vector3.new(
+		if s.totalElapsed < delay then return end
+		if not s.initialized then
+			s.initialized = true
+			s.origin = (model :: any):GetPivot()
+			s.targetOffset = Vector3.new(
 				(math.random() * 2 - 1) * config.range.X,
 				(math.random() * 2 - 1) * config.range.Y,
 				(math.random() * 2 - 1) * config.range.Z
 			)
 		end
-		rotElapsed += dt
+		s.rotElapsed += dt
 		local t = config.duration
-			and math.clamp(rotElapsed / config.duration, 0, 1)
+			and math.clamp(s.rotElapsed / config.duration, 0, 1)
 			or 1
-		local currentOffset = Vector3.zero:Lerp(targetOffset, t)
-		;(model :: any):PivotTo(origin * CFrame.new(currentOffset))
+		local currentOffset = Vector3.zero:Lerp(s.targetOffset, t)
+		;(model :: any):PivotTo(s.origin * CFrame.new(currentOffset))
 	end
 end
 
-local _stopped: { [any]: boolean } = {}
+-- _stopped: 약한 참조 테이블 (model GC 시 자동 해제, 메모리 누수 방지)
+local _stopped: { [any]: boolean } = setmetatable({}, { __mode = "k" } :: any)
 
 function EntityUtils.Stop()
-	return function(model: any, _dt: number, _params: { [string]: any }?)
+	return function(model: any, _dt: number, _params: { [string]: any }?, _handle: any?)
 		_stopped[model] = true
 	end
 end
 
 function EntityUtils.Resume()
-	return function(model: any, _dt: number, _params: { [string]: any }?)
+	return function(model: any, _dt: number, _params: { [string]: any }?, _handle: any?)
 		_stopped[model] = nil
 	end
 end
 
-function EntityUtils.TransformSequence(callbacks: { (any, number, { [string]: any }?) -> () })
-	return function(model: any, dt: number, params: { [string]: any }?)
+-- handle을 각 콜백에 전달하여 per-instance 상태가 정상 동작하도록 함
+function EntityUtils.TransformSequence(callbacks: { (any, number, { [string]: any }?, any?) -> () })
+	return function(model: any, dt: number, params: { [string]: any }?, handle: any?)
 		if _stopped[model] then return end
 		for _, cb in callbacks do
-			cb(model, dt, params)
+			cb(model, dt, params, handle)
 		end
 	end
 end

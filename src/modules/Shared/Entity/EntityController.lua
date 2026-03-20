@@ -11,6 +11,7 @@
 
 	SimB (Simulate Behind):
 	  firedAt 기반 latency 계산 후 fast-forward.
+	  fast-forward 중 Part를 숨겨 타 클라이언트 화면 깜빡임 방지.
 
 	fakePart:
 	  part = nil일 때 자동 생성.
@@ -34,7 +35,8 @@ local Maid             = require("Maid")
 -- ─── 타입 ───────────────────────────────────────────────────────────────────
 
 export type MoveFunction    = (dt: number, handle: any, params: { [string]: any }?) -> boolean
-export type OnMoveCallback  = (model: any, dt: number, params: { [string]: any }?) -> ()
+-- handle은 4번째 인자로 전달됨 (per-instance 상태 저장용)
+export type OnMoveCallback  = (model: any, dt: number, params: { [string]: any }?, handle: any?) -> ()
 export type OnSpawnCallback = (handle: any) -> ()
 export type HitCallback     = (handle: any, hitInfo: HitDetectionUtil.HitInfo) -> ()
 export type MissCallback    = (handle: any) -> ()
@@ -180,8 +182,9 @@ local function tickHandle(handle: any, dt: number): boolean
 		end
 	end
 
+	-- handle을 4번째 인자로 전달: onMove 콜백이 per-instance 상태를 handle에 저장할 수 있도록
 	if handle._def.onMove and handle.part then
-		handle._def.onMove(handle.part, dt, handle._params)
+		handle._def.onMove(handle.part, dt, handle._params, handle)
 	end
 
 	return handle._alive
@@ -206,16 +209,57 @@ local function ensureHeartbeat()
 	end)
 end
 
+-- simB 중 Part를 숨겨 타 클라이언트 화면에서 fast-forward 동안 보이지 않도록 함
+local function simBHide(handle: any): () -> ()
+	if not handle.part or typeof(handle.part) ~= "Instance" then
+		return function() end
+	end
+	local savedParts: { [BasePart]: number } = {}
+	local savedHL:   { [any]: boolean }     = {}
+	local root = handle.part :: Instance
+	-- root 자체가 BasePart인 경우
+	if root:IsA("BasePart") then
+		local bp = root :: BasePart
+		savedParts[bp] = bp.Transparency
+		bp.Transparency = 1
+	end
+	for _, d in root:GetDescendants() do
+		if d:IsA("BasePart") then
+			local bp = d :: BasePart
+			savedParts[bp] = bp.Transparency
+			bp.Transparency = 1
+		elseif d.ClassName == "Highlight" then
+			savedHL[d] = (d :: any).Enabled
+			;(d :: any).Enabled = false
+		end
+	end
+	return function()
+		for bp, t in savedParts do
+			if (bp :: Instance).Parent then bp.Transparency = t end
+		end
+		for hl, e in savedHL do
+			if (hl :: Instance).Parent then ;(hl :: any).Enabled = e end
+		end
+	end
+end
+
 local function simB(handle: any)
 	local now     = Workspace:GetServerTimeNow()
 	local latency = math.max(0, math.min(now - handle.firedAt, 0.5))
 	if latency <= 0 then return end
+
+	local restore = simBHide(handle)
+
 	local steps  = 10
 	local stepDt = latency / steps
 	for _ = 1, steps do
-		if not handle._alive then return end
+		if not handle._alive then
+			return  -- 이미 dead: 복원 불필요
+		end
 		tickHandle(handle, stepDt)
 	end
+
+	restore()
 end
 
 -- ─── EntityHandle 메서드 ─────────────────────────────────────────────────────
@@ -342,7 +386,7 @@ function EntityController.new(
 		removeFromIndex(handle)
 	end)
 
-	-- SimB
+	-- SimB: fast-forward 중 Part 숨김 처리 포함
 	if config.firedAt then
 		simB(handle)
 	end

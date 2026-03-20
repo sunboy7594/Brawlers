@@ -18,6 +18,9 @@ local EntityUtils = require("EntityUtils")
 local PROJECTILE_SPEED = 40
 local MAX_RANGE = 100
 
+-- CannonExplosion 수명: ScaleTo(0.5s) + FadeTo(1.0s) + 여유
+local EXPLOSION_LIFETIME = 1.5
+
 return {
 	CannonBall = {
 		model = "CannonBall",
@@ -54,6 +57,10 @@ return {
 		model = "CannonExplosion",
 		tags = nil,
 		move = nil,
+
+		-- move=nil이면 Miss()가 자동 호출되지 않으므로
+		-- onSpawn에서 수명 타이머를 걸어 줌
+		onSpawn = EntityUtils.AutoDespawn(EXPLOSION_LIFETIME),
 
 		onMove = EntityUtils.TransformSequence({
 			EntityUtils.ScaleTo({
