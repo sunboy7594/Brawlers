@@ -61,7 +61,7 @@ return {
 		end,
 
 		onHit = AbilityEffectHitOrMissUtil.Sequence({
-			AbilityEffectHitOrMissUtil.SpawnEffect("Tank_CannonEffectDef", "CannonExplosion"),
+			AbilityEffectHitOrMissUtil.SpawnEffect("Tank_CannonTestEffectDef", "CannonExplosion"),
 			AbilityEffectHitOrMissUtil.Despawn(),
 		}),
 
