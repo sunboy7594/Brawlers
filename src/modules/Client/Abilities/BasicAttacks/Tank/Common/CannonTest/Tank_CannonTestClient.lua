@@ -10,51 +10,52 @@ local Players = game:GetService("Players")
 local EntityPlayer = require("EntityPlayer")
 
 local EFFECT_DEF_MODULE = "Tank_CannonTestEffectDef"
-local EFFECT_NAME       = "CannonBall"
+local EFFECT_NAME = "CannonBall"
 local ANGLE_EXPAND_TIME = 3.0
 
 type BasicAttackState = {
-	origin           : Vector3,
-	direction        : Vector3,
-	effectiveAimTime : number,
-	taskMaid         : any?,
-	indicator        : any,
-	animator         : any?,
-	attackerPlayerId : number?,
-	teamContext      : { color: Color3?, [string]: any }?,
+	origin: Vector3,
+	direction: Vector3,
+	effectiveAimTime: number,
+	taskMaid: any?,
+	indicator: any,
+	animator: any?,
+	attackerPlayerId: number?,
+	teamContext: { color: Color3?, [string]: any }?,
 }
 
 return {
 	shapes = {},
 
 	onAimStart = {},
-	onAim      = {},
+	onAim = {},
 
 	onFire = {
 		function(state: BasicAttackState)
 			local localPlayer = Players.LocalPlayer
 			local char = localPlayer.Character
-			local hrp  = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
-			if not hrp then return end
+			local hrp = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
+			if not hrp then
+				return
+			end
 
-			local origin   = CFrame.new(hrp.Position, hrp.Position + state.direction)
+			local origin = CFrame.new(hrp.Position, hrp.Position + state.direction)
 			local aimRatio = math.clamp(state.effectiveAimTime / ANGLE_EXPAND_TIME, 0, 1)
 
 			-- BasicAttackClient가 state.teamContext.color에 자기 색상을 이미 세팅해줌
 			local color: Color3? = state.teamContext and state.teamContext.color
 
 			EntityPlayer.Play(EFFECT_DEF_MODULE, EFFECT_NAME, {
-				origin           = origin,
-				color            = color,
-				attackerPlayerId = state.attackerPlayerId
-					or localPlayer.UserId,
-				params           = { aimRatio = aimRatio },
-				taskMaid         = state.taskMaid,
-				replicate        = true,
+				origin = origin,
+				color = color,
+				attackerPlayerId = state.attackerPlayerId or localPlayer.UserId,
+				params = { aimRatio = aimRatio },
+				taskMaid = state.taskMaid,
+				replicate = true,
 			})
 		end,
 	},
 
-	onCancel     = {},
+	onCancel = {},
 	onHitChecked = {},
 }

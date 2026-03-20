@@ -12,24 +12,24 @@
 
 local require = require(script.Parent.loader).load(script)
 
-local EntityUtils      = require("EntityUtils")
 local EntityColorUtils = require("EntityColorUtils")
+local EntityUtils = require("EntityUtils")
 
 local PROJECTILE_SPEED = 40
-local MAX_RANGE        = 100
+local MAX_RANGE = 100
 
 return {
 	CannonBall = {
 		model = "CannonBall",
-		tags  = { "projectile" },
+		tags = { "projectile" },
 
 		move = EntityUtils.Linear({
-			speed    = PROJECTILE_SPEED,
+			speed = PROJECTILE_SPEED,
 			maxRange = MAX_RANGE,
 		}),
 
 		onMove = EntityUtils.RotateTo({
-			axis  = Vector3.new(1, 0, 0),
+			axis = Vector3.new(1, 0, 0),
 			speed = 360,
 		}),
 
@@ -46,33 +46,33 @@ return {
 
 		colorFilter = EntityColorUtils.Highlight({
 			fillTransparency = 0.5,
-			depthMode        = "Occluded",
+			depthMode = "Occluded",
 		}),
 	},
 
 	CannonExplosion = {
 		model = "CannonExplosion",
-		tags  = nil,
-		move  = nil,
+		tags = nil,
+		move = nil,
 
 		onMove = EntityUtils.TransformSequence({
 			EntityUtils.ScaleTo({
-				from     = Vector3.new(1, 1, 1),
-				target   = Vector3.new(2.5, 2.5, 2.5),
-				duration = 0.2,
-				mode     = "spring",
-				speed    = 20,
-				damper   = 0.7,
+				from = Vector3.new(1, 1, 1),
+				target = Vector3.new(2.5, 2.5, 2.5),
+				duration = 0.5,
+				mode = "spring",
+				speed = 20,
+				damper = 0.7,
 			}),
 			EntityUtils.FadeTo({
-				from     = 0,
-				to       = 1,
-				duration = 0.4,
-				speed    = 1,
+				from = 0,
+				to = 1,
+				duration = 1.0,
+				speed = 1,
 			}),
 		}),
 
-		onMiss      = EntityUtils.Despawn(),
+		onMiss = EntityUtils.Despawn(),
 		colorFilter = nil,
 	},
 }
