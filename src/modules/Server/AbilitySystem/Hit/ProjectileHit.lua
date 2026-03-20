@@ -3,28 +3,21 @@
 	@class ProjectileHit
 
 	투사체 판정 유틸리티. 서버 전용.
-	InstantHit.verdict()와 동일한 스일.
+	InstantHit.verdict()와 동일한 스타일.
 
-	fire():
-	  origin에서 def.move()로 매 프레임 이동.
-	  def.hitDetect()로 박스 판정.
-	  히트 시 def.onHit(handle, hitInfo) 호출.
-	  move()가 false 반환 시 def.onMiss(handle) 호출.
+	ProjectileDef 필드:
+	  move         : 이동 함수 (MoverUtil.Linear 등)
+	  hitDetect    : 박스 판정 함수 (HitDetectionUtil.Box 등)
+	  onHitResult  : ((HitMapResult) -> ())?  ← state.onHit (onHitChecked 트리거)
+	  onHit        : ((handle, hitInfo) -> ())?  ← HitOrMissUtil 시각 콜백 (Despawn 등)
+	  onMiss       : ((handle) -> ())?  ← 미스 시 콜백
+	  params       : 추가 파라미터
+	  latency      : 레이턴시 보정값
+	  delay        : 발사 지연 (fireMaid로 취소 가능)
 
-	ProjectileHandle:
-	  :IsAlive() -> boolean
-	  :Miss()           → onMiss 발동 후 소멸
-	  :_destroyNoMiss() → onMiss 없이 소멸
-	  :Destroy()        → _destroyNoMiss() alias
-	  HitOrMissUtil 콜백 완전 호환.
-
-	latency 보정 (SimB):
-	  latency > 0이면 fire() 호출 즉시 fast-forward.
-
-	delay:
-	  def.delay > 0이면 cancellableDelay 후 발사.
-	  발사 전 fireMaid 파괴 시 delay 취소.
-	  이미 발사된 handle은 독립 수명.
+	히트 시 실행 순서:
+	  1. onHitResult(HitMapResult) → onHitChecked 트리거 (데미지 등)
+	  2. onHit(handle, hitInfo)    → HitOrMissUtil 콜백 (Despawn 등)
 ]=]
 
 local require = require(script.Parent.loader).load(script)
@@ -37,13 +30,14 @@ local Maid             = require("Maid")
 local cancellableDelay = require("cancellableDelay")
 
 export type ProjectileDef = {
-	move      : (dt: number, handle: any, params: { [string]: any }?) -> boolean,
-	hitDetect : HitDetectionUtil.HitDetectFunction,
-	onHit     : ((handle: any, hitInfo: HitDetectionUtil.HitInfo) -> ())?,
-	onMiss    : ((handle: any) -> ())?,
-	params    : { [string]: any }?,
-	latency   : number,
-	delay     : number?,
+	move         : (dt: number, handle: any, params: { [string]: any }?) -> boolean,
+	hitDetect    : HitDetectionUtil.HitDetectFunction,
+	onHitResult  : ((InstantHit.HitMapResult) -> ())?,  -- state.onHit → onHitChecked 트리거
+	onHit        : ((handle: any, hitInfo: HitDetectionUtil.HitInfo) -> ())?,  -- HitOrMissUtil 콜백
+	onMiss       : ((handle: any) -> ())?,
+	params       : { [string]: any }?,
+	latency      : number,
+	delay        : number?,
 }
 
 local _handles   : { [string]: any }    = {}
@@ -117,6 +111,7 @@ function ProjectileHandle:Destroy()
 	self:_destroyNoMiss()
 end
 
+-- HitInfo[] → HitMapResult 변환 (onHitResult 콜백용)
 local function toHitMapResult(hits: { HitDetectionUtil.HitInfo }): InstantHit.HitMapResult
 	local vs: InstantHit.VictimSet = { enemies = {}, teammates = {}, self = nil }
 	for _, hitInfo in hits do
@@ -131,12 +126,14 @@ end
 local function tickHandle(handle: any, dt: number): boolean
 	if not handle._alive then return false end
 
+	-- 이동
 	local continues = true
 	if not handle._moveStopped and handle._def.move then
 		handle._moveElapsed += dt
 		continues = handle._def.move(dt, handle, handle._def.params)
 	end
 
+	-- 히트 판정
 	if not handle._fadingOut and handle._def.hitDetect then
 		local hits = HitDetectionUtil.Detect(
 			handle._def.hitDetect,
@@ -145,12 +142,19 @@ local function tickHandle(handle: any, dt: number): boolean
 			handle._def.params
 		)
 		if #hits > 0 then
-			if handle._onHit then
+			-- 1. onHitResult: HitMapResult → BasicAttackService onHitChecked (데미지 등)
+			if handle._def.onHitResult then
+				handle._def.onHitResult(toHitMapResult(hits))
+			end
+
+			-- 2. onHit: per-hit HitOrMissUtil 콜백 (Despawn 등)
+			if handle._onHit and handle._alive then
 				for _, hitInfo in hits do
 					handle._onHit(handle, hitInfo)
 					if not handle._alive then break end
 				end
 			end
+
 			return false
 		end
 	end
@@ -192,6 +196,16 @@ end
 
 local ProjectileHit = {}
 
+--[=[
+	투사체 판정을 시작합니다.
+
+	def.onHitResult = state.onHit  → 히트 시 onHitChecked 트리거 (데미지 적용)
+	def.onHit       = HitOrMissUtil.Despawn() 등  → 시각 처리
+
+	def.delay > 0이면 cancellableDelay 후 발사.
+	  발사 전 fireMaid 파괴 시 delay 취소.
+	  발사 후 handle은 독립 수명.
+]=]
 function ProjectileHit.fire(
 	attacker       : Model,
 	origin         : CFrame,

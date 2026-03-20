@@ -6,12 +6,13 @@
 
 	onFire:
 	  ProjectileHit.fire()로 서버 독립 투사체 판정.
-	  origin    = 서버 HRP 기준으로 직접 계산.
-	  aimRatio  = state.aimTime 기준으로 서버가 직접 계산.
-	  클라이언트에서 받은 값(origin, params) 일절 사용 안 함.
+	  origin       = 서버 HRP 기준으로 직접 계산.
+	  aimRatio     = state.aimTime 기준으로 서버가 직접 계산.
+	  onHitResult  = state.onHit → 히트 시 onHitChecked 트리거 (데미지 적용)
+	  onHit        = HitOrMissUtil.Despawn() → 시각 처리 (서버에서는 무의미, 하위 호환)
 
 	onHitChecked:
-	  적 맞춰면 damage 30 적용.
+	  적 맞추면 damage 30 적용.
 ]=]
 
 local require = require(script.Parent.loader).load(script)
@@ -54,10 +55,10 @@ return {
 			local hrp = state.rootPart
 			if not hrp or not state.attacker then return end
 
-			-- ✅ 서버 독립 origin: HRP 위치 + 검증된 direction
+			-- 서버 독립 origin: HRP 위치 + 검증된 direction
 			local origin = CFrame.new(hrp.Position, hrp.Position + state.direction)
 
-			-- ✅ 서버 독립 aimRatio: state.aimTime으로 직접 계산
+			-- 서버 독립 aimRatio: state.aimTime으로 직접 계산
 			local aimRatio = math.clamp(state.aimTime / ANGLE_EXPAND_TIME, 0, 1)
 			local hitSize  = BASE_HIT_SIZE + (MAX_HIT_SIZE - BASE_HIT_SIZE) * aimRatio
 
@@ -73,11 +74,13 @@ return {
 					hitDetect = HitDetectionUtil.Box({
 						size = Vector3.new(hitSize, hitSize, hitSize),
 					}),
-					onHit   = HitOrMissUtil.Despawn(),
-					onMiss  = nil,
-					params  = nil,
-					latency = state.latency,
-					delay   = 0,
+					-- ✅ state.onHit: 히트 시 onHitChecked 트리거 → 데미지 적용
+					onHitResult = state.onHit,
+					onHit       = HitOrMissUtil.Despawn(),
+					onMiss      = nil,
+					params      = nil,
+					latency     = state.latency,
+					delay       = 0,
 				},
 				state.fireMaid,
 				state.teamService,
