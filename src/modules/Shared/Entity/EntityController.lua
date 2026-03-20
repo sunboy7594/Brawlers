@@ -31,7 +31,7 @@ local Workspace  = game:GetService("Workspace")
 local HitDetectionUtil = require("HitDetectionUtil")
 local Maid             = require("Maid")
 
--- ─── 타입 ────────────────────────────────────────────────────────────────────
+-- ─── 타입 ───────────────────────────────────────────────────────────────────
 
 export type MoveFunction    = (dt: number, handle: any, params: { [string]: any }?) -> boolean
 export type OnMoveCallback  = (model: any, dt: number, params: { [string]: any }?) -> ()
@@ -309,6 +309,8 @@ function EntityController.new(
 		_teamContext    = buildTeamContext(config.attackerPlayerId),
 		_def            = finalDef,
 		_params         = params,
+		-- SpawnEntity가 하위 엔티티에 색상을 전달하기 위해 보관
+		_spawnColor     = config.color,
 	}, EntityHandle_mt) :: any
 
 	-- colorFilter 적용 (실제 Model일 때만)

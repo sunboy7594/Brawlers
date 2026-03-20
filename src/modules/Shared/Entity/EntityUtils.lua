@@ -7,7 +7,7 @@
 	─── Move ─────────────────────────────────────────────────────────────────
 	Linear(config)         → 직선 등속
 	Arc(config)            → 포물선
-	Sweep(config)          → 호 스윕
+	Sweep(config)          → 호 스윗
 
 	─── Detect ───────────────────────────────────────────────────────────────
 	Box(config)            → 직육면체 판정
@@ -18,7 +18,7 @@
 	TriggerMiss()          → onHit 내에서 onMiss 강제
 
 	─── 공용 콜백 ──────────────────────────────────────────────────────────────
-	Despawn(config?)       → delay 포함 즉시 소멸
+	Despawn(config?)       → delay 포함 즐시 소멸
 	Sequence(callbacks)    → 순서 실행
 	StopMove()             → 이동 중단
 	SpawnEntity(...)       → 그 자리에서 새 엔티티 생성
@@ -38,9 +38,21 @@
 	모든 유틸에 delay?: number 옵션 포함.
 ]=]
 
+-- Quenty 로더 로드 (SpawnEntity/FireEntity에서 EntityPlayer require 필요)
+local require = require(script.Parent.loader).load(script)
+
 local RunService = game:GetService("RunService")
 
 local EntityUtils = {}
+
+-- EntityPlayer lazy 로드 (순환 참조 방지)
+local _entityPlayer: any = nil
+local function getEntityPlayer(): any
+	if not _entityPlayer then
+		_entityPlayer = require("EntityPlayer")
+	end
+	return _entityPlayer
+end
 
 -- ─── 내부 유틸 ───────────────────────────────────────────────────────────────
 
@@ -295,31 +307,25 @@ end
 
 function EntityUtils.SpawnEntity(defModule: string, defName: string, options: { [string]: any }?)
 	return function(handle: any, _hitInfo: any?)
-		local ok, EntityPlayer = pcall(require, "EntityPlayer")
-		if not ok then
-			warn("[EntityUtils.SpawnEntity] EntityPlayer 로드 실패:", EntityPlayer)
-			return
-		end
-		local spawnCF  = handle.part and handle.part:GetPivot() or CFrame.identity
+		local ep = getEntityPlayer()
+		local spawnCF = handle.part and handle.part:GetPivot() or CFrame.identity
 		local opts: { [string]: any } = options and table.clone(options) or {}
-		opts.origin  = opts.origin  or spawnCF
-		opts.ownerId = handle.ownerId
-		;(EntityPlayer :: any).Play(defModule, defName, opts)
+		opts.origin           = opts.origin or spawnCF
+		opts.attackerPlayerId = opts.attackerPlayerId or handle.ownerId
+		opts.color            = opts.color or handle._spawnColor
+		ep.Play(defModule, defName, opts)
 	end
 end
 
 function EntityUtils.FireEntity(defModule: string, defName: string, options: { [string]: any }?)
 	return function(handle: any, _hitInfo: any?)
-		local ok, EntityPlayer = pcall(require, "EntityPlayer")
-		if not ok then
-			warn("[EntityUtils.FireEntity] EntityPlayer 로드 실패:", EntityPlayer)
-			return
-		end
-		local spawnCF  = handle.part and handle.part:GetPivot() or CFrame.identity
+		local ep = getEntityPlayer()
+		local spawnCF = handle.part and handle.part:GetPivot() or CFrame.identity
 		local opts: { [string]: any } = options and table.clone(options) or {}
-		opts.origin  = opts.origin  or spawnCF
-		opts.ownerId = handle.ownerId
-		;(EntityPlayer :: any).Play(defModule, defName, opts)
+		opts.origin           = opts.origin or spawnCF
+		opts.attackerPlayerId = opts.attackerPlayerId or handle.ownerId
+		opts.color            = opts.color or handle._spawnColor
+		ep.Play(defModule, defName, opts)
 	end
 end
 
