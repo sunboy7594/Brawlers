@@ -229,16 +229,22 @@ local function simBHide(handle: any): () -> ()
 			savedParts[bp] = bp.Transparency
 			bp.Transparency = 1
 		elseif d.ClassName == "Highlight" then
-			savedHL[d] = (d :: any).Enabled
-			;(d :: any).Enabled = false
+			local hl = d :: any
+			savedHL[d] = hl.Enabled
+			hl.Enabled = false
 		end
 	end
 	return function()
 		for bp, t in savedParts do
-			if (bp :: Instance).Parent then bp.Transparency = t end
+			if (bp :: Instance).Parent then
+				bp.Transparency = t
+			end
 		end
-		for hl, e in savedHL do
-			if (hl :: Instance).Parent then ;(hl :: any).Enabled = e end
+		for d, e in savedHL do
+			if (d :: Instance).Parent then
+				local hl = d :: any
+				hl.Enabled = e
+			end
 		end
 	end
 end
