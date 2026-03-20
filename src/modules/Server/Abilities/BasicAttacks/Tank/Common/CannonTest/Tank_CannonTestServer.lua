@@ -5,7 +5,7 @@
 	탱크 캐논 테스트 기본공격 서버 모듈.
 
 	onFire:
-	  ProjectileHit.fire()로 서버 독립 투사체 판정.
+	  ProjectileHit.verdict()로 서버 독립 투사체 판정.
 	  origin    = 서버 HRP 기준으로 직접 계산.
 	  aimRatio  = state.aimTime 기준으로 서버가 직접 계산.
 
@@ -57,7 +57,7 @@ return {
 			local aimRatio = math.clamp(state.aimTime / ANGLE_EXPAND_TIME, 0, 1)
 			local hitSize  = BASE_HIT_SIZE + (MAX_HIT_SIZE - BASE_HIT_SIZE) * aimRatio
 
-			ProjectileHit.fire(
+			ProjectileHit.verdict(
 				state.attacker,
 				origin,
 				{
