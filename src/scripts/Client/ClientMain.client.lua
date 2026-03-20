@@ -7,10 +7,10 @@ local require = require(loader).bootstrapGame(loader.Parent)
 
 local serviceBag = require("ServiceBag").new()
 
--- ─── Core ────────────────────────────────────────────────
+-- ─── Core ────────────────────────────────────────────
 serviceBag:GetService(require("BrawlersServiceClient"))
 
--- ─── 카메라 / 애니메이션 / 이동 ──────────────────────────────
+-- ─── 카메라 / 애니메이션 / 이동 ────────────────────────
 serviceBag:GetService(require("MouseShiftLockService"))
 serviceBag:GetService(require("PlayerBinderClient"))
 serviceBag:GetService(require("AnimationControllerClient"))
@@ -18,14 +18,14 @@ serviceBag:GetService(require("CameraControllerClient"))
 serviceBag:GetService(require("BasicMovementClient"))
 serviceBag:GetService(require("AnimReplicationClient"))
 
--- ─── TeamClient ────────────────────────────────────────────────
--- AbilityEffectReplicationClient는 TeamClient가 등록된 후에 등록
+-- ─── TeamClient ────────────────────────────────────────
 serviceBag:GetService(require("TeamClient"))
 
--- ─── AbilityEffect ─────────────────────────────────────────────
-serviceBag:GetService(require("AbilityEffectReplicationClient"))
+-- ─── Entity ─────────────────────────────────────────────
+-- EntityReplicationClient: TeamClient이 등록된 후에 등록
+serviceBag:GetService(require("EntityReplicationClient"))
 
--- ─── Ability System ───────────────────────────────────────
+-- ─── Ability System ─────────────────────────────────
 serviceBag:GetService(require("AimControllerClient"))
 serviceBag:GetService(require("AbilityCoordinator"))
 
@@ -36,10 +36,10 @@ serviceBag:GetService(require("BasicAttackClient"))
 
 serviceBag:GetService(require("PlayerStateClient"))
 
--- ─── PlayerState ──────────────────────────────────────────────
+-- ─── PlayerState ──────────────────────────────────────
 serviceBag:GetService(require("HpClient"))
 
--- ─── 테스트용 (슬롯 시스템 완성 시 제거) ───────────────────
+-- ─── 테스트용 (슬롯 시스템 완성 시 제거) ───────────────
 serviceBag:GetService(require("TestLoadoutClient"))
 
 serviceBag:Init()
