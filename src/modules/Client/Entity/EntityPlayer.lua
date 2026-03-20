@@ -20,13 +20,13 @@
 
 local require = require(script.Parent.loader).load(script)
 
-local ContentProvider   = game:GetService("ContentProvider")
-local Workspace         = game:GetService("Workspace")
+local ContentProvider = game:GetService("ContentProvider")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
 
-local EntityController          = require("EntityController")
+local EntityController = require("EntityController")
 local EntityReplicationRemoting = require("EntityReplicationRemoting")
-local cancellableDelay          = require("cancellableDelay")
+local cancellableDelay = require("cancellableDelay")
 
 local _preloaded: { [string]: boolean } = {}
 
@@ -36,32 +36,28 @@ local function getModelRoot(): Instance?
 end
 
 export type PlayConfig = {
-	part             : any?,
-	origin           : CFrame | (() -> CFrame),
-	move             : any?,
-	onMove           : any?,
-	onSpawn          : any?,
-	onHit            : any?,
-	onMiss           : any?,
-	hitDetect        : any?,
-	colorFilter      : any?,
-	attackerPlayerId : number?,
-	color            : Color3?,
-	params           : { [string]: any }?,
-	tags             : { string }?,
-	replicate        : boolean?,
-	taskMaid         : any?,
-	firedAt          : number?,
-	delay            : number?,
+	part: any?,
+	origin: CFrame | (() -> CFrame),
+	move: any?,
+	onMove: any?,
+	onSpawn: any?,
+	onHit: any?,
+	onMiss: any?,
+	hitDetect: any?,
+	colorFilter: any?,
+	attackerPlayerId: number?,
+	color: Color3?,
+	params: { [string]: any }?,
+	tags: { string }?,
+	replicate: boolean?,
+	taskMaid: any?,
+	firedAt: number?,
+	delay: number?,
 }
 
 local EntityPlayer = {}
 
-function EntityPlayer.Play(
-	defModule : string,
-	defName   : string,
-	config    : PlayConfig
-): any?
+function EntityPlayer.Play(defModule: string, defName: string, config: PlayConfig): any?
 	local function execute(): any?
 		local ok, defs = pcall(require, defModule)
 		if not ok or type(defs) ~= "table" then
@@ -85,36 +81,37 @@ function EntityPlayer.Play(
 		local part = config.part
 		local ownPart = false
 		if not part and def.model then
-			local root     = getModelRoot()
+			local root = getModelRoot()
 			local template = root and root:FindFirstChild(def.model, true)
 			if template and template:IsA("Model") then
 				part = (template :: Model):Clone()
 				part.Parent = workspace
+				print(part)
 				ownPart = true
 			end
 		end
 
 		local handle = EntityController.new(def, {
-			part             = part,
-			origin           = origin,
-			move             = config.move,
-			onMove           = config.onMove,
-			onSpawn          = config.onSpawn,
-			onHit            = config.onHit,
-			onMiss           = config.onMiss,
-			hitDetect        = config.hitDetect,
-			colorFilter      = config.colorFilter,
+			part = part,
+			origin = origin,
+			move = config.move,
+			onMove = config.onMove,
+			onSpawn = config.onSpawn,
+			onHit = config.onHit,
+			onMiss = config.onMiss,
+			hitDetect = config.hitDetect,
+			colorFilter = config.colorFilter,
 			attackerPlayerId = config.attackerPlayerId,
-			color            = config.color,
-			params           = config.params,
-			tags             = config.tags,
-			replicate        = config.replicate,
-			taskMaid         = config.taskMaid,
-			firedAt          = config.firedAt,
+			color = config.color,
+			params = config.params,
+			tags = config.tags,
+			replicate = config.replicate,
+			taskMaid = config.taskMaid,
+			firedAt = config.firedAt,
 		})
 
 		handle.defModule = defModule
-		handle.defName   = defName
+		handle.defName = defName
 
 		-- 직접 Clone한 모델은 handle maid에 등록
 		if ownPart and part then
@@ -136,10 +133,16 @@ function EntityPlayer.Play(
 		return handle
 	end
 
-	if not config.delay or config.delay <= 0 then return execute() end
+	if not config.delay or config.delay <= 0 then
+		return execute()
+	end
 
-	local cancel = cancellableDelay(config.delay, function() execute() end)
-	if config.taskMaid then config.taskMaid:GiveTask(cancel) end
+	local cancel = cancellableDelay(config.delay, function()
+		execute()
+	end)
+	if config.taskMaid then
+		config.taskMaid:GiveTask(cancel)
+	end
 	return nil
 end
 
@@ -154,20 +157,20 @@ function EntityPlayer.PlayDirect(config: PlayConfig): any?
 
 		local emptyDef: EntityController.EntityDef = {}
 		local handle = EntityController.new(emptyDef, {
-			part             = config.part,
-			origin           = origin,
-			move             = config.move,
-			onMove           = config.onMove,
-			onSpawn          = config.onSpawn,
-			onHit            = config.onHit,
-			onMiss           = config.onMiss,
-			hitDetect        = config.hitDetect,
-			colorFilter      = config.colorFilter,
+			part = config.part,
+			origin = origin,
+			move = config.move,
+			onMove = config.onMove,
+			onSpawn = config.onSpawn,
+			onHit = config.onHit,
+			onMiss = config.onMiss,
+			hitDetect = config.hitDetect,
+			colorFilter = config.colorFilter,
 			attackerPlayerId = config.attackerPlayerId,
-			color            = config.color,
-			params           = config.params,
-			tags             = config.tags,
-			firedAt          = config.firedAt,
+			color = config.color,
+			params = config.params,
+			tags = config.tags,
+			firedAt = config.firedAt,
 		})
 
 		-- 직접 넘기지 않은 part는 어차피 외부에서 생성한 것, maid 등록 불필요
@@ -175,31 +178,49 @@ function EntityPlayer.PlayDirect(config: PlayConfig): any?
 		return handle
 	end
 
-	if not config.delay or config.delay <= 0 then return execute() end
+	if not config.delay or config.delay <= 0 then
+		return execute()
+	end
 
-	local cancel = cancellableDelay(config.delay, function() execute() end)
-	if config.taskMaid then config.taskMaid:GiveTask(cancel) end
+	local cancel = cancellableDelay(config.delay, function()
+		execute()
+	end)
+	if config.taskMaid then
+		config.taskMaid:GiveTask(cancel)
+	end
 	return nil
 end
 
 function EntityPlayer.Preload(defModuleNames: { string })
 	local root = getModelRoot()
 	for _, modName in defModuleNames do
-		if _preloaded[modName] then continue end
+		if _preloaded[modName] then
+			continue
+		end
 		_preloaded[modName] = true
 		local ok, defs = pcall(require, modName)
-		if not ok or type(defs) ~= "table" then continue end
-		if not root then continue end
+		if not ok or type(defs) ~= "table" then
+			continue
+		end
+		if not root then
+			continue
+		end
 		local assets: { Instance } = {}
 		for _, def in defs :: any do
-			if type(def) ~= "table" then continue end
+			if type(def) ~= "table" then
+				continue
+			end
 			local d = def :: any
 			if d.model then
 				local template = root:FindFirstChild(d.model, true)
-				if template then table.insert(assets, template) end
+				if template then
+					table.insert(assets, template)
+				end
 			end
 		end
-		if #assets > 0 then ContentProvider:PreloadAsync(assets) end
+		if #assets > 0 then
+			ContentProvider:PreloadAsync(assets)
+		end
 	end
 end
 

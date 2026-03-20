@@ -42,12 +42,9 @@ return {
 			local origin = CFrame.new(hrp.Position, hrp.Position + state.direction)
 			local aimRatio = math.clamp(state.effectiveAimTime / ANGLE_EXPAND_TIME, 0, 1)
 
-			-- BasicAttackClient가 state.teamContext.color에 자기 색상을 이미 세팅해줌
-			local color: Color3? = state.teamContext and state.teamContext.color
-
 			EntityPlayer.Play(EFFECT_DEF_MODULE, EFFECT_NAME, {
 				origin = origin,
-				color = color,
+				color = state.teamContext and state.teamContext.color,
 				attackerPlayerId = state.attackerPlayerId or localPlayer.UserId,
 				params = { aimRatio = aimRatio },
 				taskMaid = state.taskMaid,

@@ -55,29 +55,15 @@ return {
 
 	CannonExplosion = {
 		model = "CannonExplosion",
-		tags = nil,
-		move = nil,
+		tags = { "projectile" },
+		move = EntityUtils.Linear({
+			speed = PROJECTILE_SPEED,
+			maxRange = MAX_RANGE,
+		}),
 
 		-- move=nil이면 Miss()가 자동 호출되지 않으므로
 		-- onSpawn에서 수명 타이머를 걸어 줌
-		onSpawn = EntityUtils.AutoDespawn(EXPLOSION_LIFETIME),
-
-		onMove = EntityUtils.TransformSequence({
-			EntityUtils.ScaleTo({
-				from = Vector3.new(1, 1, 1),
-				target = Vector3.new(2.5, 2.5, 2.5),
-				duration = 0.5,
-				mode = "spring",
-				speed = 20,
-				damper = 0.7,
-			}),
-			EntityUtils.FadeTo({
-				from = 0,
-				to = 1,
-				duration = 1.0,
-				speed = 1,
-			}),
-		}),
+		-- onSpawn = EntityUtils.AutoDespawn(EXPLOSION_LIFETIME),
 
 		onMiss = EntityUtils.Despawn(),
 		colorFilter = EntityColorUtils.Highlight({

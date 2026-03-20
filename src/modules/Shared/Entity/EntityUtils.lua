@@ -375,6 +375,7 @@ end
 
 function EntityUtils.SpawnEntity(defModule: string, defName: string, options: { [string]: any }?)
 	return function(handle: any, _hitInfo: any?)
+		print(defName)
 		local ep = getEntityPlayer()
 		local spawnCF = handle.part and handle.part:GetPivot() or CFrame.identity
 		local opts: { [string]: any } = options and table.clone(options) or {}
