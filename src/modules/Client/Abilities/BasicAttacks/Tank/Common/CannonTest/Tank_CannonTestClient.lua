@@ -8,7 +8,6 @@ local require = require(script.Parent.loader).load(script)
 local Players = game:GetService("Players")
 
 local EntityPlayer = require("EntityPlayer")
-local TeamClient   = require("TeamClient")
 
 local EFFECT_DEF_MODULE = "Tank_CannonTestEffectDef"
 local EFFECT_NAME       = "CannonBall"
@@ -22,7 +21,7 @@ type BasicAttackState = {
 	indicator        : any,
 	animator         : any?,
 	attackerPlayerId : number?,
-	teamColor        : Color3?,
+	teamContext      : { color: Color3?, [string]: any }?,
 }
 
 return {
@@ -41,14 +40,8 @@ return {
 			local origin   = CFrame.new(hrp.Position, hrp.Position + state.direction)
 			local aimRatio = math.clamp(state.effectiveAimTime / ANGLE_EXPAND_TIME, 0, 1)
 
-			-- 자기 자신 색상: state.teamColor 없으면 TeamClient에서 직접 가져오기
-			local color: Color3? = state.teamColor
-			if not color then
-				local tc = TeamClient:GetLocalTeamClient()
-				if tc then
-					color = tc:GetRelationColor(localPlayer)
-				end
-			end
+			-- BasicAttackClient가 state.teamContext.color에 자기 색상을 이미 세팅해줌
+			local color: Color3? = state.teamContext and state.teamContext.color
 
 			EntityPlayer.Play(EFFECT_DEF_MODULE, EFFECT_NAME, {
 				origin           = origin,
