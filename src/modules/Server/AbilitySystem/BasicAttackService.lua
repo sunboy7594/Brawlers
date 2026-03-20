@@ -155,7 +155,6 @@ export type BasicAttackService = typeof(setmetatable(
 		_playerStateController: any,
 		_classService: any,
 		_teamService: any,
-		_abilityEffectSimulator: any?,
 		_playerStates: { [number]: BasicAttackState },
 		_playerMaids: { [number]: any },
 	},
@@ -177,19 +176,9 @@ function BasicAttackService.Init(self: BasicAttackService, serviceBag: ServiceBa
 	self._teamService = serviceBag:GetService(TeamService)
 	self._playerStates = {}
 	self._playerMaids = {}
-	-- AbilityEffectSimulatorService는 Start에서 lazy 로드 (순환 의존 방지)
-	self._abilityEffectSimulator = nil
 end
 
 function BasicAttackService.Start(self: BasicAttackService): ()
-	-- AbilityEffectSimulatorService lazy 로드
-	local ok, simulator = pcall(function()
-		return self._serviceBag:GetService(require("AbilityEffectSimulatorService"))
-	end)
-	if ok then
-		self._abilityEffectSimulator = simulator
-	end
-
 	self._maid:GiveTask(Players.PlayerAdded:Connect(function(player)
 		self:_onPlayerAdded(player)
 	end))
@@ -522,11 +511,11 @@ end
 -- ─── 실제 발사 실행 ──────────────────────────────────────────────────────────
 
 function BasicAttackService:_executeFire(
-	player  : Player,
-	state   : BasicAttackState,
-	dir     : Vector3,
-	entry   : AttackEntry,
-	latency : number
+	player: Player,
+	state: BasicAttackState,
+	dir: Vector3,
+	entry: AttackEntry,
+	latency: number
 )
 	if not state.humanoid or not state.rootPart then
 		return
@@ -625,30 +614,6 @@ function BasicAttackService:_executeFire(
 			end
 		end
 		BasicAttackRemoting.HitChecked:FireClient(player, victimUserIds)
-	end
-
-	-- AbilityEffectSimulatorService에 onHit 콜백 등록
-	-- Register 수신 시 simulator가 pickup해서 hitDetect 판정 후 호출
-	if self._abilityEffectSimulator then
-		-- HitInfo 배열 → HitMapResult 변환 후 state.onHit 호출
-		self._abilityEffectSimulator:SetPendingOnHit(player.UserId, function(hits)
-			if state.onHit and #hits > 0 then
-				-- HitInfo { target, relation, position } → InstantHit.VictimSet 변환
-				local hitMapResult: InstantHit.HitMapResult = {}
-				local vs: InstantHit.VictimSet = { enemies = {}, teammates = {}, self = nil }
-				for _, hitInfo in hits do
-					if hitInfo.relation == "enemy" then
-						table.insert(vs.enemies, hitInfo.target)
-					elseif hitInfo.relation == "team" then
-						table.insert(vs.teammates, hitInfo.target)
-					elseif hitInfo.relation == "self" then
-						vs.self = hitInfo.target
-					end
-				end
-				hitMapResult["hit"] = vs
-				state.onHit(hitMapResult)
-			end
-		end)
 	end
 
 	if entry.module.onFire then

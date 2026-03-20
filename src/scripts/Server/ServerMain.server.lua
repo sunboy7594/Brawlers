@@ -30,10 +30,9 @@ serviceBag:GetService(require("AnimReplicationService"))
 serviceBag:GetService(require("PlayerStateControllerService"))
 
 -- ─── AbilityEffect ───────────────────────────────────────────
--- AbilityEffectReplicationService: EffectFired → 타 클라이언트 포워딩
--- AbilityEffectSimulatorService: Register → 서버 시뮬 + 판정
+-- AbilityEffectReplicationService: EffectFired → 타 클라이언트 포워딩 (연출 복제 전용)
+-- AbilityEffectSimulatorService 삭제: 서버 투사체 판정은 ProjectileHit으로 이전
 serviceBag:GetService(require("AbilityEffectReplicationService"))
-serviceBag:GetService(require("AbilityEffectSimulatorService"))
 
 serviceBag:Init()
 serviceBag:Start()

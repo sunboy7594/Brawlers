@@ -8,15 +8,19 @@
 	- DefModule 로드 + 이펙트 정의 파싱
 	- 모델 Preload (ContentProvider)
 	- AbilityEffectControllerClient.new() 호출
-	- AbilityEffectReplicationRemoting 전송 (isOwner=true 시)
+	- isOwner=true면 EffectFired 전송 (타 클라이언트 연출 복제 전용)
 
 	Play 흐름:
 	  1. DefModule require → effectDef 파싱
 	  2. spawnConfig 적용한 origin 계산
 	  3. AbilityEffectControllerClient.new()
-	  4. isOwner=true면 EffectFired 전송
-	  5. isOwner=true면 Register 전송
-	  6. handle 반환
+	  4. isOwner=true면 EffectFired 전송 (복제 전용)
+	  5. handle 반환
+
+	변경:
+	  Register:FireServer() 제거.
+	  서버 투사체 판정은 ProjectileHit.fire()로 서버 모듈(onFire)에서 직접 처리.
+	  EffectFired는 타 클라이언트 연출 복제 전용으로만 사용.
 
 	PlayOptions:
 	  {
@@ -29,7 +33,7 @@
 	      userId            : number?,   -- isOwner=false 시 색상 계산용
 	      firedAt           : number?,   -- 복제 수신 시 fast-forward용
 	      teamContext       : { attackerChar, attackerPlayer, teamService }?,
-	      -- DefModule 동작 덮어쓰기 (클라이언트 연이첤용만)
+	      -- DefModule 동작 덮어쓰기 (클라이언트 연출용만)
 	      move   : MoveFunction?,
 	      onMove : OnMoveCallback?,
 	      onHit  : HitCallback?,
@@ -49,7 +53,7 @@ local AbilityEffectReplicationRemoting = require("AbilityEffectReplicationRemoti
 local Maid = require("Maid")
 local cancellableDelay = require("cancellableDelay")
 
--- ─── 모델 프리로드 캐시 ─────────────────────────────────────────────────────────
+-- ─── 모델 프리로드 캐시 ──────────────────────────────────────────────────────
 
 local _preloaded: { [string]: boolean } = {}
 
@@ -84,38 +88,43 @@ local AbilityEffectPlayer = {}
 	게임 시작 시 등록된 DefModule 이름 목록을 넘기세요.
 ]=]
 function AbilityEffectPlayer.Preload(defModuleNames: { string })
-	local toLoad: { Instance } = {}
-	for _, name in defModuleNames do
-		if _preloaded[name] then
+	local root = getModelRoot()
+	if not root then
+		return
+	end
+
+	for _, modName in defModuleNames do
+		if _preloaded[modName] then
 			continue
 		end
-		_preloaded[name] = true
-		local ok, defs = pcall(require, name)
+		_preloaded[modName] = true
+
+		local ok, defs = pcall(require, modName)
 		if not ok or type(defs) ~= "table" then
 			continue
 		end
-		local models = (defs :: any).models
-		if type(models) ~= "table" then
-			continue
-		end
-		local root = getModelRoot()
-		if not root then
-			continue
-		end
-		for _, modelName in models do
-			local m = root:FindFirstChild(modelName)
-			if m then
-				table.insert(toLoad, m)
+
+		local assets: { Instance } = {}
+		for _, def in defs :: any do
+			if type(def) ~= "table" then
+				continue
+			end
+			if def.model then
+				local template = root:FindFirstChild(def.model)
+				if template then
+					table.insert(assets, template)
+				end
 			end
 		end
-	end
-	if #toLoad > 0 then
-		ContentProvider:PreloadAsync(toLoad)
+
+		if #assets > 0 then
+			ContentProvider:PreloadAsync(assets)
+		end
 	end
 end
 
 --[=[
-	DefModule + effectName으로 이펙트를 재생합니다.
+	이펙트를 재생합니다.
 	delay가 있으면 abilityEffectMaid에 cancel 등록 후 대기.
 	대기 중 abilityEffectMaid 파괴 시 취소.
 	이미 발사된 handle의 onHit/onMiss는 abilityEffectMaid와 무관.
@@ -139,7 +148,7 @@ function AbilityEffectPlayer.Play(
 			return nil
 		end
 
-		-- 덮어쓰기 적용 (클라이언트 연이첤 전용)
+		-- 덮어쓰기 적용 (클라이언트 연출 전용)
 		local def: AbilityEffectControllerClient.AbilityEffectDef = {
 			model = baseDef.model,
 			move = options.move or baseDef.move,
@@ -159,32 +168,20 @@ function AbilityEffectPlayer.Play(
 			origin = options.origin :: CFrame
 		end
 
-		-- 색상 결정
-		local color = options.color
-
 		local isOwner = options.isOwner ~= false
 
 		-- handle 생성
 		local handle =
-			AbilityEffectControllerClient.new(def, origin, color, options.params, isOwner, options.teamContext)
+			AbilityEffectControllerClient.new(def, origin, options.color, options.params, isOwner, options.teamContext)
 
-		-- 복제 전송 (isOwner인 경우만)
+		-- ✅ isOwner인 경우 EffectFired 전송 (타 클라이언트 연출 복제 전용)
+		-- Register는 제거: 서버 투사체 판정은 ProjectileHit.fire()로 처리
 		if isOwner then
-			local sentAt = Workspace:GetServerTimeNow()
-			-- EffectFired: 비주얼 복제용
 			AbilityEffectReplicationRemoting.EffectFired:FireServer(
 				defModuleName,
 				effectName,
 				handle.spawnCFrame,
-				sentAt
-			)
-			-- Register: 서버 시뮬용
-			AbilityEffectReplicationRemoting.Register:FireServer(
-				defModuleName,
-				effectName,
-				handle.spawnCFrame,
-				sentAt,
-				options.params
+				Workspace:GetServerTimeNow()
 			)
 		end
 

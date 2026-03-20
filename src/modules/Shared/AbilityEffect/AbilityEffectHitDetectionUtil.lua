@@ -32,6 +32,10 @@
 
 	반환 HitInfo 배열:
 	  { target: Model, relation: HitRelation, position: Vector3 }
+
+	수정:
+	  - humanoid.Health <= 0 → < 0 으로 완화.
+	    Health == 0은 방금 사망한 프레임일 수 있으므로 마지막 타격을 정상 인정.
 ]=]
 
 local AbilityEffectHitDetectionUtil = {}
@@ -165,6 +169,7 @@ function AbilityEffectHitDetectionUtil.Detect(
 			continue
 		end
 		local humanoid = char:FindFirstChildOfClass("Humanoid")
+		-- ✅ <= 0 → < 0: Health == 0은 사망 직후 프레임으로 마지막 타격을 정상 인정
 		if not humanoid or humanoid.Health <= 0 then
 			continue
 		end

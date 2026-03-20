@@ -34,12 +34,12 @@ local AbilityEffectHitOrMissUtil = {}
 export type HitRelation = "enemy" | "self" | "team" | "wall"
 
 export type HitInfo = {
-	target   : Model,
-	relation : HitRelation,
-	position : Vector3,
+	target: Model,
+	relation: HitRelation,
+	position: Vector3,
 }
 
-export type HitCallback  = (handle: any, hitInfo: HitInfo) -> ()
+export type HitCallback = (handle: any, hitInfo: HitInfo) -> ()
 export type MissCallback = (handle: any) -> ()
 
 -- ─── 내부 ────────────────────────────────────────────────────────────────────
@@ -76,7 +76,9 @@ end
 ]=]
 function AbilityEffectHitOrMissUtil.FadeOut(config: { duration: number }): HitCallback & MissCallback
 	return function(handle: any, _hitInfo: any?)
-		if not handle or not handle.IsAlive or not handle:IsAlive() then return end
+		if not handle or not handle.IsAlive or not handle:IsAlive() then
+			return
+		end
 		handle._fadingOut = true
 		local elapsed = 0
 		local conn: RBXScriptConnection
@@ -106,12 +108,14 @@ end
 	서버에서는 아무것도 하지 않음.
 ]=]
 function AbilityEffectHitOrMissUtil.SpawnEffect(
-	defModuleName : string,
-	effectName    : string,
-	options       : { [string]: any }?
+	defModuleName: string,
+	effectName: string,
+	options: { [string]: any }?
 ): HitCallback & MissCallback
 	return function(handle: any, _hitInfo: any?)
-		if not IS_CLIENT then return end
+		if not IS_CLIENT then
+			return
+		end
 		-- loader 기반 require (클라이언트에서만 실행되므로 안전)
 		local ok, AbilityEffectPlayer = pcall(require, "AbilityEffectPlayer")
 		if not ok then
@@ -146,8 +150,8 @@ end
 	onMaxHit = nil이면 Despawn() 자동.
 ]=]
 function AbilityEffectHitOrMissUtil.Penetrate(config: {
-	maxCount : number,
-	onMaxHit : HitCallback?,
+	maxCount: number,
+	onMaxHit: HitCallback?,
 }): HitCallback
 	return function(handle: any, hitInfo: HitInfo)
 		local count: number = (handle._penetrateCount or 0) + 1

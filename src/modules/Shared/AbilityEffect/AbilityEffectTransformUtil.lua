@@ -28,9 +28,9 @@ local AbilityEffectTransformUtil = {}
 export type OnMoveCallback = (model: Model, dt: number) -> ()
 
 export type ModeConfig = {
-	mode   : ("linear" | "spring")?,
-	speed  : number,
-	damper : number?,
+	mode: ("linear" | "spring")?,
+	speed: number,
+	damper: number?,
 }
 
 -- ─── 내부 유틸 ───────────────────────────────────────────────────────────────
@@ -53,9 +53,11 @@ end
 
 local function setSize(model: Model, scale: Vector3)
 	local primary = model.PrimaryPart
-	if not primary then return end
-	local baseSize: Vector3 = (model :: any)._baseSize or primary.Size
-	;(model :: any)._baseSize = baseSize
+	if not primary then
+		return
+	end
+	local baseSize: Vector3 = (model :: any)._baseSize or primary.Size;
+	(model :: any)._baseSize = baseSize
 	primary.Size = Vector3.new(baseSize.X * scale.X, baseSize.Y * scale.Y, baseSize.Z * scale.Z)
 end
 
@@ -76,9 +78,9 @@ end
 -- ─── 팩토리: Rotate ──────────────────────────────────────────────────────────
 
 export type RotateConfig = {
-	axis        : Vector3,
-	speed       : number,         -- 도/초
-	randomAngle : number?,        -- 초기 랜덤 오프셋 (도)
+	axis: Vector3,
+	speed: number, -- 도/초
+	randomAngle: number?, -- 초기 랜덤 오프셋 (도)
 }
 
 function AbilityEffectTransformUtil.Rotate(config: RotateConfig): OnMoveCallback
@@ -93,7 +95,9 @@ function AbilityEffectTransformUtil.Rotate(config: RotateConfig): OnMoveCallback
 		end
 		totalAngle += config.speed * dt
 		local primary = model.PrimaryPart
-		if not primary then return end
+		if not primary then
+			return
+		end
 		local rad = math.rad(totalAngle)
 		local axis = config.axis.Unit
 		model:PivotTo(model:GetPivot() * CFrame.fromAxisAngle(axis, rad - math.rad(totalAngle - config.speed * dt)))
@@ -103,12 +107,12 @@ end
 -- ─── 팩토리: Fade ────────────────────────────────────────────────────────────
 
 export type FadeConfig = {
-	from     : number,
-	to       : number,
-	duration : number?,
-	mode     : ("linear" | "spring")?,
-	speed    : number,
-	damper   : number?,
+	from: number,
+	to: number,
+	duration: number?,
+	mode: ("linear" | "spring")?,
+	speed: number,
+	damper: number?,
 }
 
 function AbilityEffectTransformUtil.Fade(config: FadeConfig): OnMoveCallback
@@ -139,12 +143,12 @@ end
 -- ─── 팩토리: ScaleTo ─────────────────────────────────────────────────────────
 
 export type ScaleToConfig = {
-	from     : Vector3?,
-	target   : Vector3,
-	duration : number?,
-	mode     : ("linear" | "spring")?,
-	speed    : number,
-	damper   : number?,
+	from: Vector3?,
+	target: Vector3,
+	duration: number?,
+	mode: ("linear" | "spring")?,
+	speed: number,
+	damper: number?,
 }
 
 function AbilityEffectTransformUtil.ScaleTo(config: ScaleToConfig): OnMoveCallback
@@ -172,7 +176,7 @@ function AbilityEffectTransformUtil.ScaleTo(config: ScaleToConfig): OnMoveCallba
 			currentScale = Vector3.new(nx, ny, nz)
 			velX, velY, velZ = vx, vy, vz
 		else
-			local from = config.from or Vector3.one
+			local from = config.from or Vector3.new(1, 1, 1)
 			currentScale = from:Lerp(config.target, t)
 		end
 		setSize(model, currentScale)
@@ -182,11 +186,11 @@ end
 -- ─── 팩토리: ScalePulse ──────────────────────────────────────────────────────
 
 export type ScalePulseConfig = {
-	peak     : Vector3,
-	duration : number,
-	mode     : ("linear" | "spring")?,
-	speed    : number,
-	damper   : number?,
+	peak: Vector3,
+	duration: number,
+	mode: ("linear" | "spring")?,
+	speed: number,
+	damper: number?,
 }
 
 function AbilityEffectTransformUtil.ScalePulse(config: ScalePulseConfig): OnMoveCallback
@@ -197,9 +201,9 @@ function AbilityEffectTransformUtil.ScalePulse(config: ScalePulseConfig): OnMove
 		local t = math.clamp(elapsed / config.duration, 0, 1)
 		local scale: Vector3
 		if t < 0.5 then
-			scale = Vector3.one:Lerp(config.peak, t * 2)
+			scale = Vector3.new(1, 1, 1):Lerp(config.peak, t * 2)
 		else
-			scale = config.peak:Lerp(Vector3.one, (t - 0.5) * 2)
+			scale = config.peak:Lerp(Vector3.new(1, 1, 1), (t - 0.5) * 2)
 		end
 		setSize(model, scale)
 	end
@@ -207,11 +211,7 @@ end
 
 -- ─── Apply: ApplyFade ────────────────────────────────────────────────────────
 
-function AbilityEffectTransformUtil.ApplyFade(
-	model    : Model,
-	config   : FadeConfig,
-	maid     : any?
-)
+function AbilityEffectTransformUtil.ApplyFade(model: Model, config: FadeConfig, maid: any?)
 	local elapsed = 0
 	local current = config.from
 	local velocity = 0
@@ -220,8 +220,7 @@ function AbilityEffectTransformUtil.ApplyFade(
 		elapsed += dt
 		if config.mode == "spring" then
 			local damper = config.damper or 1
-			local acc = -config.speed * config.speed * (current - config.to)
-				- 2 * damper * config.speed * velocity
+			local acc = -config.speed * config.speed * (current - config.to) - 2 * damper * config.speed * velocity
 			velocity += acc * dt
 			current += velocity * dt
 		else
@@ -229,43 +228,47 @@ function AbilityEffectTransformUtil.ApplyFade(
 			current = lerpNumber(config.from, config.to, t)
 		end
 		current = math.clamp(current, math.min(config.from, config.to), math.max(config.from, config.to))
-		if not model.Parent then conn:Disconnect() return end
+		if not model.Parent then
+			conn:Disconnect()
+			return
+		end
 		setTransparency(model, current)
 		local done = config.duration and elapsed >= config.duration
-		if done then conn:Disconnect() end
+		if done then
+			conn:Disconnect()
+		end
 	end)
-	if maid then maid:GiveTask(conn) end
+	if maid then
+		maid:GiveTask(conn)
+	end
 end
 
 -- ─── Apply: ApplyScaleTo ─────────────────────────────────────────────────────
 
-function AbilityEffectTransformUtil.ApplyScaleTo(
-	model  : Model,
-	config : ScaleToConfig,
-	maid   : any?
-)
+function AbilityEffectTransformUtil.ApplyScaleTo(model: Model, config: ScaleToConfig, maid: any?)
 	local cb = AbilityEffectTransformUtil.ScaleTo(config)
 	local conn: RBXScriptConnection
 	conn = RunService.Heartbeat:Connect(function(dt)
-		if not model.Parent then conn:Disconnect() return end
+		if not model.Parent then
+			conn:Disconnect()
+			return
+		end
 		cb(model, dt)
 	end)
-	if maid then maid:GiveTask(conn) end
+	if maid then
+		maid:GiveTask(conn)
+	end
 end
 
 -- ─── Apply: ApplyShake ───────────────────────────────────────────────────────
 
 export type ShakeConfig = {
-	intensity : number,
-	duration  : number,
-	frequency : number?,
+	intensity: number,
+	duration: number,
+	frequency: number?,
 }
 
-function AbilityEffectTransformUtil.ApplyShake(
-	model  : Model,
-	config : ShakeConfig,
-	maid   : any?
-)
+function AbilityEffectTransformUtil.ApplyShake(model: Model, config: ShakeConfig, maid: any?)
 	local elapsed = 0
 	local freq = config.frequency or 20
 	local originalCF = model:GetPivot()
@@ -285,7 +288,9 @@ function AbilityEffectTransformUtil.ApplyShake(
 		)
 		model:PivotTo(originalCF * CFrame.new(offset))
 	end)
-	if maid then maid:GiveTask(conn) end
+	if maid then
+		maid:GiveTask(conn)
+	end
 end
 
 return AbilityEffectTransformUtil

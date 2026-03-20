@@ -1,6 +1,15 @@
 --!strict
 --[=[
 	@class AbilityEffectSimulatorService
+
+	수정:
+	  - PendingSim에 handleCF 필드 추가: 서버에서 bullet의 현재 CFrame을 누적.
+	  - _makeHandle에서 part = nil → fakePart 로 교체.
+	    fakePart.GetPivot()이 현재 bullet 위치를 반환하므로
+	    AbilityEffectHitDetectionUtil.Detect()의 baseCF가 CFrame.identity(0,0,0)에
+	    고정되던 버그 수정.
+	  - _simB(latency fast-forward)에서도 매 step마다 move()를 호출하여
+	    위치를 누적한 뒤 hitDetect 판정.
 ]=]
 
 local require = require(script.Parent.loader).load(script)
@@ -23,6 +32,7 @@ local AbilityEffectSimulatorService = {}
 AbilityEffectSimulatorService.ServiceName = "AbilityEffectSimulatorService"
 AbilityEffectSimulatorService.__index = AbilityEffectSimulatorService
 
+-- ✅ handleCF 추가: 서버에서 bullet이 현재 어디에 있는지 누적
 type PendingSim = {
 	player: Player,
 	def: any,
@@ -31,6 +41,7 @@ type PendingSim = {
 	latency: number,
 	elapsed: number,
 	onHit: ((hitInfos: { AbilityEffectHitDetectionUtil.HitInfo }) -> ())?,
+	handleCF: CFrame,
 }
 
 function AbilityEffectSimulatorService.Init(self: any, serviceBag: any)
@@ -92,8 +103,23 @@ end
 
 function AbilityEffectSimulatorService:_makeHandle(sim: PendingSim, elapsedOverride: number?): any
 	local ts = self._teamService
+
+	-- ✅ fakePart: GetPivot()이 sim.handleCF를 반환하고,
+	--    move()가 PivotTo()를 호출하면 sim.handleCF를 갱신함.
+	--    part = nil이었을 때는 baseCF가 항상 CFrame.identity(0,0,0)이었음.
+	local fakePart = {
+		_cf = sim.handleCF,
+		GetPivot = function(self_: any): CFrame
+			return self_._cf
+		end,
+		PivotTo = function(self_: any, cf: CFrame)
+			self_._cf = cf
+			sim.handleCF = cf -- 위치 누적
+		end,
+	}
+
 	return {
-		part = nil,
+		part = fakePart,
 		_moveElapsed = elapsedOverride or sim.elapsed,
 		_moveOrigin = sim.origin.Position,
 		_moveDir = sim.origin.LookVector,
@@ -169,6 +195,7 @@ function AbilityEffectSimulatorService:_onRegister(player, defModuleName, effect
 		latency = latency,
 		elapsed = 0,
 		onHit = onHit,
+		handleCF = origin :: CFrame, -- ✅ 초기값
 	}
 
 	if def.hitDetect and def.move then
@@ -178,7 +205,7 @@ function AbilityEffectSimulatorService:_onRegister(player, defModuleName, effect
 	self._sims[projectileId] = sim
 end
 
--- ─── SimB ────────────────────────────────────────────────────────────────────
+-- ─── SimB (latency fast-forward) ─────────────────────────────────────────────
 
 function AbilityEffectSimulatorService:_simB(sim: PendingSim)
 	if sim.latency <= 0 then
@@ -191,6 +218,12 @@ function AbilityEffectSimulatorService:_simB(sim: PendingSim)
 	for i = 1, steps do
 		local t = stepDt * i
 		local handle = self:_makeHandle(sim, t)
+
+		-- ✅ move를 먼저 실행해서 fakePart 위치(sim.handleCF)를 갱신
+		if sim.def.move then
+			sim.def.move(stepDt, handle, sim.params)
+		end
+
 		local hits = AbilityEffectHitDetectionUtil.Detect(sim.def.hitDetect, t, handle, sim.params)
 		if #hits > 0 then
 			for id, s in self._sims do
