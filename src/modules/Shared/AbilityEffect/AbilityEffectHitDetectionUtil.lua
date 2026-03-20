@@ -11,17 +11,24 @@
 	      offset       = CFrame.new(0, 0, -1.5),
 	      activateAt   = 0.1,
 	      deactivateAt = 0.5,
+	      relations    = { "enemy" },  -- nil이면 {"enemy"} 기본값
 	      sizeGrow     = { from = Vector3.new(1,3,1), to = Vector3.new(6,3,6), duration = 0.3, mode = "linear", speed = 1 },
 	  })
 
 	  hitDetect = function(elapsed, handle, params)
-	      -- 완전 커스텀
 	      return AbilityEffectHitDetectionUtil.Box({ size = Vector3.new(elapsed * 2, 3, elapsed * 2) })
 	  end
 
 	HitDetectFunction:
 	  고정값: BoxConfig
 	  동적:   (elapsed, handle, params) -> BoxConfig?   nil이면 이번 프레임 판정 스킵
+
+	relations:
+	  nil            → { "enemy" } 기본값
+	  { "enemy" }    → 적만
+	  { "team" }     → 아군만 (힐 스킬 등)
+	  { "self" }     → 자기 자신만
+	  { "enemy", "team", "self" } → 전체
 
 	반환 HitInfo 배열:
 	  { target: Model, relation: HitRelation, position: Vector3 }
@@ -34,31 +41,30 @@ local AbilityEffectHitDetectionUtil = {}
 export type HitRelation = "enemy" | "self" | "team" | "wall"
 
 export type HitInfo = {
-	target   : Model,
-	relation : HitRelation,
-	position : Vector3,
+	target: Model,
+	relation: HitRelation,
+	position: Vector3,
 }
 
 export type GrowConfig = {
-	from     : Vector3,
-	to       : Vector3,
-	duration : number,
-	mode     : ("linear" | "spring")?,
-	speed    : number,
-	damper   : number?,
+	from: Vector3,
+	to: Vector3,
+	duration: number,
+	mode: ("linear" | "spring")?,
+	speed: number,
+	damper: number?,
 }
 
 export type BoxConfig = {
-	size         : Vector3,
-	offset       : CFrame?,
-	activateAt   : number?,
-	deactivateAt : number?,
-	sizeGrow     : GrowConfig?,
+	size: Vector3,
+	offset: CFrame?,
+	activateAt: number?,
+	deactivateAt: number?,
+	sizeGrow: GrowConfig?,
+	relations: { HitRelation }?,
 }
 
-export type HitDetectFunction =
-	BoxConfig
-	| (elapsed: number, handle: any, params: { [string]: any }?) -> BoxConfig?
+export type HitDetectFunction = BoxConfig | (elapsed: number, handle: any, params: { [string]: any }?) -> BoxConfig?
 
 -- ─── 내부 유틸 ───────────────────────────────────────────────────────────────
 
@@ -68,10 +74,11 @@ end
 
 local function resolveSize(config: BoxConfig, elapsed: number): Vector3
 	local grow = config.sizeGrow
-	if not grow then return config.size end
+	if not grow then
+		return config.size
+	end
 	local t = math.clamp(elapsed / grow.duration, 0, 1)
 	if grow.mode == "spring" then
-		-- 단순 지수 근사
 		t = 1 - math.exp(-grow.speed * elapsed)
 		t = math.clamp(t, 0, 1)
 	end
@@ -87,30 +94,25 @@ end
 -- ─── 판정 실행 ────────────────────────────────────────────────────────────────
 
 --[=[
-	elapsed, handle, params를 받아 현재 프레임의 판정을 실행합니다.
-	hitDetect가 nil이면 빈 배열 반환.
+	handle._teamContext에서 attackerChar, attackerPlayer, isEnemy를 꺼내 판정합니다.
+	boxConfig.relations로 반환할 relation을 필터링합니다.
 
 	@param hitDetect   HitDetectFunction?
 	@param elapsed     number
-	@param handle      any
+	@param handle      any   handle._teamContext 참조
 	@param params      { [string]: any }?
-	@param attackerChar Model   충돌 제외 대상
-	@param teamService  any?    팀 판별용
-	@param attackerPlayer Player?
 	@return { HitInfo }
 ]=]
 function AbilityEffectHitDetectionUtil.Detect(
-	hitDetect      : HitDetectFunction?,
-	elapsed        : number,
-	handle         : any,
-	params         : { [string]: any }?,
-	attackerChar   : Model?,
-	teamService    : any?,
-	attackerPlayer : any?
+	hitDetect: HitDetectFunction?,
+	elapsed: number,
+	handle: any,
+	params: { [string]: any }?
 ): { HitInfo }
-	if not hitDetect then return {} end
+	if not hitDetect then
+		return {}
+	end
 
-	-- BoxConfig 해석
 	local boxConfig: BoxConfig?
 	if type(hitDetect) == "function" then
 		boxConfig = (hitDetect :: any)(elapsed, handle, params)
@@ -118,55 +120,72 @@ function AbilityEffectHitDetectionUtil.Detect(
 		boxConfig = hitDetect :: BoxConfig
 	end
 
-	if not boxConfig then return {} end
+	if not boxConfig then
+		return {}
+	end
 
-	-- activateAt / deactivateAt 체크
-	if boxConfig.activateAt and elapsed < boxConfig.activateAt then return {} end
-	if boxConfig.deactivateAt and elapsed > boxConfig.deactivateAt then return {} end
+	if boxConfig.activateAt and elapsed < boxConfig.activateAt then
+		return {}
+	end
+	if boxConfig.deactivateAt and elapsed > boxConfig.deactivateAt then
+		return {}
+	end
 
-	-- 현재 크기 계산
+	-- teamContext 추출
+	local teamContext = handle._teamContext
+	local attackerChar = teamContext and teamContext.attackerChar
+	local attackerPlayer = teamContext and teamContext.attackerPlayer
+	local isEnemyFn = teamContext and teamContext.isEnemy
+
+	-- relations 필터 빌드
+	local relationFilter: { [HitRelation]: boolean } = {}
+	for _, r in (boxConfig.relations or { "enemy" }) do
+		relationFilter[r] = true
+	end
+
 	local size = resolveSize(boxConfig, elapsed)
-
-	-- 판정 기준 CFrame
 	local baseCF = handle.part and handle.part:GetPivot() or CFrame.identity
 	local detectCF = boxConfig.offset and (baseCF * boxConfig.offset) or baseCF
 
-	-- OverlapParams: 자신 캐릭터 제외
 	local overlapParams = OverlapParams.new()
 	overlapParams.FilterType = Enum.RaycastFilterType.Exclude
-	if attackerChar then
+	if attackerChar and not relationFilter["self"] then
+		-- self를 감지하지 않을 때만 필터에서 제외
 		overlapParams.FilterDescendantsInstances = { attackerChar }
 	end
 
 	local parts = workspace:GetPartBoundsInBox(detectCF, size, overlapParams)
 
-	-- 캐릭터 중복 제거 + HitInfo 생성
 	local seen: { [Model]: boolean } = {}
 	local results: { HitInfo } = {}
 
 	for _, part in parts do
 		local char = part:FindFirstAncestorOfClass("Model")
-		if not char or seen[char] then continue end
+		if not char or seen[char] then
+			continue
+		end
 		local humanoid = char:FindFirstChildOfClass("Humanoid")
-		if not humanoid or humanoid.Health <= 0 then continue end
+		if not humanoid or humanoid.Health <= 0 then
+			continue
+		end
 		seen[char] = true
 
 		local relation: HitRelation = "enemy"
 		if char == attackerChar then
 			relation = "self"
-		elseif teamService and attackerPlayer then
+		elseif isEnemyFn and attackerPlayer then
 			local victimPlayer = game:GetService("Players"):GetPlayerFromCharacter(char)
 			if victimPlayer then
-				if teamService:IsEnemy(attackerPlayer, victimPlayer) then
-					relation = "enemy"
-				else
-					relation = "team"
-				end
+				relation = if isEnemyFn(attackerPlayer, victimPlayer) then "enemy" else "team"
 			end
 		end
 
+		if not relationFilter[relation] then
+			continue
+		end
+
 		table.insert(results, {
-			target   = char,
+			target = char,
 			relation = relation,
 			position = char:GetPivot().Position,
 		})

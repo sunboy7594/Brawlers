@@ -1,89 +1,69 @@
 --!strict
 --[=[
-	@class AbilityEffectReplicationService
-
-	EffectFired 수신 → 타 클라이언트에 EffectBroadcast 포워딩. (Server)
-
-	역할:
-	- EffectFired 수신 → 기본 유효성 검증
-	- 발사자 제외 타 클라이언트에 EffectBroadcast 전송
+	@class AbilityEffectReplicationClient
 ]=]
 
 local require = require(script.Parent.loader).load(script)
 
 local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
 
+local AbilityEffectPlayer = require("AbilityEffectPlayer")
 local AbilityEffectReplicationRemoting = require("AbilityEffectReplicationRemoting")
 local Maid = require("Maid")
 local ServiceBag = require("ServiceBag")
+local TeamClient = require("TeamClient")
 
-local MAX_ORIGIN_DISTANCE = 200
-local RATE_LIMIT_INTERVAL  = 0.05
+local AbilityEffectReplicationClient = {}
+AbilityEffectReplicationClient.ServiceName = "AbilityEffectReplicationClient"
+AbilityEffectReplicationClient.__index = AbilityEffectReplicationClient
 
-local AbilityEffectReplicationService = {}
-AbilityEffectReplicationService.ServiceName = "AbilityEffectReplicationService"
-AbilityEffectReplicationService.__index = AbilityEffectReplicationService
-
-function AbilityEffectReplicationService.Init(self: any, _serviceBag: any)
-	self._maid         = Maid.new()
-	self._lastFireTime = {} :: { [number]: number }
+function AbilityEffectReplicationClient.Init(self: any, serviceBag: any)
+	self._maid = Maid.new()
+	self._teamClient = serviceBag:GetService(TeamClient)
 end
 
-function AbilityEffectReplicationService.Start(self: any)
-	for _, player in Players:GetPlayers() do
-		self._lastFireTime[player.UserId] = 0
-	end
-	self._maid:GiveTask(Players.PlayerAdded:Connect(function(player)
-		self._lastFireTime[player.UserId] = 0
-	end))
-	self._maid:GiveTask(Players.PlayerRemoving:Connect(function(player)
-		self._lastFireTime[player.UserId] = nil
-	end))
-
+function AbilityEffectReplicationClient.Start(self: any)
 	self._maid:GiveTask(
-		AbilityEffectReplicationRemoting.EffectFired:Connect(function(
-			player        : Player,
-			defModuleName : unknown,
-			effectName    : unknown,
-			origin        : unknown,
-			sentAt        : unknown
+		AbilityEffectReplicationRemoting.EffectBroadcast:Connect(
+			function(userId: number, defModuleName: string, effectName: string, origin: CFrame, sentAt: number)
+				if userId == Players.LocalPlayer.UserId then
+					return
+				end
+
+				local elapsed = math.max(0, Workspace:GetServerTimeNow() - sentAt)
+
+				local player = Players:GetPlayerByUserId(userId)
+				local color: Color3? = nil
+				if player and self._teamClient then
+					color = self._teamClient:GetRelationColor(player)
+				end
+
+				local tc = self._teamClient
+				local teamContext = {
+					attackerChar = player and player.Character,
+					attackerPlayer = player,
+					color = color,
+					isEnemy = function(a: Player, b: Player): boolean
+						return tc:IsEnemy(a, b)
+					end,
+				}
+
+				AbilityEffectPlayer.Play(defModuleName, effectName, {
+					origin = origin,
+					color = color,
+					isOwner = false,
+					userId = userId,
+					firedAt = sentAt,
+					teamContext = teamContext,
+				})
+			end
 		)
-			if type(defModuleName) ~= "string" or #defModuleName == 0 then return end
-			if type(effectName) ~= "string"    or #effectName == 0    then return end
-			if typeof(origin) ~= "CFrame"  then return end
-			if type(sentAt)   ~= "number"  then return end
-
-			local now = os.clock()
-			local last = self._lastFireTime[player.UserId] or 0
-			if now - last < RATE_LIMIT_INTERVAL then return end
-			self._lastFireTime[player.UserId] = now
-
-			-- origin 거리 검증
-			local char = player.Character
-			local hrp = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
-			if hrp then
-				local dist = ((origin :: CFrame).Position - hrp.Position).Magnitude
-				if dist > MAX_ORIGIN_DISTANCE then return end
-			end
-
-			-- 타 클라이언트에 전달
-			for _, other in Players:GetPlayers() do
-				if other == player then continue end
-				AbilityEffectReplicationRemoting.EffectBroadcast:FireClient(
-					other,
-					player.UserId,
-					defModuleName,
-					effectName,
-					origin,
-					sentAt
-				)
-			end
-		end)
 	)
 end
 
-function AbilityEffectReplicationService.Destroy(self: any)
+function AbilityEffectReplicationClient.Destroy(self: any)
 	self._maid:Destroy()
 end
 
-return AbilityEffectReplicationService
+return AbilityEffectReplicationClient

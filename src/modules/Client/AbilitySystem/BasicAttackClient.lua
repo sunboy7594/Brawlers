@@ -157,7 +157,13 @@ export type BasicAttackState = {
 	animator: any?,
 
 	-- 팀 컨텍스트 (AbilityEffectPlayer에 teamContext로 전달)
-	teamContext: { attackerChar: Model?, attackerPlayer: any?, teamService: any? }?,
+	-- BasicAttackState 타입 내부
+	teamContext: {
+		attackerChar: Model?,
+		attackerPlayer: Player?,
+		color: Color3?,
+		isEnemy: (a: Player, b: Player) -> boolean,
+	}?,
 }
 
 -- ─── 타입 ────────────────────────────────────────────────────────────────────
@@ -314,10 +320,15 @@ function BasicAttackClient:SetEquippedAttack(attackId: string)
 
 	-- 팀 컨텍스트 (AbilityEffectPlayer teamContext용)
 	local localPlayer = Players.LocalPlayer
+	local teamClient = self._teamClient
+
 	local teamContext = {
-		attackerChar   = localPlayer.Character,
+		attackerChar = localPlayer.Character,
 		attackerPlayer = localPlayer,
-		teamService    = nil, -- 서버가 처리, 클라이언트는 nil 가능
+		color = teamClient:GetMyColor(),
+		isEnemy = function(a: Player, b: Player): boolean
+			return teamClient:IsEnemy(a, b)
+		end,
 	}
 
 	self._attackState = {

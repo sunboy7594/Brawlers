@@ -1,19 +1,6 @@
 --!strict
 --[=[
 	@class Tank_CannonTestClient
-
-	탱크 캐논 테스트 기본공격 클라이언트 모듈.
-
-	연이체 흐름:
-	  onFire:
-	    1. AbilityEffectPlayer.Play() → CannonBall 소환
-	       delay 없음 → 즉시 발사, spawnCFrame 반환
-	    2. params에 aimRatio 주입 (판정 크기 조정용)
-	    3. 비주얼은 클라이언트가 담당, 판정은 서버(AbilityEffectSimulatorService)가 담당
-
-	state.abilityEffectMaid:
-	  delay가 있는 Play()에 넘기면 취소 시 대기 중 발사 취소됨.
-	  이미 발사된 쳤논볼은 독립 수명으로 계속 진행.
 ]=]
 
 local require = require(script.Parent.loader).load(script)
@@ -22,13 +9,16 @@ local Players = game:GetService("Players")
 
 local AbilityEffectPlayer = require("AbilityEffectPlayer")
 
--- ─── 설정 ────────────────────────────────────────────────────────────────────
-
 local EFFECT_DEF_MODULE = "Tank_CannonTestEffectDef"
 local EFFECT_NAME = "CannonBall"
-local ANGLE_EXPAND_TIME = 3.0 -- 조준 시간 만나에 판정 최대화
+local ANGLE_EXPAND_TIME = 3.0
 
--- ─── 상태 타입 ───────────────────────────────────────────────────────────────
+type TeamContext = {
+	attackerChar: Model?,
+	attackerPlayer: Player?,
+	color: Color3?,
+	isEnemy: (a: Player, b: Player) -> boolean,
+}
 
 type BasicAttackState = {
 	origin: Vector3,
@@ -38,10 +28,8 @@ type BasicAttackState = {
 	abilityEffectMaid: any?,
 	indicator: any,
 	animator: any?,
-	teamContext: any?,
+	teamContext: TeamContext?,
 }
-
--- ─── 모듈 정의 ───────────────────────────────────────────────────────────────
 
 return {
 	shapes = {},
@@ -59,14 +47,11 @@ return {
 			end
 
 			local origin = CFrame.new(hrp.Position, hrp.Position + state.direction)
-
-			-- aimRatio: effectiveAimTime 비례로 판정 크기 제어
 			local aimRatio = math.clamp(state.effectiveAimTime / ANGLE_EXPAND_TIME, 0, 1)
 
-			-- 클라이언트 연이첤 재생
-			-- isOwner=true → EffectFired + Register 서버 전송 자동
 			AbilityEffectPlayer.Play(EFFECT_DEF_MODULE, EFFECT_NAME, {
 				origin = origin,
+				color = state.teamContext and state.teamContext.color,
 				abilityEffectMaid = state.abilityEffectMaid,
 				params = { aimRatio = aimRatio },
 				teamContext = state.teamContext,

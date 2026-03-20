@@ -17,30 +17,12 @@
 	    _moveStopped = true → move 건너뜀, hitDetect 계속
 	    _fadingOut = true → hitDetect 건너뜀
 	  외부 강제 종료: Destroy() → onMiss 없이 정리
-
-	AbilityEffectDef (DefModule 내 개별 이펙트 정의):
-	  {
-	      model      : string?,             -- ReplicatedStorage.AbilityEffects 하위
-	      move       : MoveFunction?,
-	      onMove     : OnMoveCallback?,
-	      onHit      : HitCallback?,
-	      onMiss     : MissCallback?,
-	      hitDetect  : HitDetectFunction?,
-	      colorFilter: ColorFilter?,
-	      spawnConfig: SpawnConfig?,
-	  }
-
-	SpawnConfig:
-	  {
-	      offsetRange    : Vector3 | { Vector3, Vector3 }?,
-	      directionRange : Vector3 | { Vector3, Vector3 }?,
-	  }
 ]=]
 
 local require = require(script.Parent.loader).load(script)
 
 local RunService = game:GetService("RunService")
-local Workspace  = game:GetService("Workspace")
+local Workspace = game:GetService("Workspace")
 
 local AbilityEffectHitDetectionUtil = require("AbilityEffectHitDetectionUtil")
 local Maid = require("Maid")
@@ -48,47 +30,55 @@ local Maid = require("Maid")
 -- ─── 타입 ────────────────────────────────────────────────────────────────────
 
 export type HitRelation = AbilityEffectHitDetectionUtil.HitRelation
-export type HitInfo     = AbilityEffectHitDetectionUtil.HitInfo
+export type HitInfo = AbilityEffectHitDetectionUtil.HitInfo
 
-export type MoveFunction   = (dt: number, handle: any, params: { [string]: any }?) -> boolean
+export type MoveFunction = (dt: number, handle: any, params: { [string]: any }?) -> boolean
 export type OnMoveCallback = (model: Model, dt: number) -> ()
-export type HitCallback    = (handle: any, hitInfo: HitInfo) -> ()
-export type MissCallback   = (handle: any) -> ()
-export type ColorFilter    = (model: Model, color: Color3) -> () -> ()
+export type HitCallback = (handle: any, hitInfo: HitInfo) -> ()
+export type MissCallback = (handle: any) -> ()
+export type ColorFilter = (model: Model, color: Color3) -> () -> ()
+
+export type TeamContext = {
+	attackerChar: Model?,
+	attackerPlayer: Player?,
+	color: Color3?,
+	isEnemy: (a: Player, b: Player) -> boolean,
+}
 
 export type SpawnConfig = {
-	offsetRange    : (Vector3 | { Vector3 })?,
-	directionRange : (Vector3 | { Vector3 })?,
+	offsetRange: (Vector3 | { Vector3 })?,
+	directionRange: (Vector3 | { Vector3 })?,
 }
 
 export type AbilityEffectDef = {
-	model       : string?,
-	move        : MoveFunction?,
-	onMove      : OnMoveCallback?,
-	onHit       : HitCallback?,
-	onMiss      : MissCallback?,
-	hitDetect   : AbilityEffectHitDetectionUtil.HitDetectFunction?,
-	colorFilter : ColorFilter?,
-	spawnConfig : SpawnConfig?,
+	model: string?,
+	move: MoveFunction?,
+	onMove: OnMoveCallback?,
+	onHit: HitCallback?,
+	onMiss: MissCallback?,
+	hitDetect: AbilityEffectHitDetectionUtil.HitDetectFunction?,
+	colorFilter: ColorFilter?,
+	spawnConfig: SpawnConfig?,
 }
 
 export type AbilityEffectHandle = typeof(setmetatable(
 	{} :: {
-		part          : Model?,
-		spawnCFrame   : CFrame,
-		isOwner       : boolean,
-		firedAt       : number,
-		_alive        : boolean,
-		_maid         : any,
-		_moveStopped  : boolean,
-		_fadingOut    : boolean,
-		_penetrateCount : number,
-		_moveElapsed  : number,
-		_moveOrigin   : Vector3,
-		_moveDir      : Vector3?,
-		_sweepBase    : CFrame?,
-		_onHit        : HitCallback?,
-		_onMiss       : MissCallback?,
+		part: Model?,
+		spawnCFrame: CFrame,
+		isOwner: boolean,
+		firedAt: number,
+		_alive: boolean,
+		_maid: any,
+		_moveStopped: boolean,
+		_fadingOut: boolean,
+		_penetrateCount: number,
+		_moveElapsed: number,
+		_moveOrigin: Vector3,
+		_moveDir: Vector3?,
+		_sweepBase: CFrame?,
+		_onHit: HitCallback?,
+		_onMiss: MissCallback?,
+		_teamContext: TeamContext?,
 	},
 	{} :: typeof({ __index = {} })
 ))
@@ -126,79 +116,63 @@ end
 local AbilityEffectControllerClient = {}
 AbilityEffectControllerClient.__index = AbilityEffectControllerClient
 
---[=[
-	새 AbilityEffectHandle을 생성하고 Heartbeat 루프를 시작합니다.
-
-	@param def         AbilityEffectDef
-	@param origin      CFrame             spawnConfig 적용 전 기준 위치
-	@param color       Color3?
-	@param params      { [string]: any }?
-	@param isOwner     boolean
-	@param teamContext { attackerChar, attackerPlayer, teamService }?
-	@param abilityEffectMaid any?         대기 중 발사 취소용 (이 함수에서는 사용 안 함)
-	@return AbilityEffectHandle
-]=]
 function AbilityEffectControllerClient.new(
-	def          : AbilityEffectDef,
-	origin       : CFrame,
-	color        : Color3?,
-	params       : { [string]: any }?,
-	isOwner      : boolean?,
-	teamContext  : { attackerChar: Model?, attackerPlayer: any?, teamService: any? }?,
-	_abilityEffectMaid : any?
+	def: AbilityEffectDef,
+	origin: CFrame,
+	color: Color3?,
+	params: { [string]: any }?,
+	isOwner: boolean?,
+	teamContext: TeamContext?
 ): AbilityEffectHandle
 	local self = setmetatable({}, AbilityEffectControllerClient) :: any
-	self._alive         = true
-	self._maid          = Maid.new()
-	self.isOwner        = isOwner ~= false
-	self.firedAt        = Workspace:GetServerTimeNow()
-	self._moveStopped   = false
-	self._fadingOut     = false
+	self._alive = true
+	self._maid = Maid.new()
+	self.isOwner = isOwner ~= false
+	self.firedAt = Workspace:GetServerTimeNow()
+	self._moveStopped = false
+	self._fadingOut = false
 	self._penetrateCount = 0
-	self._moveElapsed   = 0
-	self._onHit         = def.onHit
-	self._onMiss        = def.onMiss
+	self._moveElapsed = 0
+	self._onHit = def.onHit
+	self._onMiss = def.onMiss
+	self._teamContext = teamContext -- handle에 저장
 
-	-- ─── spawnConfig 적용 ──────────────────────────────────────────────────────
+	-- ─── spawnConfig 적용 ────────────────────────────────────────────────────
 	local spawnCF = origin
 	if def.spawnConfig then
 		local sc = def.spawnConfig
 		if sc.offsetRange then
-			local offset = randInRange(sc.offsetRange)
-			spawnCF = spawnCF * CFrame.new(offset)
+			spawnCF = spawnCF * CFrame.new(randInRange(sc.offsetRange))
 		end
 		if sc.directionRange then
 			local newDir = randDirection(spawnCF.LookVector, sc.directionRange)
 			spawnCF = CFrame.new(spawnCF.Position, spawnCF.Position + newDir)
 		end
 	end
-	self.spawnCFrame  = spawnCF
-	self._moveOrigin  = spawnCF.Position
+	self.spawnCFrame = spawnCF
+	self._moveOrigin = spawnCF.Position
 
-	-- ─── 모델 소환 ──────────────────────────────────────────────────────────────
+	-- ─── 모델 소환 ───────────────────────────────────────────────────────────
 	if def.model then
-		local template = game:GetService("ReplicatedStorage")
-			:FindFirstChild("AbilityEffects", true)
-			:FindFirstChild(def.model)
+		local effectsFolder = game:GetService("ReplicatedStorage"):FindFirstChild("AbilityEffects", true)
+		local template = effectsFolder and effectsFolder:FindFirstChild(def.model)
 		if template and template:IsA("Model") then
 			local model = (template :: Model):Clone()
 			model:PivotTo(spawnCF)
 			model.Parent = workspace
 			self.part = model
 			self._maid:GiveTask(model)
-			-- colorFilter 적용
 			if def.colorFilter and color then
 				local cleanup = def.colorFilter(model, color)
-				if cleanup then self._maid:GiveTask(cleanup) end
+				if cleanup then
+					self._maid:GiveTask(cleanup)
+				end
 			end
 		end
 	end
 
-	-- ─── Heartbeat 루프 ─────────────────────────────────────────────────────────
+	-- ─── Heartbeat 루프 ──────────────────────────────────────────────────────
 	local elapsed = 0
-	local attackerChar   = teamContext and teamContext.attackerChar
-	local attackerPlayer = teamContext and teamContext.attackerPlayer
-	local teamService    = teamContext and teamContext.teamService
 
 	local conn: RBXScriptConnection
 	conn = RunService.Heartbeat:Connect(function(dt: number)
@@ -225,22 +199,21 @@ function AbilityEffectControllerClient.new(
 			def.onMove(self.part, dt)
 		end
 
-		-- hitDetect (fadingOut이면 판정 스킵)
+		-- hitDetect
 		if not self._fadingOut and def.hitDetect then
 			local hits = AbilityEffectHitDetectionUtil.Detect(
 				def.hitDetect,
 				elapsed,
-				self,
-				params,
-				attackerChar,
-				teamService,
-				attackerPlayer
+				self, -- handle._teamContext에서 꺼냄
+				params
 			)
 			for _, hitInfo in hits do
 				if self._onHit then
 					self._onHit(self, hitInfo)
 				end
-				if not self._alive then break end
+				if not self._alive then
+					break
+				end
 			end
 		end
 	end)
@@ -255,30 +228,24 @@ function AbilityEffectControllerClient:IsAlive(): boolean
 	return self._alive
 end
 
---[=[
-	자연 종료. onMiss 호출 후 정리.
-]=]
 function AbilityEffectControllerClient:Miss()
-	if not self._alive then return end
+	if not self._alive then
+		return
+	end
 	if self._onMiss then
 		self._onMiss(self)
 	end
 	self:_destroyNoMiss()
 end
 
---[=[
-	onMiss 없이 정리. Despawn/FadeOut 내부에서 호출.
-]=]
 function AbilityEffectControllerClient:_destroyNoMiss()
-	if not self._alive then return end
+	if not self._alive then
+		return
+	end
 	self._alive = false
 	self._maid:Destroy()
 end
 
---[=[
-	외부 강제 종료. onMiss 없이 정리.
-	abilityEffectMaid:Destroy() 등에서 호출됨.
-]=]
 function AbilityEffectControllerClient:Destroy()
 	self:_destroyNoMiss()
 end

@@ -40,11 +40,11 @@
 local require = require(script.Parent.loader).load(script)
 
 local ContentProvider = game:GetService("ContentProvider")
-local Players         = game:GetService("Players")
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Workspace       = game:GetService("Workspace")
+local Workspace = game:GetService("Workspace")
 
-local AbilityEffectControllerClient    = require("AbilityEffectControllerClient")
+local AbilityEffectControllerClient = require("AbilityEffectControllerClient")
 local AbilityEffectReplicationRemoting = require("AbilityEffectReplicationRemoting")
 local Maid = require("Maid")
 local cancellableDelay = require("cancellableDelay")
@@ -60,19 +60,19 @@ end
 -- ─── 타입 ────────────────────────────────────────────────────────────────────
 
 export type PlayOptions = {
-	origin            : CFrame | (() -> CFrame),
-	color             : Color3?,
-	delay             : number?,
-	abilityEffectMaid : any?,
-	params            : { [string]: any }?,
-	isOwner           : boolean?,
-	userId            : number?,
-	firedAt           : number?,
-	teamContext       : { attackerChar: Model?, attackerPlayer: any?, teamService: any? }?,
-	move              : AbilityEffectControllerClient.MoveFunction?,
-	onMove            : AbilityEffectControllerClient.OnMoveCallback?,
-	onHit             : AbilityEffectControllerClient.HitCallback?,
-	onMiss            : AbilityEffectControllerClient.MissCallback?,
+	origin: CFrame | (() -> CFrame),
+	color: Color3?,
+	delay: number?,
+	abilityEffectMaid: any?,
+	params: { [string]: any }?,
+	isOwner: boolean?,
+	userId: number?,
+	firedAt: number?,
+	teamContext: { attackerChar: Model?, attackerPlayer: any?, teamService: any? }?,
+	move: AbilityEffectControllerClient.MoveFunction?,
+	onMove: AbilityEffectControllerClient.OnMoveCallback?,
+	onHit: AbilityEffectControllerClient.HitCallback?,
+	onMiss: AbilityEffectControllerClient.MissCallback?,
 }
 
 -- ─── 모듈 ────────────────────────────────────────────────────────────────────
@@ -86,17 +86,27 @@ local AbilityEffectPlayer = {}
 function AbilityEffectPlayer.Preload(defModuleNames: { string })
 	local toLoad: { Instance } = {}
 	for _, name in defModuleNames do
-		if _preloaded[name] then continue end
+		if _preloaded[name] then
+			continue
+		end
 		_preloaded[name] = true
 		local ok, defs = pcall(require, name)
-		if not ok or type(defs) ~= "table" then continue end
+		if not ok or type(defs) ~= "table" then
+			continue
+		end
 		local models = (defs :: any).models
-		if type(models) ~= "table" then continue end
+		if type(models) ~= "table" then
+			continue
+		end
 		local root = getModelRoot()
-		if not root then continue end
+		if not root then
+			continue
+		end
 		for _, modelName in models do
 			local m = root:FindFirstChild(modelName)
-			if m then table.insert(toLoad, m) end
+			if m then
+				table.insert(toLoad, m)
+			end
 		end
 	end
 	if #toLoad > 0 then
@@ -112,11 +122,10 @@ end
 	@return handle? (즉시 발사 시) 또는 nil (대기 중)
 ]=]
 function AbilityEffectPlayer.Play(
-	defModuleName : string,
-	effectName    : string,
-	options       : PlayOptions
+	defModuleName: string,
+	effectName: string,
+	options: PlayOptions
 ): AbilityEffectControllerClient.AbilityEffectHandle?
-
 	local function execute(): AbilityEffectControllerClient.AbilityEffectHandle?
 		-- DefModule 로드
 		local ok, defs = pcall(require, defModuleName)
@@ -132,12 +141,12 @@ function AbilityEffectPlayer.Play(
 
 		-- 덮어쓰기 적용 (클라이언트 연이첤 전용)
 		local def: AbilityEffectControllerClient.AbilityEffectDef = {
-			model       = baseDef.model,
-			move        = options.move       or baseDef.move,
-			onMove      = options.onMove     or baseDef.onMove,
-			onHit       = options.onHit      or baseDef.onHit,
-			onMiss      = options.onMiss     or baseDef.onMiss,
-			hitDetect   = baseDef.hitDetect,
+			model = baseDef.model,
+			move = options.move or baseDef.move,
+			onMove = options.onMove or baseDef.onMove,
+			onHit = options.onHit or baseDef.onHit,
+			onMiss = options.onMiss or baseDef.onMiss,
+			hitDetect = baseDef.hitDetect,
 			colorFilter = baseDef.colorFilter,
 			spawnConfig = baseDef.spawnConfig,
 		}
@@ -156,14 +165,8 @@ function AbilityEffectPlayer.Play(
 		local isOwner = options.isOwner ~= false
 
 		-- handle 생성
-		local handle = AbilityEffectControllerClient.new(
-			def,
-			origin,
-			color,
-			options.params,
-			isOwner,
-			options.teamContext
-		)
+		local handle =
+			AbilityEffectControllerClient.new(def, origin, color, options.params, isOwner, options.teamContext)
 
 		-- 복제 전송 (isOwner인 경우만)
 		if isOwner then
@@ -203,4 +206,5 @@ function AbilityEffectPlayer.Play(
 	return nil
 end
 
+export type AbilityEffectPlayer = typeof(AbilityEffectPlayer)
 return AbilityEffectPlayer
