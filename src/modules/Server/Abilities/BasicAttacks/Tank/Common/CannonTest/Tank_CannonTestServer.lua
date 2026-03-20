@@ -17,88 +17,90 @@ local require = require(script.Parent.loader).load(script)
 
 local Players = game:GetService("Players")
 
-local EntityUtils      = require("EntityUtils")
+local EntityUtils = require("EntityUtils")
 local HitDetectionUtil = require("HitDetectionUtil")
 local PlayerStateUtils = require("PlayerStateUtils")
-local ProjectileHit    = require("ProjectileHit")
+local ProjectileHit = require("ProjectileHit")
 
 -- 클라이언트(Tank_CannonTestClient)와 반드시 동일하게 유지
-local PROJECTILE_SPEED  = 40
-local MAX_RANGE         = 100
-local BASE_HIT_SIZE     = 3
-local MAX_HIT_SIZE      = 6
+local PROJECTILE_SPEED = 40
+local MAX_RANGE = 100
+local BASE_HIT_SIZE = 3
+local MAX_HIT_SIZE = 6
 local ANGLE_EXPAND_TIME = 3.0
 
 local DAMAGE = 30
 
 type BasicAttackState = {
-	attacker              : Model?,
-	rootPart              : BasePart?,
-	attackerPlayer        : Player?,
-	direction             : Vector3,
-	aimTime               : number,
-	latency               : number,
-	onHit                 : any?,
-	fireMaid              : any?,
-	teamService           : any?,
-	victims               : any?,
-	hitMap                : any?,
-	playerStateController : any?,
+	attacker: Model?,
+	rootPart: BasePart?,
+	attackerPlayer: Player?,
+	direction: Vector3,
+	aimTime: number,
+	latency: number,
+	onHit: any?,
+	fireMaid: any?,
+	teamService: any?,
+	victims: any?,
+	hitMap: any?,
+	playerStateController: any?,
 }
 
 return {
 	onFire = {
 		function(state: BasicAttackState)
 			local hrp = state.rootPart
-			if not hrp or not state.attacker then return end
+			if not hrp or not state.attacker then
+				return
+			end
 
 			local origin = CFrame.new(hrp.Position, hrp.Position + state.direction)
 
 			local aimRatio = math.clamp(state.aimTime / ANGLE_EXPAND_TIME, 0, 1)
-			local hitSize  = BASE_HIT_SIZE + (MAX_HIT_SIZE - BASE_HIT_SIZE) * aimRatio
+			local hitSize = BASE_HIT_SIZE + (MAX_HIT_SIZE - BASE_HIT_SIZE) * aimRatio
 
-			ProjectileHit.verdict(
-				state.attacker,
-				origin,
-				{
-					move = EntityUtils.Linear({
-						speed    = PROJECTILE_SPEED,
-						maxRange = MAX_RANGE,
-					}),
-					hitDetect = HitDetectionUtil.Box({
-						size = Vector3.new(hitSize, hitSize, hitSize),
-					}),
-					onHit   = EntityUtils.Despawn(),
-					onMiss  = nil,
-					params  = nil,
-					latency = state.latency,
-					delay   = 0,
-				},
-				state.fireMaid,
-				state.teamService,
-				state.attackerPlayer
-			)
+			ProjectileHit.verdict(state.attacker, origin, {
+				move = EntityUtils.Linear({
+					speed = PROJECTILE_SPEED,
+					maxRange = MAX_RANGE,
+				}),
+				hitDetect = HitDetectionUtil.Box({
+					size = Vector3.new(hitSize, hitSize, hitSize),
+				}),
+				onHitResult = state.onHit, -- ← 이거 추가
+				onHit = EntityUtils.Despawn(),
+				onMiss = nil,
+				params = nil,
+				latency = state.latency,
+				delay = 0,
+			}, state.fireMaid, state.teamService, state.attackerPlayer)
 		end,
 	},
 
 	onHitChecked = {
 		function(snapshot: BasicAttackState)
 			local victims = snapshot.victims
-			if not victims or #victims.enemies == 0 then return end
+			if not victims or #victims.enemies == 0 then
+				return
+			end
 
 			local psc = snapshot.playerStateController
-			if not psc then return end
+			if not psc then
+				return
+			end
 
 			local attackerPlayer = Players:GetPlayerFromCharacter(snapshot.attacker)
 
 			for _, victimModel in victims.enemies do
 				local victimPlayer = Players:GetPlayerFromCharacter(victimModel)
-				if not victimPlayer then continue end
+				if not victimPlayer then
+					continue
+				end
 				PlayerStateUtils.PlayPlayerState(psc, victimPlayer, "damage", {
-					amount    = DAMAGE,
-					source    = attackerPlayer,
+					amount = DAMAGE,
+					source = attackerPlayer,
 					intensity = 0.3,
-					duration  = 0.2,
+					duration = 0.2,
 				})
 			end
 		end,

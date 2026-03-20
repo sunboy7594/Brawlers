@@ -80,6 +80,9 @@ return {
 		}),
 
 		onMiss = EntityUtils.Despawn(),
-		colorFilter = nil,
+		colorFilter = EntityColorUtils.Highlight({
+			fillTransparency = 0.5,
+			depthMode = "Occluded",
+		}),
 	},
 }
