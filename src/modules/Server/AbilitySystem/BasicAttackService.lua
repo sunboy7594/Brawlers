@@ -196,7 +196,6 @@ function BasicAttackService.Start(self: BasicAttackService): ()
 		self:_onAimStarted(player)
 	end))
 
-	-- sentAt 추가: direction, sentAt? 수신
 	self._maid:GiveTask(BasicAttackRemoting.Fire:Connect(function(player: Player, direction: unknown, sentAt: unknown)
 		self:_onFire(player, direction, sentAt)
 	end))
@@ -293,21 +292,30 @@ function BasicAttackService:_onCharacterAdded(player: Player, char: Model)
 	local state = self._playerStates[player.UserId]
 	if not state then return end
 
-	-- ✅ WaitForChild는 yield를 유발하므로 task.spawn으로 분리.
-	-- 완료 후 반드시 현재 캐릭터가 맞는지 확인.
-	-- 리스폰이 빠르게 여러 번 일어나면 이전 코루틴이 늦게 완료되어
-	-- 죽은 캐릭터의 humanoid/rootPart로 state를 덮어쓰는 버그 방지.
+	-- ✅ 즉시 nil: 이전 죽은 캐릭터의 stale 참조 방지
+	-- WaitForChild 완료 전까지 _onFire가 state.humanoid 체크에서 차단됨 (정상)
+	state.humanoid = nil
+	state.rootPart = nil
+
 	task.spawn(function()
 		local hum = char:WaitForChild("Humanoid") :: Humanoid
 		local hrp = char:WaitForChild("HumanoidRootPart") :: BasePart
 
-		-- WaitForChild 완료 후 이 캐릭터가 여전히 현재 캐릭터인지 확인
+		-- WaitForChild 완료 후 여전히 이 캐릭터가 맞는지 확인
+		-- 빠른 연속 리스폰 시 이전 코루틴이 늦게 완료되어 stale 캐릭터를 쓰는 버그 방지
 		if player.Character ~= char then return end
-		-- 플레이어가 이미 퇴장했으면 무시
 		if not self._playerStates[player.UserId] then return end
 
 		state.humanoid = hum
 		state.rootPart = hrp
+
+		-- ✅ 리스폰 후 클라이언트에 현재 리소스 상태 재전송
+		-- 클라이언트는 리스폰 시 UI를 초기화하지만, 서버는 _setPlayerAttack이
+		-- 재호출되지 않으면 sync를 보내지 않음.
+		-- max stack이면 regen tick sync도 오지 않으므로 여기서 명시적으로 재전송.
+		if state.equippedAttackId then
+			self:_fireResourceSync(player, state)
+		end
 	end)
 end
 
@@ -455,7 +463,6 @@ function BasicAttackService:_onFire(player: Player, direction: unknown, sentAt: 
 		return
 	end
 
-	-- latency 계산 (sentAt이 유효하면 사용, 아니면 0)
 	local latency = 0
 	if type(sentAt) == "number" then
 		latency = math.clamp(Workspace:GetServerTimeNow() - sentAt, 0, MAX_LATENCY)
