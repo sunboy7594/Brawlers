@@ -2,7 +2,7 @@
 --[=[
 	@class Tank_CannonTestEffectDef
 
-	탱크 쾐논 기본공격 이펝트 정의. (Shared / 클라이언트 연출 전용)
+	탱크 캐논 기본공격 이펙트 정의. (Shared / 클라이언트 연출 전용)
 
 	ReplicatedStorage.AbilityEffects.CannonBall 모델 필요.
 
@@ -40,12 +40,9 @@ return {
 			EntityUtils.Despawn(),
 		}),
 
-		onMiss = EntityUtils.FadeTo({
-			from     = 0,
-			to       = 1,
-			duration = 0.3,
-			speed    = 1,
-		}),
+		-- onMiss: FadeTo는 onMove 전용 (model, dt, params) 콜백 → onMiss(handle)로 호출하면 dt=nil 에러
+		-- Despawn으로 대체 (fade-out 연출은 추후 FadeOutMiss 유틸 구현 후 교체)
+		onMiss = EntityUtils.Despawn(),
 
 		colorFilter = EntityColorUtils.Highlight({
 			fillTransparency = 0.5,
