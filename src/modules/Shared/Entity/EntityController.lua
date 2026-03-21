@@ -17,6 +17,11 @@
 	  part = nil일 때 자동 생성.
 	  GetPivot() / PivotTo() / GetDescendants() 구현.
 
+	teamContext 주입:
+	  config.teamContext가 있으면 그것을 사용.
+	  없으면 attackerPlayerId 기반 buildTeamContext 폴백.
+	  서버에서 teamService가 있을 때 EntityPlayerServer / ProjectileHit 래퍼가 주입.
+
 	글로벌 조회:
 	  EntityController.GetHandlesByTag(tag)
 	  EntityController.GetHandleById(id)
@@ -80,6 +85,9 @@ export type EntityConfig = {
 	taskMaid         : any?,
 	firedAt          : number?,
 	delay            : number?,
+	-- 외부에서 teamContext를 직접 주입할 수 있음.
+	-- 있으면 buildTeamContext(attackerPlayerId) 폴백을 건너뜀.
+	teamContext      : TeamContext?,
 }
 
 -- ─── 글로벌 풀 ───────────────────────────────────────────────────────────────
@@ -356,7 +364,8 @@ function EntityController.new(
 		_sweepBase      = nil :: CFrame?,
 		_onHit          = finalDef.onHit,
 		_onMiss         = finalDef.onMiss,
-		_teamContext    = buildTeamContext(config.attackerPlayerId),
+		-- config.teamContext 직접 주입 우선, 없으면 attackerPlayerId 기반 폴백
+		_teamContext    = config.teamContext or buildTeamContext(config.attackerPlayerId),
 		_def            = finalDef,
 		_params         = params,
 		-- SpawnEntity가 하위 엔티티에 색상을 전달하기 위해 보관

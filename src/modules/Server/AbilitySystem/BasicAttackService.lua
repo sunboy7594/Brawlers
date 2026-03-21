@@ -22,6 +22,15 @@
 	fireMaid:
 	- _executeFire 시마다 새 Maid 생성. CancelCombatState 시 Destroy.
 	- 서버 모듈(onFire)이 GiveTask로 딜레이 히트 취소 등록 가능.
+
+	onHitResult / onMissResult 파이프라인:
+	- state.onHitResult: 히트 판정 결과 수신 콜백. InstantHit/ProjectileHit 양쪽에서 호출.
+	  - InstantHit: onHitResult(hitMap, nil, nil)
+	  - ProjectileHit: onHitResult(nil, handle, hitInfo)
+	  - enemies > 0 이면 onHitChecked(snapshot, state) 실행
+	  - enemies = 0 이면 onMissChecked(snapshot, state) 실행
+	- state.onMissResult: 투사체가 사거리 초과로 미스한 경우 (ProjectileHit 전용)
+	  - onMissResult(nil, handle) → onMissChecked(snapshot, state) 실행
 ]=]
 
 local require = require(script.Parent.loader).load(script)
@@ -106,9 +115,17 @@ export type BasicAttackState = {
 	-- 피격 결과 (enemies/teammates/self 분류)
 	victims: InstantHit.VictimSet?,
 	hitMap: InstantHit.HitMapResult?,
+	-- snapshot 전용: ProjectileHit handle / hitInfo
+	handle: any?,
+	hitInfo: any?,
 
-	-- 판정 콜백 (HitMapResult를 받음)
-	onHit: ((results: InstantHit.HitMapResult) -> ())?,
+	-- 판정 파이프라인 콜백
+	-- onHitResult: InstantHit → (hitMap, nil, nil), ProjectileHit → (nil, handle, hitInfo)
+	--   enemies > 0 → onHitChecked, enemies = 0 → onMissChecked
+	onHitResult: ((hitMap: InstantHit.HitMapResult?, handle: any?, hitInfo: any?) -> ())?,
+	-- onMissResult: 투사체 사거리 초과 시 (ProjectileHit 전용)
+	--   → onMissChecked
+	onMissResult: ((hitMap: InstantHit.HitMapResult?, handle: any?) -> ())?,
 
 	-- 팀 판정용 주입 필드
 	teamService: any?,
@@ -127,7 +144,8 @@ export type BasicAttackState = {
 
 type AttackModule = {
 	onFire: { (state: BasicAttackState) -> () }?,
-	onHitChecked: { (state: BasicAttackState) -> () }?,
+	onHitChecked: { (snapshot: BasicAttackState, state: BasicAttackState) -> () }?,
+	onMissChecked: { (snapshot: BasicAttackState, state: BasicAttackState) -> () }?,
 }
 
 type AttackEntry = {
@@ -270,7 +288,10 @@ function BasicAttackService:_onPlayerAdded(player: Player)
 
 		victims = nil,
 		hitMap = nil,
-		onHit = nil,
+		handle = nil,
+		hitInfo = nil,
+		onHitResult = nil,
+		onMissResult = nil,
 		teamService = nil,
 		attackerPlayer = nil,
 		pendingFireCancel = nil,
@@ -292,8 +313,6 @@ function BasicAttackService:_onCharacterAdded(player: Player, char: Model)
 	local state = self._playerStates[player.UserId]
 	if not state then return end
 
-	-- ✅ 즉시 nil: 이전 죽은 캐릭터의 stale 참조 방지
-	-- WaitForChild 완료 전까지 _onFire가 state.humanoid 체크에서 차단됨 (정상)
 	state.humanoid = nil
 	state.rootPart = nil
 
@@ -301,18 +320,12 @@ function BasicAttackService:_onCharacterAdded(player: Player, char: Model)
 		local hum = char:WaitForChild("Humanoid") :: Humanoid
 		local hrp = char:WaitForChild("HumanoidRootPart") :: BasePart
 
-		-- WaitForChild 완료 후 여전히 이 캐릭터가 맞는지 확인
-		-- 빠른 연속 리스폰 시 이전 코루틴이 늦게 완료되어 stale 캐릭터를 쓰는 버그 방지
 		if player.Character ~= char then return end
 		if not self._playerStates[player.UserId] then return end
 
 		state.humanoid = hum
 		state.rootPart = hrp
 
-		-- ✅ 리스폰 후 클라이언트에 현재 리소스 상태 재전송
-		-- 클라이언트는 리스폰 시 UI를 초기화하지만, 서버는 _setPlayerAttack이
-		-- 재호출되지 않으면 sync를 보내지 않음.
-		-- max stack이면 regen tick sync도 오지 않으므로 여기서 명시적으로 재전송.
 		if state.equippedAttackId then
 			self:_fireResourceSync(player, state)
 		end
@@ -547,6 +560,8 @@ function BasicAttackService:_executeFire(
 	state.effectiveAimTime = 0
 	state.victims = nil
 	state.hitMap = nil
+	state.handle = nil
+	state.hitInfo = nil
 	state.latency = latency
 
 	state.lastFireTime = now
@@ -574,37 +589,66 @@ function BasicAttackService:_executeFire(
 	local snapshot = table.clone(state)
 	snapshot.victims = nil
 	snapshot.hitMap = nil
-	snapshot.onHit = nil
+	snapshot.handle = nil
+	snapshot.hitInfo = nil
+	snapshot.onHitResult = nil
+	snapshot.onMissResult = nil
 	snapshot.pendingFireCancel = nil
 	snapshot.fireMaid = state.fireMaid
 	snapshot.playerStateController = self._playerStateController
 	snapshot.attackerStates = self._playerStateController:GetActiveEffects(player)
 
-	state.onHit = function(hitMap: InstantHit.HitMapResult)
+	-- ─── onHitResult 콜백 ─────────────────────────────────────────────────────
+	-- InstantHit: onHitResult(hitMap, nil, nil)
+	-- ProjectileHit: onHitResult(nil, handle, hitInfo)
+	-- enemies > 0 → onHitChecked(snapshot, state)
+	-- enemies = 0 → onMissChecked(snapshot, state)
+	state.onHitResult = function(hitMap: InstantHit.HitMapResult?, handle: any?, hitInfo: any?)
 		local merged: InstantHit.VictimSet = { enemies = {}, teammates = {}, self = nil }
 		local seenEnemies: { [Model]: boolean } = {}
 		local seenTeammates: { [Model]: boolean } = {}
 
-		for _, vs in hitMap do
-			if vs.self and not merged.self then
-				merged.self = vs.self
-			end
-			for _, m in vs.enemies do
-				if not seenEnemies[m] then
-					seenEnemies[m] = true
-					table.insert(merged.enemies, m)
+		if hitMap then
+			-- InstantHit 경로: hitMap에서 모든 shape 합산
+			for _, vs in hitMap do
+				if vs.self and not merged.self then
+					merged.self = vs.self
+				end
+				for _, m in vs.enemies do
+					if not seenEnemies[m] then
+						seenEnemies[m] = true
+						table.insert(merged.enemies, m)
+					end
+				end
+				for _, m in vs.teammates do
+					if not seenTeammates[m] then
+						seenTeammates[m] = true
+						table.insert(merged.teammates, m)
+					end
 				end
 			end
-			for _, m in vs.teammates do
-				if not seenTeammates[m] then
-					seenTeammates[m] = true
-					table.insert(merged.teammates, m)
+		elseif hitInfo then
+			-- ProjectileHit 경로: 단일 hitInfo에서 분류
+			local hi = hitInfo :: any
+			if hi.relation == "enemy" then
+				if hi.target and (hi.target :: any):IsA("Model") then
+					table.insert(merged.enemies, hi.target :: Model)
 				end
+			elseif hi.relation == "team" then
+				if hi.target and (hi.target :: any):IsA("Model") then
+					table.insert(merged.teammates, hi.target :: Model)
+				end
+			elseif hi.relation == "self" then
+				if hi.target and (hi.target :: any):IsA("Model") then
+					merged.self = hi.target :: Model
+				end
+				-- obstacle: merged에 포함하지 않음 (onMissChecked로 라우팅됨)
 			end
 		end
 
-		local totalCount = #merged.enemies + #merged.teammates + (if merged.self then 1 else 0)
-		if totalCount > 0 then
+		local hasCharVictims = #merged.enemies > 0 or #merged.teammates > 0 or merged.self ~= nil
+
+		if hasCharVictims then
 			state.lastHitTime = os.clock()
 		end
 
@@ -612,23 +656,52 @@ function BasicAttackService:_executeFire(
 		state.hitMap = hitMap
 		snapshot.victims = merged
 		snapshot.hitMap = hitMap
+		snapshot.handle = handle
+		snapshot.hitInfo = hitInfo
 		snapshot.fireComboCount = state.fireComboCount
 		snapshot.hitComboCount = state.hitComboCount
 
-		if entry.module.onHitChecked then
-			for _, fn in entry.module.onHitChecked do
-				fn(snapshot)
+		if hasCharVictims then
+			if entry.module.onHitChecked then
+				for _, fn in entry.module.onHitChecked do
+					fn(snapshot, state)
+				end
 			end
-		end
 
-		local victimUserIds: { number } = {}
-		for _, victimModel in merged.enemies do
-			local victimPlayer = Players:GetPlayerFromCharacter(victimModel)
-			if victimPlayer then
-				table.insert(victimUserIds, victimPlayer.UserId)
+			local victimUserIds: { number } = {}
+			for _, victimModel in merged.enemies do
+				local victimPlayer = Players:GetPlayerFromCharacter(victimModel)
+				if victimPlayer then
+					table.insert(victimUserIds, victimPlayer.UserId)
+				end
+			end
+			BasicAttackRemoting.HitChecked:FireClient(player, victimUserIds)
+		else
+			-- enemies 없음 (obstacle만 맞았거나 아무도 안 맞음) → onMissChecked
+			if entry.module.onMissChecked then
+				for _, fn in entry.module.onMissChecked do
+					fn(snapshot, state)
+				end
 			end
 		end
-		BasicAttackRemoting.HitChecked:FireClient(player, victimUserIds)
+	end
+
+	-- ─── onMissResult 콜백 ────────────────────────────────────────────────────
+	-- 투사체 사거리 초과 시 호출 (ProjectileHit 전용)
+	-- → 항상 onMissChecked(snapshot, state) 실행
+	state.onMissResult = function(hitMap: InstantHit.HitMapResult?, handle: any?)
+		snapshot.hitMap = hitMap
+		snapshot.handle = handle
+		snapshot.hitInfo = nil
+		snapshot.victims = nil
+		snapshot.fireComboCount = state.fireComboCount
+		snapshot.hitComboCount = state.hitComboCount
+
+		if entry.module.onMissChecked then
+			for _, fn in entry.module.onMissChecked do
+				fn(snapshot, state)
+			end
+		end
 	end
 
 	if entry.module.onFire then
@@ -722,7 +795,8 @@ function BasicAttackService:_setPlayerAttack(player: Player, attackId: string)
 	state.lastHitTime = 0
 	state.fireComboCount = 0
 	state.hitComboCount = 0
-	state.onHit = nil
+	state.onHitResult = nil
+	state.onMissResult = nil
 	state.isFiring = false
 	state.lastFireEndTime = 0
 	state.lastFireTime = 0
@@ -780,7 +854,8 @@ function BasicAttackService:CancelCombatState(player: Player)
 	state.intervalUntil = 0
 	state.aimStartTime = 0
 	state.effectiveAimTime = 0
-	state.onHit = nil
+	state.onHitResult = nil
+	state.onMissResult = nil
 end
 
 function BasicAttackService:ForceEquip(player: Player, attackId: string): (boolean, string?)

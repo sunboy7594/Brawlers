@@ -11,10 +11,13 @@
 	- 3콤보:   inner cone range 5  / angleMin=-45, angleMax=45 (강타)
 	           outer cone range 10 / angleMin=-60, angleMax=60 (날림)
 
-	onHitChecked:
+	onHitChecked(snapshot, state):
 	- 1,2콤보: damage 20
 	- 3콤보 inner: damage 40 + knockback
 	- 3콤보 outer (inner 미포함): damage 20
+
+	onMissChecked(snapshot, state):
+	- 현재 미처리.
 ]=]
 
 local require = require(script.Parent.loader).load(script)
@@ -38,8 +41,10 @@ type BasicAttackState = {
 	fireMaid              : any?,
 	victims               : InstantHit.VictimSet?,
 	hitMap                : InstantHit.HitMapResult?,
+	handle                : any?,
+	hitInfo               : any?,
 	attacker              : Model?,
-	onHit                 : ((results: InstantHit.HitMapResult) -> ())?,
+	onHitResult           : ((hitMap: InstantHit.HitMapResult?, handle: any?, hitInfo: any?) -> ())?,
 	teamService           : any?,
 	attackerPlayer        : Player?,
 	playerStateController : any?,
@@ -65,7 +70,7 @@ return {
 						inner = { shape = "cone", range = 5,  angleMin = -45, angleMax = 45 },
 						outer = { shape = "cone", range = 10, angleMin = -60, angleMax = 60 },
 					},
-					state.onHit, state.fireMaid, state.teamService, state.attackerPlayer,
+					state.onHitResult, state.fireMaid, state.teamService, state.attackerPlayer,
 					state.latency
 				)
 			else
@@ -74,7 +79,7 @@ return {
 					{
 						main = { shape = "cone", range = 8, angleMin = -45, angleMax = 45 },
 					},
-					state.onHit, state.fireMaid, state.teamService, state.attackerPlayer,
+					state.onHitResult, state.fireMaid, state.teamService, state.attackerPlayer,
 					state.latency
 				)
 			end
@@ -82,7 +87,7 @@ return {
 	},
 
 	onHitChecked = {
-		function(snapshot: BasicAttackState)
+		function(snapshot: BasicAttackState, _state: BasicAttackState)
 			local victims = snapshot.victims
 			if not victims or (#victims.enemies == 0) then return end
 
@@ -141,4 +146,6 @@ return {
 			end
 		end,
 	},
+
+	onMissChecked = {},
 }

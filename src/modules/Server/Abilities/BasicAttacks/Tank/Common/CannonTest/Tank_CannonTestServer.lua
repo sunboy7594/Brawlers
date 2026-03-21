@@ -9,8 +9,11 @@
 	  origin    = 서버 HRP 기준으로 직접 계산.
 	  aimRatio  = state.aimTime 기준으로 서버가 직접 계산.
 
-	onHitChecked:
+	onHitChecked(snapshot, state):
 	  적 맞추면 damage 30 적용.
+
+	onMissChecked(snapshot, state):
+	  사거리 초과 또는 적 없음. 현재 미처리.
 ]=]
 
 local require = require(script.Parent.loader).load(script)
@@ -38,11 +41,14 @@ type BasicAttackState = {
 	direction: Vector3,
 	aimTime: number,
 	latency: number,
-	onHit: any?,
+	onHitResult: any?,
+	onMissResult: any?,
 	fireMaid: any?,
 	teamService: any?,
 	victims: any?,
 	hitMap: any?,
+	handle: any?,
+	hitInfo: any?,
 	playerStateController: any?,
 }
 
@@ -67,18 +73,19 @@ return {
 				hitDetect = HitDetectionUtil.Box({
 					size = Vector3.new(hitSize, hitSize, hitSize),
 				}),
-				onHitResult = state.onHit, -- ← 이거 추가
-				onHit = EntityUtils.Despawn(),
-				onMiss = nil,
-				params = nil,
-				latency = state.latency,
-				delay = 0,
+				onHitResult  = state.onHitResult,
+				onMissResult = state.onMissResult,
+				onHit        = EntityUtils.Despawn(),
+				onMiss       = nil,
+				params       = nil,
+				latency      = state.latency,
+				delay        = 0,
 			}, state.fireMaid, state.teamService, state.attackerPlayer)
 		end,
 	},
 
 	onHitChecked = {
-		function(snapshot: BasicAttackState)
+		function(snapshot: BasicAttackState, _state: BasicAttackState)
 			local victims = snapshot.victims
 			if not victims or #victims.enemies == 0 then
 				return
@@ -105,4 +112,6 @@ return {
 			end
 		end,
 	},
+
+	onMissChecked = {},
 }
