@@ -40,10 +40,10 @@ return {
 		}),
 
 		onHit = EntityUtils.Sequence({
-			-- EntityUtils.SpawnEntity("Tank_CannonTestEffectDef", "CannonExplosion"),
+			EntityUtils.SpawnEntity("Tank_CannonTestEffectDef", "CannonExplosion"),
 			-- 맞는 순간 빠르게 fade out 후 소멸
-			EntityUtils.Animate(EntityUtils.FadeTo({ from = 0, to = 1, duration = 10.0, speed = 2 })),
-			EntityUtils.Despawn({ delay = 10.0 }),
+			EntityUtils.Animate(EntityUtils.FadeTo({ from = 0, to = 1, duration = 1.0, speed = 20 })),
+			EntityUtils.Despawn({ delay = 1.0 }),
 		}),
 
 		-- 사거리 초과 시 fade out 후 소멸
@@ -69,7 +69,7 @@ return {
 				-- 0.5초 동안 커짐
 				EntityUtils.ScaleTo({
 					from = Vector3.new(0.1, 0.1, 0.1),
-					target = Vector3.new(1, 1, 1),
+					target = Vector3.new(10, 10, 10),
 					duration = 0.5,
 					speed = 10,
 				}),

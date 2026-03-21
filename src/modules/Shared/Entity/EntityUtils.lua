@@ -99,7 +99,15 @@ local function setTransparency(model: any, t: number)
 	end
 	for _, d in (model :: Instance):GetDescendants() do
 		if d:IsA("BasePart") then
-			(d :: BasePart).Transparency = t
+			local bp = d :: BasePart
+			if not _highlightOriginals[bp] then
+				_highlightOriginals[bp] = { fill = bp.Transparency }
+				bp.Destroying:Connect(function()
+					_highlightOriginals[bp] = nil
+				end)
+			end
+			local orig = _highlightOriginals[bp]
+			bp.Transparency = orig.fill + (1 - orig.fill) * t
 		elseif d.ClassName == "Highlight" then
 			local hl = d :: any
 			if not _highlightOriginals[hl] then
@@ -107,7 +115,6 @@ local function setTransparency(model: any, t: number)
 					fill = hl.FillTransparency,
 					outline = hl.OutlineTransparency,
 				}
-				-- 소멸 시 자동 정리
 				hl.Destroying:Connect(function()
 					_highlightOriginals[hl] = nil
 				end)
