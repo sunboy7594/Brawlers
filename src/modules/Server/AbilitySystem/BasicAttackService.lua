@@ -311,7 +311,9 @@ end
 
 function BasicAttackService:_onCharacterAdded(player: Player, char: Model)
 	local state = self._playerStates[player.UserId]
-	if not state then return end
+	if not state then
+		return
+	end
 
 	state.humanoid = nil
 	state.rootPart = nil
@@ -320,8 +322,12 @@ function BasicAttackService:_onCharacterAdded(player: Player, char: Model)
 		local hum = char:WaitForChild("Humanoid") :: Humanoid
 		local hrp = char:WaitForChild("HumanoidRootPart") :: BasePart
 
-		if player.Character ~= char then return end
-		if not self._playerStates[player.UserId] then return end
+		if player.Character ~= char then
+			return
+		end
+		if not self._playerStates[player.UserId] then
+			return
+		end
 
 		state.humanoid = hum
 		state.rootPart = hrp
@@ -444,6 +450,9 @@ function BasicAttackService:_onFireEnd(player: Player)
 	local state = self._playerStates[player.UserId]
 	if not state then
 		return
+	end
+	if not state.isFiring then
+		return -- 이미 종료 상태면 무시 (spurious FireEnd 방어)
 	end
 
 	state.isFiring = false

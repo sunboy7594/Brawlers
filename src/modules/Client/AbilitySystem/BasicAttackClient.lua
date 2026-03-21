@@ -753,10 +753,12 @@ function BasicAttackClient:_startFireLoop(entry: { def: any, module: any, animDe
 end
 
 function BasicAttackClient:_stopFireLoop()
-	if self._fireLoopCancel then
-		self._fireLoopCancel()
-		self._fireLoopCancel = nil
+	if not self._fireLoopCancel then
+		return -- 루프가 없으면 아무것도 하지 않음
 	end
+
+	self._fireLoopCancel()
+	self._fireLoopCancel = nil
 
 	local state = self._attackState
 	if state then
