@@ -34,6 +34,26 @@ function SkillClient.Start(_self: SkillClient): ()
 	-- TODO: 스킬 입력 감지 및 조준 로직 구현 예정
 end
 
+function SkillClient:IsFiring(): boolean
+	return false
+end
+
+function SkillClient:IsToggleFiring(): boolean
+	return false
+end
+
+function SkillClient:IsBlockingAim(): boolean
+	return false
+end
+
+function SkillClient:GetBlockAimTypes(): { string }?
+	return nil
+end
+
+function SkillClient:CancelCombatState()
+	-- TODO
+end
+
 function SkillClient.Destroy(self: SkillClient)
 	self._maid:Destroy()
 end

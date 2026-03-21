@@ -139,18 +139,30 @@ local function setTransparency(model: any, t: number)
 	end
 end
 
+local _modelScales: { [any]: number } = {}
+
 local function setSize(model: any, scale: Vector3)
 	if typeof(model) ~= "Instance" then
 		return
 	end
 	local m = model :: any
-	local primary = m.PrimaryPart
-	if not primary then
+	if not m.ScaleTo then
 		return
 	end
-	local baseSize: Vector3 = m._baseSize or primary.Size
-	m._baseSize = baseSize
-	primary.Size = Vector3.new(baseSize.X * scale.X, baseSize.Y * scale.Y, baseSize.Z * scale.Z)
+
+	if not _modelScales[m] then
+		_modelScales[m] = 1
+		(m :: Instance).Destroying:Connect(function()
+			_modelScales[m] = nil
+		end)
+	end
+
+	local uniformScale = scale.X
+	local prev = _modelScales[m]
+	local delta = uniformScale / prev
+	_modelScales[m] = uniformScale
+
+	m:ScaleTo(m:GetScale() * delta)
 end
 
 -- ─── Move ────────────────────────────────────────────────────────────────────

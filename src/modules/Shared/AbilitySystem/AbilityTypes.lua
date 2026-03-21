@@ -54,7 +54,9 @@ export type AbilityDef = {
 	class: string,
 	fireType: FireType,
 	resource: AbilityResource,
-	interval: number, -- 발사 후/루프 종료 후 대기 시간
+	interval: number,
+	entityDef: string?,
+	blockAimTypes: { string }?, -- ← 추가: firing/interval 중 조준을 막을 abilityType 목록
 }
 
 local AbilityTypes = {}

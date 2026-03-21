@@ -20,12 +20,13 @@ local EXPLOSION_LIFETIME = 1.5
 
 return {
 	CannonBall = {
-		model = "CannonBall",
+		model = "Tank_CannonBall",
 		tags = { "projectile" },
 
-		move = EntityUtils.Linear({
+		move = EntityUtils.Arc({
 			speed = PROJECTILE_SPEED,
-			maxRange = MAX_RANGE,
+			height = 10, -- hight → height
+			distance = MAX_RANGE, -- maxRange → distance
 		}),
 
 		onMove = EntityUtils.RotateTo({
@@ -41,7 +42,7 @@ return {
 
 		onHit = EntityUtils.Sequence({
 			EntityUtils.LockHit(), -- ← 첫 줄에 추가
-			EntityUtils.SpawnEntity("Tank_CannonTestEffectDef", "CannonExplosion"),
+			EntityUtils.SpawnEntity("Tank_CannonTestEntityDef", "CannonExplosion"),
 			EntityUtils.Animate(EntityUtils.FadeTo({ from = 0, to = 1, duration = 1.0, speed = 20 })),
 			EntityUtils.Despawn({ delay = 1.0 }),
 		}),
@@ -59,7 +60,7 @@ return {
 	},
 
 	CannonExplosion = {
-		model = "CannonExplosion",
+		model = "Tank_CannonExplosion",
 		tags = { "projectile" },
 
 		-- 수명 타이머 + 스케일 커지고 fade out

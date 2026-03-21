@@ -9,8 +9,8 @@ local Players = game:GetService("Players")
 
 local EntityPlayer = require("EntityPlayer")
 
-local EFFECT_DEF_MODULE = "Tank_CannonTestEffectDef"
-local EFFECT_NAME = "CannonBall"
+local ENTITY_DEF_MODULE = "Tank_CannonTestEntityDef"
+local ENTITY_NAME = "CannonBall"
 local ANGLE_EXPAND_TIME = 3.0
 
 type BasicAttackState = {
@@ -42,7 +42,7 @@ return {
 			local origin = CFrame.new(hrp.Position, hrp.Position + state.direction)
 			local aimRatio = math.clamp(state.effectiveAimTime / ANGLE_EXPAND_TIME, 0, 1)
 
-			EntityPlayer.Play(EFFECT_DEF_MODULE, EFFECT_NAME, {
+			EntityPlayer.Play(ENTITY_DEF_MODULE, ENTITY_NAME, {
 				origin = origin,
 				color = state.teamContext and state.teamContext.color,
 				attackerPlayerId = state.attackerPlayerId or localPlayer.UserId,

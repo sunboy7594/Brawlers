@@ -34,6 +34,26 @@ function UltimateClient.Start(_self: UltimateClient): ()
 	-- TODO: 궁극기 입력 감지 및 게이지 로직 구현 예정
 end
 
+function UltimateClient:IsFiring(): boolean
+	return false
+end
+
+function UltimateClient:IsToggleFiring(): boolean
+	return false
+end
+
+function UltimateClient:IsBlockingAim(): boolean
+	return false
+end
+
+function UltimateClient:GetBlockAimTypes(): { string }?
+	return nil
+end
+
+function UltimateClient:CancelCombatState()
+	-- TODO
+end
+
 function UltimateClient.Destroy(self: UltimateClient)
 	self._maid:Destroy()
 end

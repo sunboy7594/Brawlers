@@ -9,7 +9,7 @@
     - 서버 모듈:    id .. "Server"     예) Tank_PunchServer
     - 클라이언트:   id .. "Client"     예) Tank_PunchClient
     - 애니메이션:  id .. "AnimDef"    예) Tank_PunchAnimDef
-    - 이펙트 정의: effectDef 필드에 직접 지정된 모듈명
+	- 엔티티 정의: entityDef 필드에 직접 지정된 모듈명 (예: Tank_CannonTestEntityDef)
 ]=]
 
 local require = require(script.Parent.loader).load(script)
@@ -18,33 +18,10 @@ local AbilityTypes = require("AbilityTypes")
 
 export type BasicAttackDef = AbilityTypes.AbilityDef
 
+-- 변경 후: 각 Def를 require해서 합산
 local BasicAttackDefs: { [string]: BasicAttackDef } = {
-	Tank_Punch = {
-		id = "Tank_Punch",
-		rarity = "COMMON",
-		class = "TANK",
-		fireType = "stack",
-		resource = {
-			resourceType = "stack",
-			maxStack = 3,
-			reloadTime = 2,
-		},
-		interval = 1,
-		-- effectDef 없음 → 비주얼 없음
-	},
-	Tank_CannonTest = {
-		id = "Tank_CannonTest",
-		rarity = "COMMON",
-		class = "TANK",
-		fireType = "stack",
-		resource = {
-			resourceType = "stack",
-			maxStack = 3,
-			reloadTime = 2,
-		},
-		interval = 0.3,
-		effectDef = "Tank_CannonTestEffectDef",
-	},
+	Tank_Punch = require("Tank_PunchDef"),
+	Tank_CannonTest = require("Tank_CannonTestDef"),
 }
 
 return BasicAttackDefs

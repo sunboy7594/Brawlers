@@ -31,8 +31,7 @@ local cancellableDelay = require("cancellableDelay")
 local _preloaded: { [string]: boolean } = {}
 
 local function getModelRoot(): Instance?
-	return ReplicatedStorage:FindFirstChild("Entities", true)
-		or ReplicatedStorage:FindFirstChild("AbilityEffects", true)
+	return ReplicatedStorage:FindFirstChild("Entities")
 end
 
 export type PlayConfig = {
@@ -86,7 +85,6 @@ function EntityPlayer.Play(defModule: string, defName: string, config: PlayConfi
 			if template and template:IsA("Model") then
 				part = (template :: Model):Clone()
 				part.Parent = workspace
-				print(part)
 				ownPart = true
 			end
 		end

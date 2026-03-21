@@ -197,7 +197,7 @@ BasicAttackClient.AbilityType = "BasicAttack"
 local COLOR_NORMAL = Color3.fromRGB(184, 184, 184)
 local COLOR_NO_RESOURCE = Color3.fromRGB(220, 50, 50)
 local ALPHA_NORMAL = 0
-local ALPHA_INTERVAL = 0.85
+local ALPHA_INTERVAL = 0.7
 
 -- ─── 초기화 ──────────────────────────────────────────────────────────────────
 
@@ -421,6 +421,47 @@ function BasicAttackClient:IsFiring(): boolean
 end
 
 --[=[
+	AbilityCoordinator용: 다른 ability의 조준을 막는 상태인지 여부.
+	stack  → postDelay(intervalUntil) 중
+	hold/toggle → fire loop 중
+]=]
+function BasicAttackClient:IsBlockingAim(): boolean
+	local attackId = self._equippedAttackId
+	if not attackId then
+		return false
+	end
+	local entry = ATTACK_REGISTRY[attackId]
+	if not entry then
+		return false
+	end
+	local state = self._attackState
+	if not state then
+		return false
+	end
+
+	if entry.def.fireType == "stack" then
+		return os.clock() < state.intervalUntil
+	else
+		return self._fireLoopCancel ~= nil
+	end
+end
+
+--[=[
+	AbilityCoordinator용: blockAimTypes 반환.
+]=]
+function BasicAttackClient:GetBlockAimTypes(): { string }?
+	local attackId = self._equippedAttackId
+	if not attackId then
+		return nil
+	end
+	local entry = ATTACK_REGISTRY[attackId]
+	if not entry then
+		return nil
+	end
+	return entry.def.blockAimTypes
+end
+
+--[=[
 	AbilityCoordinator용: toggle fire 진행 중 여부 (예외 조건)
 ]=]
 function BasicAttackClient:IsToggleFiring(): boolean
@@ -555,6 +596,10 @@ end
 -- ─── 내부: 조준 시작 ────────────────────────────────────────────────────────
 
 function BasicAttackClient:_tryStartAim(entry: { def: any, module: any, animDef: any }, lockYaw: boolean)
+	if not self._coordinator:CanStartAim("BasicAttack") then
+		return
+	end
+
 	local state = self._attackState
 	if not state then
 		return
@@ -644,6 +689,7 @@ function BasicAttackClient:_startFireLoop(entry: { def: any, module: any, animDe
 	end
 
 	state.isFiring = true
+	local loopStartTime = os.clock() -- ← 추가
 	self:_onFireExecuted(entry, state)
 
 	local running = true
@@ -656,6 +702,7 @@ function BasicAttackClient:_startFireLoop(entry: { def: any, module: any, animDe
 	task.spawn(function()
 		while running do
 			local now = os.clock()
+			state.effectiveAimTime = now - loopStartTime
 
 			if state.resourceType == "gauge" then
 				if state.currentGauge <= 0 then

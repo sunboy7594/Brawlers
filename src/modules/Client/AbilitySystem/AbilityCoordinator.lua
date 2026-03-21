@@ -31,6 +31,8 @@ type AbilityClient = {
 	AbilityType: string,
 	IsFiring: (self: any) -> boolean,
 	IsToggleFiring: (self: any) -> boolean,
+	IsBlockingAim: (self: any) -> boolean, -- ← 추가
+	GetBlockAimTypes: (self: any) -> { string }?, -- ← 추가
 	CancelCombatState: (self: any) -> (),
 }
 
@@ -104,6 +106,28 @@ function AbilityCoordinator:CancelByType(abilityType: string)
 			client:CancelCombatState()
 		end
 	end
+end
+
+--[=[
+	requestingType의 조준 시작이 가능한지 확인합니다.
+	다른 ability가 IsBlockingAim() 상태이고 blockAimTypes에 requestingType이 포함되면 false.
+]=]
+function AbilityCoordinator:CanStartAim(requestingType: string): boolean
+	for _, client in self._clients do
+		if not client:IsBlockingAim() then
+			continue
+		end
+		local blocked = client:GetBlockAimTypes()
+		if not blocked then
+			continue
+		end
+		for _, t in blocked do
+			if t == requestingType then
+				return false
+			end
+		end
+	end
+	return true
 end
 
 function AbilityCoordinator.Destroy(self: AbilityCoordinator)
