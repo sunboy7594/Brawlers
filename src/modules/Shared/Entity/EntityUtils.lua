@@ -24,9 +24,10 @@
 	StopMove()             → 이동 중단
 	SpawnEntity(...)       → 그 자리에서 새 엔티티 생성
 	FireEntity(...)        → 새 방향으로 엔티티 발사
+	Animate(onMoveCb)      → onHit/onMiss/onSpawn에서 dt 기반 Transform 유틸 구동
 
 	─── Transform ────────────────────────────────────────────────────────────
-	RotateTo(config)       → 방향 기준 회전 (도/초) — 상태 없음, 공유 안전
+	RotateTo(config)       → 방향 기준 회전 (도/초)
 	RandomRotateTo(config) → 랜덤 회전
 	ScaleTo(config)        → 크기 변화
 	FadeTo(config)         → 투명도 변화
@@ -39,7 +40,7 @@
 	모든 유틸에 delay?: number 옵션 포함.
 
 	─── per-instance 상태 관리 ────────────────────────────────────────────────
-	ScaleTo/FadeTo/RandomRotateTo/MoveTo/RandomOffsetTo는 클로저 로컬 변수 대신
+	ScaleTo/FadeTo/RotateTo/RandomRotateTo/MoveTo/RandomOffsetTo는 클로저 로컬 변수 대신
 	handle에 고유 키(_s<N>)로 상태를 저장합니다.
 	이로 인해 require 캐싱에 의한 클로저 공유 버그가 해결됩니다.
 	(EntityController.tickHandle이 onMove에 handle을 4번째 인자로 전달)
@@ -397,6 +398,45 @@ function EntityUtils.FireEntity(defModule: string, defName: string, options: { [
 	end
 end
 
+--[=[
+	Animate(onMoveCb)
+	  onHit / onMiss / onSpawn 에서 onMove 시그니처 콜백을 매 프레임 실행.
+	  handle이 살아있는 동안 Heartbeat로 구동, 소멸 시 _maid가 자동 해제.
+
+	  dt가 필요한 Transform 계열(FadeTo, ScaleTo, RotateTo, MoveTo 등) 전부 사용 가능.
+	  각 유틸의 delay 옵션도 그대로 동작.
+
+	  예)
+	    onMiss = EntityUtils.Animate(
+	        EntityUtils.FadeTo({ from = 0, to = 1, duration = 0.3, speed = 10 })
+	    ),
+
+	    onHit = EntityUtils.Sequence({
+	        EntityUtils.SpawnEntity("FxDef", "Explosion"),
+	        EntityUtils.Animate(EntityUtils.TransformSequence({
+	            EntityUtils.ScaleTo({ target = Vector3.new(2,2,2), duration = 0.2, speed = 10 }),
+	            EntityUtils.FadeTo({ from = 0, to = 1, duration = 0.2, speed = 10, delay = 0.1 }),
+	        })),
+	        EntityUtils.Despawn({ delay = 0.2 }),
+	    }),
+]=]
+function EntityUtils.Animate(onMoveCb: (model: any, dt: number, params: any?, handle: any?) -> ())
+	return function(handle: any, _hitInfo: any?)
+		if not handle or not handle._maid then
+			return
+		end
+		local conn: RBXScriptConnection
+		conn = RunService.Heartbeat:Connect(function(dt)
+			if not handle.IsAlive or not handle:IsAlive() then
+				conn:Disconnect()
+				return
+			end
+			onMoveCb(handle.part, dt, handle._params, handle)
+		end)
+		handle._maid:GiveTask(conn)
+	end
+end
+
 -- ─── Transform ───────────────────────────────────────────────────────────────
 
 export type RotateToConfig = {
@@ -405,11 +445,28 @@ export type RotateToConfig = {
 	delay: number?,
 }
 
--- RotateTo는 매 프레임 delta를 누적하는 stateless 연산이므로 클로저 공유 안전
+--[=[
+	RotateTo(config)
+	  방향 기준 회전 (도/초).
+	  delay 수정: totalElapsed + handle per-instance 상태로 delay 정상 동작.
+]=]
 function EntityUtils.RotateTo(config: RotateToConfig)
-	return function(model: any, dt: number, _params: { [string]: any }?, _handle: any?)
+	local sk = newStateKey()
+	return function(model: any, dt: number, _params: { [string]: any }?, handle: any?)
 		if typeof(model) ~= "Instance" then
 			return
+		end
+		-- handle 없으면 delay 없이 즉시 회전 (하위 호환)
+		if handle then
+			local s: any = handle[sk]
+			if not s then
+				s = { totalElapsed = 0 }
+				handle[sk] = s
+			end
+			s.totalElapsed += dt
+			if s.totalElapsed < (config.delay or 0) then
+				return
+			end
 		end
 		local m = model :: any
 		local delta = math.rad(config.speed * dt)
@@ -432,7 +489,6 @@ function EntityUtils.RandomRotateTo(config: RandomRotateToConfig)
 		if not handle then
 			return
 		end
-		-- handle에 per-instance 상태 저장
 		local s: any = handle[sk]
 		if not s then
 			s = { initialized = false, targetAngle = 0, rotElapsed = 0, totalElapsed = 0 }
@@ -470,7 +526,6 @@ function EntityUtils.ScaleTo(config: ScaleToConfig)
 		if not handle then
 			return
 		end
-		-- handle에 per-instance 상태 저장
 		local s: any = handle[sk]
 		if not s then
 			s = {
@@ -531,7 +586,6 @@ function EntityUtils.FadeTo(config: FadeToConfig)
 		if not handle then
 			return
 		end
-		-- handle에 per-instance 상태 저장
 		local s: any = handle[sk]
 		if not s then
 			s = { current = config.from, velocity = 0, rotElapsed = 0, totalElapsed = 0 }
@@ -575,7 +629,6 @@ function EntityUtils.MoveTo(config: MoveToConfig)
 		if not handle then
 			return
 		end
-		-- handle에 per-instance 상태 저장
 		local s: any = handle[sk]
 		if not s then
 			s = {
@@ -635,7 +688,6 @@ function EntityUtils.RandomOffsetTo(config: RandomOffsetToConfig)
 		if not handle then
 			return
 		end
-		-- handle에 per-instance 상태 저장
 		local s: any = handle[sk]
 		if not s then
 			s = {

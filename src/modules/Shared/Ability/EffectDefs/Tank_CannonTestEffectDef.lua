@@ -14,11 +14,8 @@ local require = require(script.Parent.loader).load(script)
 
 local EntityColorUtils = require("EntityColorUtils")
 local EntityUtils = require("EntityUtils")
-
 local PROJECTILE_SPEED = 40
 local MAX_RANGE = 100
-
--- CannonExplosion 수명: ScaleTo(0.5s) + FadeTo(1.0s) + 여유
 local EXPLOSION_LIFETIME = 1.5
 
 return {
@@ -36,16 +33,24 @@ return {
 			speed = 360,
 		}),
 
-		hitDetect = EntityUtils.Box({ size = Vector3.new(4, 4, 4) }),
-
-		onHit = EntityUtils.Sequence({
-			EntityUtils.SpawnEntity("Tank_CannonTestEffectDef", "CannonExplosion"),
-			EntityUtils.Despawn(),
+		-- enemy + obstacle(벽) 둘 다 판정
+		hitDetect = EntityUtils.Box({
+			size = Vector3.new(4, 4, 4),
+			relations = { "enemy", "obstacle" },
 		}),
 
-		-- onMiss: FadeTo는 onMove 전용 (model, dt, params) 콜백 → onMiss(handle)로 호출하면 dt=nil 에러
-		-- Despawn으로 대체 (fade-out 연출은 추후 FadeOutMiss 유틸 구현 후 교체)
-		onMiss = EntityUtils.Despawn(),
+		onHit = EntityUtils.Sequence({
+			-- EntityUtils.SpawnEntity("Tank_CannonTestEffectDef", "CannonExplosion"),
+			-- 맞는 순간 빠르게 fade out 후 소멸
+			EntityUtils.Animate(EntityUtils.FadeTo({ from = 0, to = 1, duration = 10.0, speed = 2 })),
+			EntityUtils.Despawn({ delay = 10.0 }),
+		}),
+
+		-- 사거리 초과 시 fade out 후 소멸
+		onMiss = EntityUtils.Sequence({
+			EntityUtils.Animate(EntityUtils.FadeTo({ from = 0, to = 1, duration = 0.25, speed = 10 })),
+			EntityUtils.Despawn({ delay = 0.25 }),
+		}),
 
 		colorFilter = EntityColorUtils.Highlight({
 			fillTransparency = 0.5,
@@ -56,16 +61,31 @@ return {
 	CannonExplosion = {
 		model = "CannonExplosion",
 		tags = { "projectile" },
-		move = EntityUtils.Linear({
-			speed = PROJECTILE_SPEED,
-			maxRange = MAX_RANGE,
+
+		-- 수명 타이머 + 스케일 커지고 fade out
+		onSpawn = EntityUtils.Sequence({
+			EntityUtils.AutoDespawn(EXPLOSION_LIFETIME),
+			EntityUtils.Animate(EntityUtils.TransformSequence({
+				-- 0.5초 동안 커짐
+				EntityUtils.ScaleTo({
+					from = Vector3.new(0.1, 0.1, 0.1),
+					target = Vector3.new(1, 1, 1),
+					duration = 0.5,
+					speed = 10,
+				}),
+				-- 0.5초 후부터 fade out
+				EntityUtils.FadeTo({
+					from = 0,
+					to = 1,
+					duration = 1.0,
+					speed = 5,
+					delay = 0.5,
+				}),
+			})),
 		}),
 
-		-- move=nil이면 Miss()가 자동 호출되지 않으므로
-		-- onSpawn에서 수명 타이머를 걸어 줌
-		-- onSpawn = EntityUtils.AutoDespawn(EXPLOSION_LIFETIME),
-
 		onMiss = EntityUtils.Despawn(),
+
 		colorFilter = EntityColorUtils.Highlight({
 			fillTransparency = 0.5,
 			depthMode = "Occluded",
