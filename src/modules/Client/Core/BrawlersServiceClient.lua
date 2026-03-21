@@ -26,6 +26,9 @@ function BrawlersServiceClient.Init(self: BrawlersServiceClient, serviceBag: Ser
 
 	-- Internal
 	self._serviceBag:GetService(require("BrawlersTranslator"))
+
+	-- HRP 이동 처리 (JumpPunch 등 클라이언트 로컬 arc 이동)
+	self._serviceBag:GetService(require("HRPMoveClient"))
 end
 
 return BrawlersServiceClient
