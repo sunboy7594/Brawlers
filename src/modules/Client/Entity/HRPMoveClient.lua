@@ -97,7 +97,7 @@ function HRPMoveClient.Start(self: any)
 					hitDetect = EntityUtils.Sphere({
 						radius = 2.8,
 						relations = { "obstacle" },
-						activateAt = 0.35,
+						activateAt = 0.15,
 					}),
 					onHit = wrappedOnHit,
 					onMiss = wrappedOnMiss,
