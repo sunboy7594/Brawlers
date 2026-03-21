@@ -21,7 +21,8 @@
 	─── 공용 콜백 ──────────────────────────────────────────────────────────────
 	Despawn(config?)       → delay 포함 즉시 소멸
 	AutoDespawn(duration)  → onSpawn에서 사용. duration 후 자동 소멸 (move=nil 엔티티 수명 관리)
-	AnchorPart()           → onSpawn에서 사용. HRP Anchored+NetworkOwner+PlatformStand 고정.
+	AnchorPart()           → onSpawn에서 사용. HRP 이동 시 물리/Humanoid 간섭 차단.
+	                         Anchored/SetNetworkOwner 사용하지 않으므로 PivotTo가 다른 클라이언트에 복제됨.
 	                         handle 소멸 시 자동 복원. (끊김 방지)
 	Sequence(callbacks)    → 순서 실행
 	StopMove()             → 이동 중단
@@ -435,15 +436,21 @@ end
 --[=[
 	AnchorPart()
 	  onSpawn 콜백으로 사용.
-	  BasePart 또는 Model 안의 HumanoidRootPart를 물리 간섭 없이 고정합니다.
+	  HRP 이동 중 물리/Humanoid 간섭을 차단하면서 복제가 정상 동작하도록 합니다.
+
+	  ──────────────────────────────────────────────────────────────────────
+	  ⚠️  Anchored와 SetNetworkOwner(nil)은 사용하지 않습니다.
+	     이 둘을 사용하면 서버가 소유권을 가져가 클라이언트의 PivotTo가
+	     로컬에서만 실행되어 다른 플레이어에게 복제되지 않습니다.
+	  ──────────────────────────────────────────────────────────────────────
 
 	  적용:
-	    1. Anchored = true          → 물리 시뮬레이션 정지
-	    2. SetNetworkOwner(nil)      → 서버가 네트워크 소유권 획득 (클라이언트 덮어쓰기 차단)
-	    3. PlatformStand = true      → Humanoid 상태머신 간섭 차단
-	    4. velocity 초기화           → 잔여 운동량 제거
+	    1. PlatformStand = true         → Humanoid 상태머신 간섭 차단
+	    2. velocity 초기화              → 잔여 운동량 제거
+	    3. Heartbeat: velocity 매 프레임 0으로 유지 → 중력/물리 축적 방지
 
-	  handle._maid에 복원 등록 → handle 소멸 시 모두 원래 값으로 자동 복원.
+	  클라이언트가 소유권 유지 → PivotTo가 서버/다른 클라이언트에 정상 복제됨.
+	  handle._maid 소멸 시 PlatformStand 자동 복원.
 
 	  사용 예)
 	    onSpawn = EntityUtils.Sequence({
@@ -472,38 +479,34 @@ function EntityUtils.AnchorPart()
 			humanoid = (model :: Instance):FindFirstChildOfClass("Humanoid") :: Humanoid?
 		end
 
-		-- 네트워크 소유자 기억
-		local prevOwner: Player? = nil
-		local canSetOwner = false
-		local ok, owner = pcall(function() return bp:GetNetworkOwner() end)
-		if ok then
-			prevOwner = owner
-			canSetOwner = true
-		end
-
-		-- ── 적용 ────────────────────────────────────────────────────────────
-		local wasAnchored = bp.Anchored
-		bp.Anchored = true
+		-- ── 잔여 운동량 제거 ─────────────────────────────────────────────
 		bp.AssemblyLinearVelocity  = Vector3.zero
 		bp.AssemblyAngularVelocity = Vector3.zero
 
-		if canSetOwner then
-			pcall(function() bp:SetNetworkOwner(nil) end)
-		end
-
+		-- ── PlatformStand: Humanoid 상태머신 간섭 차단 ──────────────────
 		local wasPlatformStand = false
 		if humanoid then
 			wasPlatformStand = humanoid.PlatformStand
 			humanoid.PlatformStand = true
 		end
 
-		-- ── 복원 ────────────────────────────────────────────────────────────
-		handle._maid:GiveTask(function()
-			if not (bp :: Instance).Parent then return end
-			bp.Anchored = wasAnchored
-			if canSetOwner then
-				pcall(function() bp:SetNetworkOwner(prevOwner) end)
+		-- ── 매 프레임 velocity=0: 중력 축적 방지 ────────────────────────
+		-- Anchored를 쓰지 않으므로 클라이언트 네트워크 소유권 유지됨.
+		-- → PivotTo가 서버/다른 클라이언트에 정상 복제됨.
+		local velConn: RBXScriptConnection
+		velConn = RunService.Heartbeat:Connect(function()
+			if not (bp :: Instance).Parent then
+				velConn:Disconnect()
+				return
 			end
+			bp.AssemblyLinearVelocity  = Vector3.zero
+			bp.AssemblyAngularVelocity = Vector3.zero
+		end)
+		handle._maid:GiveTask(velConn)
+
+		-- ── 복원 ────────────────────────────────────────────────────────
+		handle._maid:GiveTask(function()
+			velConn:Disconnect()
 			if humanoid and (humanoid :: Instance).Parent then
 				humanoid.PlatformStand = wasPlatformStand
 			end
