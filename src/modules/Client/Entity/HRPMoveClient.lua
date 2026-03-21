@@ -34,7 +34,6 @@ function HRPMoveClient.Start(self: any)
 	self._maid:GiveTask(
 		HRPMoveRemoting.Move:Connect(
 			function(token: string, defModule: string, defName: string, origin: CFrame, params: { [string]: any }?)
-				-- def 로드 (Shared 모듈이므로 클라이언트에서 require 가능)
 				local ok, defs = pcall(require, defModule)
 				if not ok or type(defs) ~= "table" then
 					warn("[HRPMoveClient] def 로드 실패:", defModule)
@@ -46,7 +45,6 @@ function HRPMoveClient.Start(self: any)
 					return
 				end
 
-				-- 로컬 플레이어 HRP
 				local char = Players.LocalPlayer.Character
 				local hrp = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
 				if not hrp then
@@ -67,12 +65,15 @@ function HRPMoveClient.Start(self: any)
 					end
 				end
 
-				-- Floor 착지 onHit: def.onHit(floor despawn) 실행 후 보고
+				-- Floor 착지로 실제 Despawn됐을 때만 보고
+				-- 벽에 스쳐도 arc가 계속되도록 IsAlive() 체크
 				local function wrappedOnHit(handle: any, hitInfo: any)
 					if def.onHit then
 						def.onHit(handle, hitInfo)
 					end
-					reportLanding()
+					if not handle:IsAlive() then
+						reportLanding()
+					end
 				end
 
 				-- arc 완료 onMiss: def.onMiss 실행 후 보고
@@ -83,9 +84,6 @@ function HRPMoveClient.Start(self: any)
 					reportLanding()
 				end
 
-				-- EntityPlayer.PlayDirect로 로컬 HRP arc 이동
-				-- AnchorPart: 물리/네트워크 간섭 차단 → 부드러운 이동
-				-- Floor hitDetect: 착지 시 handle 해제 → Roblox 물리 복귀
 				EntityPlayer.PlayDirect({
 					part = hrp,
 					origin = origin,
@@ -94,12 +92,8 @@ function HRPMoveClient.Start(self: any)
 						EntityUtils.AnchorPart(),
 						def.onSpawn or function(_h: any) end,
 					}),
-					hitDetect = EntityUtils.Sphere({
-						radius = 2.8,
-						relations = { "obstacle" },
-						activateAt = 0.15,
-					}),
-					onHit = wrappedOnHit,
+					hitDetect = def.hitDetect or nil,
+					onHit = def.hitDetect and wrappedOnHit or nil,
 					onMiss = wrappedOnMiss,
 					params = params,
 				})

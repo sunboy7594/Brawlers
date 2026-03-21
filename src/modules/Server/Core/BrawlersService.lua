@@ -34,6 +34,13 @@ function BrawlersService.Init(self: BrawlersService, serviceBag: ServiceBag.Serv
 	end)
 	PhysicsService:CollisionGroupSetCollidable("HitCheck", "Characters", false)
 
+	pcall(function()
+		PhysicsService:RegisterCollisionGroup("MovementObstacle")
+	end)
+	-- MovementObstacle ↔ HitCheck 충돌 없음 → InstantHit Raycast에 안 잡힘
+	PhysicsService:CollisionGroupSetCollidable("MovementObstacle", "HitCheck", false)
+	-- MovementObstacle ↔ Characters 충돌 있음 (기본값 true, 별도 설정 불필요)
+
 	-- External
 	self._serviceBag:GetService(require("CmdrService"))
 

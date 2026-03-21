@@ -5,19 +5,21 @@
 	탱크 점프 펀치 서버 모듈.
 
 	onFire:
-	  1. EntityPlayerServer.PlayHRP → 공격자 클라이언트에서 로컬 arc 점프
-	     (토큰 발급 → FireClient → 착지 위치 검증)
-	  2. JUMP_DELAY 후 착지 위치에서 ProjectileHit.verdict() 발동
+	  1. findActualLanding으로 착지점 계산 (벽 보정)
+	  2. EntityPlayerServer.PlayHRP → 공격자 클라이언트에서 로컬 arc 점프
+	  3. JUMP_DELAY 후 actualLanding에서 ProjectileHit.verdict() 발동
 
 	onHitChecked:
 	  ① damage 35
 	  ② stun 2.0s (force=true)
-	  ③ EntityPlayerServer.PlayHRP → 피격자 클라이언트에서 로컬 arc 날리기
+	  ③ findActualLanding으로 날리기 착지점 계산
+	  ④ EntityPlayerServer.PlayHRP → 피격자 클라이언트에서 로컬 arc 날리기
 ]=]
 
 local require = require(script.Parent.loader).load(script)
 
 local Players = game:GetService("Players")
+local workspace = game:GetService("Workspace")
 
 local EntityPlayerServer = require("EntityPlayerServer")
 local EntityUtils = require("EntityUtils")
@@ -25,7 +27,7 @@ local PlayerStateUtils = require("PlayerStateUtils")
 local ProjectileHit = require("ProjectileHit")
 local cancellableDelay = require("cancellableDelay")
 
--- ─── 상수 (Tank_JumpPunchEntityDef와 동일하게 유지) ─────────────────────────
+-- ─── 상수 ────────────────────────────────────────────────────────────────────
 
 local JUMP_DISTANCE = 15
 local JUMP_HEIGHT = 6
@@ -33,9 +35,9 @@ local JUMP_SPEED = 28
 local JUMP_DELAY = JUMP_DISTANCE / JUMP_SPEED -- ≈ 0.54s
 
 local FIST_SPEED = 35
-local FIST_DISTANCE = 6 -- 사거리 늘려서 적이 조금 이동해도 잡힘
+local FIST_DISTANCE = 6
 local FIST_HEIGHT = 0.5
-local FIST_BOX_SIZE = Vector3.new(4.5, 4.5, 4.5) -- 박스 키워서 판정 여유
+local FIST_BOX_SIZE = Vector3.new(4.5, 4.5, 4.5)
 
 local DAMAGE = 35
 local STUN_DURATION = 2.0
@@ -44,9 +46,54 @@ local THROW_DISTANCE = 22
 local THROW_HEIGHT = 10
 local THROW_SPEED = 28
 
--- 허용 오차: latency(최대 200ms) * 이동속도(28) + 여유(3) ≈ 9 스터드
 local JUMP_TOLERANCE = 9
 local THROW_TOLERANCE = 12
+
+local MAX_EXTRA_DISTANCE = 5
+local HEIGHT_RATIO = JUMP_HEIGHT / JUMP_DISTANCE -- 0.4
+
+-- ─── 착지점 계산 ─────────────────────────────────────────────────────────────
+--[=[
+	origin 기준 dir 방향으로 distance만큼 이동할 때 실제 착지점을 계산합니다.
+
+	흐름:
+	  1. 순방향 Ray: 벽 감지
+	     안 맞음 → 그냥 expectedLanding
+	     맞음    →
+	  2. 역방향 Ray: probe(distance + MAX_EXTRA)에서 뒤로 쏴서 벽 뒷면 위치 파악
+	     wallBackDist > distance → 벽 너머 공간 있음 → 점프 거리 늘려서 착지
+	     wallBackDist <= distance → 두꺼운 벽 or 코앞 → 벽 앞 최대한 가까이 착지
+]=]
+local function findActualLanding(originPos: Vector3, dir: Vector3, distance: number, excludeModel: Model): Vector3
+	local rayParams = RaycastParams.new()
+	rayParams.FilterType = Enum.RaycastFilterType.Exclude
+	rayParams.FilterDescendantsInstances = { excludeModel }
+
+	local forwardRay = workspace:Raycast(originPos, dir * distance, rayParams)
+	if not forwardRay then
+		return originPos + dir * distance
+	end
+
+	local frontDist = forwardRay.Distance
+	local probePos = originPos + dir * (distance + MAX_EXTRA_DISTANCE)
+	local backwardRay = workspace:Raycast(probePos, -dir * (distance + MAX_EXTRA_DISTANCE), rayParams)
+
+	local wallBackDist: number
+	if backwardRay then
+		wallBackDist = (distance + MAX_EXTRA_DISTANCE) - backwardRay.Distance
+	else
+		-- probe가 이미 공간 안에 있음
+		wallBackDist = distance + MAX_EXTRA_DISTANCE
+	end
+
+	if wallBackDist > distance then
+		-- 벽 너머 공간 있음 → 점프 거리 늘려서 착지
+		return originPos + dir * (wallBackDist + 1)
+	else
+		-- 두꺼운 벽이거나 코앞 → 벽 앞 최대한 가까이 착지 (최소 1 stud)
+		return originPos + dir * math.max(frontDist - 1.5, 1)
+	end
+end
 
 -- ─── 타입 ────────────────────────────────────────────────────────────────────
 
@@ -93,33 +140,29 @@ return {
 
 			local originPos = hrp.Position
 
-			-- Y 고정 게임: 수평만 계산
-			local expectedLanding =
-				Vector3.new(originPos.X + dir.X * JUMP_DISTANCE, originPos.Y, originPos.Z + dir.Z * JUMP_DISTANCE)
+			-- 벽 보정된 실제 착지점 계산
+			local actualLanding = findActualLanding(originPos, dir, JUMP_DISTANCE, attacker)
+			local actualJumpDist = (actualLanding - originPos).Magnitude
+			local actualJumpHeight = actualJumpDist * HEIGHT_RATIO
 
-			-- 공격자 클라이언트에서 로컬 arc 점프 실행
+			-- 공격자 클라이언트에서 로컬 arc 점프
 			EntityPlayerServer.PlayHRP(attackerPlayer, "Tank_JumpPunchEntityDef", "PlayerJump", {
 				origin = CFrame.new(originPos, originPos + dir),
-				params = nil,
-				duration = JUMP_DELAY + 0.2,
-				expectedLanding = expectedLanding,
+				params = { actualDistance = actualJumpDist, actualHeight = actualJumpHeight },
+				duration = actualJumpDist / JUMP_SPEED + 0.5,
+				expectedLanding = actualLanding,
 				tolerance = JUMP_TOLERANCE,
 			})
 
-			-- JUMP_DELAY 후 착지 위치에서 펀치 히트박스 발사
-			local capturedDir = state.direction
+			-- JUMP_DELAY 후 actualLanding에서 펀치 히트박스 발사
+			local capturedDir = dir
 			local onHitResult = state.onHitResult
 			local onMissResult = state.onMissResult
 			local teamService = state.teamService
 			local fireMaid = state.fireMaid
 
 			local cancelFn = cancellableDelay(JUMP_DELAY, function()
-				local hrp2 = attacker:FindFirstChild("HumanoidRootPart") :: BasePart?
-				if not hrp2 then
-					return
-				end
-
-				local origin2 = CFrame.new(hrp2.Position, hrp2.Position + capturedDir)
+				local origin2 = CFrame.new(actualLanding, actualLanding + capturedDir)
 
 				ProjectileHit.verdict(attacker, origin2, {
 					move = EntityUtils.Arc({
@@ -163,7 +206,6 @@ return {
 
 			local attackerPlayer = Players:GetPlayerFromCharacter(snapshot.attacker)
 
-			-- 날리기 방향: 펀치 진행 방향 수평 반대
 			local dir = snapshot.direction
 			local flatOpp = Vector3.new(-dir.X, 0, -dir.Z)
 			local throwDir: Vector3 = if flatOpp.Magnitude > 0.001 then flatOpp.Unit else Vector3.new(0, 0, 1)
@@ -195,19 +237,18 @@ return {
 					force = true,
 				})
 
-				-- ③ 피격자 클라이언트에서 로컬 arc 날리기
+				-- ③ 피격자 날리기 착지점 계산
 				local victimPos = victimHRP.Position
-				local expectedThrowEnd = Vector3.new(
-					victimPos.X + throwDir.X * THROW_DISTANCE,
-					victimPos.Y,
-					victimPos.Z + throwDir.Z * THROW_DISTANCE
-				)
+				local actualThrowLanding = findActualLanding(victimPos, throwDir, THROW_DISTANCE, victimModel)
+				local actualThrowDist = (actualThrowLanding - victimPos).Magnitude
+				local actualThrowHeight = actualThrowDist * HEIGHT_RATIO
 
+				-- ④ 피격자 클라이언트에서 로컬 arc 날리기
 				EntityPlayerServer.PlayHRP(victimPlayer, "Tank_JumpPunchEntityDef", "PlayerThrow", {
 					origin = CFrame.new(victimPos, victimPos + throwDir),
-					params = nil,
-					duration = THROW_DISTANCE / THROW_SPEED + 0.3,
-					expectedLanding = expectedThrowEnd,
+					params = { actualDistance = actualThrowDist, actualHeight = actualThrowHeight },
+					duration = actualThrowDist / THROW_SPEED + 0.5,
+					expectedLanding = actualThrowLanding,
 					tolerance = THROW_TOLERANCE,
 				})
 			end

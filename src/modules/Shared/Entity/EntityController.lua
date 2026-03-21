@@ -40,7 +40,6 @@ local Maid = require("Maid")
 -- ─── 타입 ───────────────────────────────────────────────────────────────────
 
 export type MoveFunction = (dt: number, handle: any, params: { [string]: any }?) -> boolean
--- handle은 4번째 인자로 전달됨 (per-instance 상태 저장용)
 export type OnMoveCallback = (model: any, dt: number, params: { [string]: any }?, handle: any?) -> ()
 export type OnSpawnCallback = (handle: any) -> ()
 export type HitCallback = (handle: any, hitInfo: HitDetectionUtil.HitInfo) -> ()
@@ -85,8 +84,6 @@ export type EntityConfig = {
 	taskMaid: any?,
 	firedAt: number?,
 	delay: number?,
-	-- 외부에서 teamContext를 직접 주입할 수 있음.
-	-- 있으면 buildTeamContext(attackerPlayerId) 폴백을 건너뜀.
 	teamContext: TeamContext?,
 }
 
@@ -104,9 +101,8 @@ EntityHandle_mt.__index = EntityHandle_mt
 -- ─── 내부 유틸 ───────────────────────────────────────────────────────────────
 
 local function makeFakePart(origin: CFrame): any
-	local cf = origin
 	local fp: any = {}
-	fp._cf = cf
+	fp._cf = origin
 	fp.GetPivot = function(): CFrame
 		return fp._cf
 	end
@@ -174,6 +170,7 @@ local function tickHandle(handle: any, dt: number): boolean
 		return false
 	end
 
+	-- move
 	if not handle._moveStopped and handle._def.move then
 		handle._moveElapsed += dt
 		local continues = handle._def.move(dt, handle, handle._params)
@@ -183,11 +180,23 @@ local function tickHandle(handle: any, dt: number): boolean
 		end
 	end
 
+	-- hitDetect
 	if not handle._fadingOut and handle._def.hitDetect then
 		local hits = HitDetectionUtil.Detect(handle._def.hitDetect, handle._moveElapsed, handle, handle._params)
 		if #hits > 0 then
 			if handle._onHit then
 				for _, hitInfo in hits do
+					local hi = hitInfo :: any
+
+					if hi.hard then
+						-- HardObstacle: Penetrate 카운트 무시, 무조건 즉시 onHit + 소멸
+						handle._onHit(handle, hitInfo)
+						if handle._alive and not handle._deferredDespawn then
+							handle:_destroyNoMiss()
+						end
+						return false
+					end
+
 					handle._onHit(handle, hitInfo)
 					if not handle._alive then
 						break
@@ -201,7 +210,7 @@ local function tickHandle(handle: any, dt: number): boolean
 		end
 	end
 
-	-- handle을 4번째 인자로 전달: onMove 콜백이 per-instance 상태를 handle에 저장할 수 있도록
+	-- onMove
 	if handle._def.onMove and handle.part then
 		handle._def.onMove(handle.part, dt, handle._params, handle)
 	end
@@ -230,7 +239,6 @@ local function ensureHeartbeat()
 	end)
 end
 
--- simB 중 Part를 숨겨 타 클라이언트 화면에서 fast-forward 동안 보이지 않도록 함
 local function simBHide(handle: any): () -> ()
 	if not handle.part or typeof(handle.part) ~= "Instance" then
 		return function() end
@@ -238,7 +246,6 @@ local function simBHide(handle: any): () -> ()
 	local savedParts: { [BasePart]: number } = {}
 	local savedHL: { [any]: boolean } = {}
 	local root = handle.part :: Instance
-	-- root 자체가 BasePart인 경우
 	if root:IsA("BasePart") then
 		local bp = root :: BasePart
 		savedParts[bp] = bp.Transparency
@@ -278,16 +285,14 @@ local function simB(handle: any)
 	end
 
 	local restore = simBHide(handle)
-
 	local steps = 10
 	local stepDt = latency / steps
 	for _ = 1, steps do
 		if not handle._alive then
-			return -- 이미 dead: 복원 불필요
+			return
 		end
 		tickHandle(handle, stepDt)
 	end
-
 	restore()
 end
 
@@ -398,15 +403,13 @@ function EntityController.new(def: EntityDef, config: EntityConfig): any
 		_sweepBase = nil :: CFrame?,
 		_onHit = finalDef.onHit,
 		_onMiss = finalDef.onMiss,
-		-- config.teamContext 직접 주입 우선, 없으면 attackerPlayerId 기반 폴백
 		_teamContext = config.teamContext or buildTeamContext(config.attackerPlayerId),
 		_def = finalDef,
 		_params = params,
-		-- SpawnEntity가 하위 엔티티에 색상을 전달하기 위해 보관
 		_spawnColor = config.color,
 	}, EntityHandle_mt) :: any
 
-	-- colorFilter 적용 (실제 Model일 때만)
+	-- colorFilter 적용
 	if finalDef.colorFilter and config.part then
 		local ok, cleanup = pcall(finalDef.colorFilter, config.part, config.color)
 		if ok and cleanup then
@@ -414,7 +417,7 @@ function EntityController.new(def: EntityDef, config: EntityConfig): any
 		end
 	end
 
-	-- PivotTo origin (modelOffset 적용)
+	-- PivotTo origin
 	if config.part then
 		local pivotCF = finalDef.modelOffset and (config.origin * finalDef.modelOffset) or config.origin
 		config.part:PivotTo(pivotCF)
@@ -433,7 +436,7 @@ function EntityController.new(def: EntityDef, config: EntityConfig): any
 		removeFromIndex(handle)
 	end)
 
-	-- SimB: fast-forward 중 Part 숨김 처리 포함
+	-- SimB
 	if config.firedAt then
 		simB(handle)
 	end
