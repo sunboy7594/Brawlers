@@ -90,9 +90,32 @@ local function getAllBaseParts(model: any): { BasePart }
 	return parts
 end
 
+-- setTransparency 위에 추가
+local _highlightOriginals: { [any]: { fill: number, outline: number } } = {}
+
 local function setTransparency(model: any, t: number)
-	for _, part in getAllBaseParts(model) do
-		part.Transparency = t
+	if typeof(model) ~= "Instance" then
+		return
+	end
+	for _, d in (model :: Instance):GetDescendants() do
+		if d:IsA("BasePart") then
+			(d :: BasePart).Transparency = t
+		elseif d.ClassName == "Highlight" then
+			local hl = d :: any
+			if not _highlightOriginals[hl] then
+				_highlightOriginals[hl] = {
+					fill = hl.FillTransparency,
+					outline = hl.OutlineTransparency,
+				}
+				-- 소멸 시 자동 정리
+				hl.Destroying:Connect(function()
+					_highlightOriginals[hl] = nil
+				end)
+			end
+			local orig = _highlightOriginals[hl]
+			hl.FillTransparency = orig.fill + (1 - orig.fill) * t
+			hl.OutlineTransparency = orig.outline + (1 - orig.outline) * t
+		end
 	end
 end
 
@@ -312,6 +335,7 @@ function EntityUtils.Despawn(config: { delay: number? }?)
 			return
 		end
 		if delay and delay > 0 then
+			handle._deferredDespawn = true -- ← 추가: EntityController 자동소멸 방지
 			local elapsed = 0
 			local conn: RBXScriptConnection
 			conn = RunService.Heartbeat:Connect(function(dt)

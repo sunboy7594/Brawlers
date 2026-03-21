@@ -30,75 +30,75 @@
 
 local require = require(script.Parent.loader).load(script)
 
+local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
-local Players    = game:GetService("Players")
-local Workspace  = game:GetService("Workspace")
+local Workspace = game:GetService("Workspace")
 
 local HitDetectionUtil = require("HitDetectionUtil")
-local Maid             = require("Maid")
+local Maid = require("Maid")
 
 -- ─── 타입 ───────────────────────────────────────────────────────────────────
 
-export type MoveFunction    = (dt: number, handle: any, params: { [string]: any }?) -> boolean
+export type MoveFunction = (dt: number, handle: any, params: { [string]: any }?) -> boolean
 -- handle은 4번째 인자로 전달됨 (per-instance 상태 저장용)
-export type OnMoveCallback  = (model: any, dt: number, params: { [string]: any }?, handle: any?) -> ()
+export type OnMoveCallback = (model: any, dt: number, params: { [string]: any }?, handle: any?) -> ()
 export type OnSpawnCallback = (handle: any) -> ()
-export type HitCallback     = (handle: any, hitInfo: HitDetectionUtil.HitInfo) -> ()
-export type MissCallback    = (handle: any) -> ()
-export type ColorFilter     = (model: any, color: Color3?) -> () -> ()
+export type HitCallback = (handle: any, hitInfo: HitDetectionUtil.HitInfo) -> ()
+export type MissCallback = (handle: any) -> ()
+export type ColorFilter = (model: any, color: Color3?) -> () -> ()
 
 export type TeamContext = {
-	attackerChar   : Model?,
-	attackerPlayer : Player?,
-	isEnemy        : (a: Player, b: Player) -> boolean,
+	attackerChar: Model?,
+	attackerPlayer: Player?,
+	isEnemy: (a: Player, b: Player) -> boolean,
 }
 
 export type EntityDef = {
-	model        : string?,
-	modelOffset  : CFrame?,
-	move         : MoveFunction?,
-	onMove       : OnMoveCallback?,
-	onSpawn      : OnSpawnCallback?,
-	onHit        : HitCallback?,
-	onMiss       : MissCallback?,
-	hitDetect    : HitDetectionUtil.HitDetectFunction?,
-	colorFilter  : ColorFilter?,
-	tags         : { string }?,
-	params       : { [string]: any }?,
+	model: string?,
+	modelOffset: CFrame?,
+	move: MoveFunction?,
+	onMove: OnMoveCallback?,
+	onSpawn: OnSpawnCallback?,
+	onHit: HitCallback?,
+	onMiss: MissCallback?,
+	hitDetect: HitDetectionUtil.HitDetectFunction?,
+	colorFilter: ColorFilter?,
+	tags: { string }?,
+	params: { [string]: any }?,
 }
 
 export type EntityConfig = {
-	part             : any?,
-	origin           : CFrame,
-	move             : MoveFunction?,
-	onMove           : OnMoveCallback?,
-	onSpawn          : OnSpawnCallback?,
-	onHit            : HitCallback?,
-	onMiss           : MissCallback?,
-	hitDetect        : HitDetectionUtil.HitDetectFunction?,
-	colorFilter      : ColorFilter?,
-	attackerPlayerId : number?,
-	color            : Color3?,
-	params           : { [string]: any }?,
-	tags             : { string }?,
-	replicate        : boolean?,
-	taskMaid         : any?,
-	firedAt          : number?,
-	delay            : number?,
+	part: any?,
+	origin: CFrame,
+	move: MoveFunction?,
+	onMove: OnMoveCallback?,
+	onSpawn: OnSpawnCallback?,
+	onHit: HitCallback?,
+	onMiss: MissCallback?,
+	hitDetect: HitDetectionUtil.HitDetectFunction?,
+	colorFilter: ColorFilter?,
+	attackerPlayerId: number?,
+	color: Color3?,
+	params: { [string]: any }?,
+	tags: { string }?,
+	replicate: boolean?,
+	taskMaid: any?,
+	firedAt: number?,
+	delay: number?,
 	-- 외부에서 teamContext를 직접 주입할 수 있음.
 	-- 있으면 buildTeamContext(attackerPlayerId) 폴백을 건너뜀.
-	teamContext      : TeamContext?,
+	teamContext: TeamContext?,
 }
 
 -- ─── 글로벌 풀 ───────────────────────────────────────────────────────────────
 
-local _handles    : { [string]: any } = {}
-local _tagIndex   : { [string]: { [string]: any } } = {}
-local _ownerIndex : { [number]: { [string]: any } } = {}
-local _counter    : number = 0
-local _heartbeat  : RBXScriptConnection? = nil
+local _handles: { [string]: any } = {}
+local _tagIndex: { [string]: { [string]: any } } = {}
+local _ownerIndex: { [number]: { [string]: any } } = {}
+local _counter: number = 0
+local _heartbeat: RBXScriptConnection? = nil
 
-local EntityHandle_mt   = {}
+local EntityHandle_mt = {}
 EntityHandle_mt.__index = EntityHandle_mt
 
 -- ─── 내부 유틸 ───────────────────────────────────────────────────────────────
@@ -120,14 +120,20 @@ local function makeFakePart(origin: CFrame): any
 end
 
 local function buildTeamContext(attackerPlayerId: number?): TeamContext?
-	if not attackerPlayerId then return nil end
+	if not attackerPlayerId then
+		return nil
+	end
 	local attackerPlayer = Players:GetPlayerByUserId(attackerPlayerId)
-	if not attackerPlayer then return nil end
+	if not attackerPlayer then
+		return nil
+	end
 	return {
-		attackerChar   = attackerPlayer.Character,
+		attackerChar = attackerPlayer.Character,
 		attackerPlayer = attackerPlayer,
-		isEnemy        = function(a: Player, b: Player): boolean
-			if a.Neutral or b.Neutral then return true end
+		isEnemy = function(a: Player, b: Player): boolean
+			if a.Neutral or b.Neutral then
+				return true
+			end
 			return a.Team == nil or a.Team ~= b.Team
 		end,
 	}
@@ -136,11 +142,15 @@ end
 local function addToIndex(handle: any)
 	local id = handle.id
 	for _, tag in handle.tags do
-		if not _tagIndex[tag] then _tagIndex[tag] = {} end
+		if not _tagIndex[tag] then
+			_tagIndex[tag] = {}
+		end
 		_tagIndex[tag][id] = handle
 	end
 	if handle.ownerId then
-		if not _ownerIndex[handle.ownerId] then _ownerIndex[handle.ownerId] = {} end
+		if not _ownerIndex[handle.ownerId] then
+			_ownerIndex[handle.ownerId] = {}
+		end
 		_ownerIndex[handle.ownerId][id] = handle
 	end
 end
@@ -148,7 +158,9 @@ end
 local function removeFromIndex(handle: any)
 	local id = handle.id
 	for _, tag in handle.tags do
-		if _tagIndex[tag] then _tagIndex[tag][id] = nil end
+		if _tagIndex[tag] then
+			_tagIndex[tag][id] = nil
+		end
 	end
 	if handle.ownerId and _ownerIndex[handle.ownerId] then
 		_ownerIndex[handle.ownerId][id] = nil
@@ -158,7 +170,9 @@ end
 -- ─── 틱 ─────────────────────────────────────────────────────────────────────
 
 local function tickHandle(handle: any, dt: number): boolean
-	if not handle._alive then return false end
+	if not handle._alive then
+		return false
+	end
 
 	if not handle._moveStopped and handle._def.move then
 		handle._moveElapsed += dt
@@ -170,20 +184,17 @@ local function tickHandle(handle: any, dt: number): boolean
 	end
 
 	if not handle._fadingOut and handle._def.hitDetect then
-		local hits = HitDetectionUtil.Detect(
-			handle._def.hitDetect,
-			handle._moveElapsed,
-			handle,
-			handle._params
-		)
+		local hits = HitDetectionUtil.Detect(handle._def.hitDetect, handle._moveElapsed, handle, handle._params)
 		if #hits > 0 then
 			if handle._onHit then
 				for _, hitInfo in hits do
 					handle._onHit(handle, hitInfo)
-					if not handle._alive then break end
+					if not handle._alive then
+						break
+					end
 				end
 			end
-			if handle._alive then
+			if handle._alive and not handle._deferredDespawn then
 				handle:_destroyNoMiss()
 			end
 			return false
@@ -199,7 +210,9 @@ local function tickHandle(handle: any, dt: number): boolean
 end
 
 local function ensureHeartbeat()
-	if _heartbeat then return end
+	if _heartbeat then
+		return
+	end
 	_heartbeat = RunService.Heartbeat:Connect(function(dt: number)
 		local toRemove: { string } = {}
 		for id, handle in _handles do
@@ -223,7 +236,7 @@ local function simBHide(handle: any): () -> ()
 		return function() end
 	end
 	local savedParts: { [BasePart]: number } = {}
-	local savedHL:   { [any]: boolean }     = {}
+	local savedHL: { [any]: boolean } = {}
 	local root = handle.part :: Instance
 	-- root 자체가 BasePart인 경우
 	if root:IsA("BasePart") then
@@ -258,17 +271,19 @@ local function simBHide(handle: any): () -> ()
 end
 
 local function simB(handle: any)
-	local now     = Workspace:GetServerTimeNow()
+	local now = Workspace:GetServerTimeNow()
 	local latency = math.max(0, math.min(now - handle.firedAt, 0.5))
-	if latency <= 0 then return end
+	if latency <= 0 then
+		return
+	end
 
 	local restore = simBHide(handle)
 
-	local steps  = 10
+	local steps = 10
 	local stepDt = latency / steps
 	for _ = 1, steps do
 		if not handle._alive then
-			return  -- 이미 dead: 복원 불필요
+			return -- 이미 dead: 복원 불필요
 		end
 		tickHandle(handle, stepDt)
 	end
@@ -283,13 +298,19 @@ function EntityHandle_mt:IsAlive(): boolean
 end
 
 function EntityHandle_mt:Miss()
-	if not self._alive then return end
-	if self._onMiss then self._onMiss(self) end
+	if not self._alive then
+		return
+	end
+	if self._onMiss then
+		self._onMiss(self)
+	end
 	self:_destroyNoMiss()
 end
 
 function EntityHandle_mt:_destroyNoMiss()
-	if not self._alive then return end
+	if not self._alive then
+		return
+	end
 	self._alive = false
 	removeFromIndex(self)
 	self._maid:Destroy()
@@ -303,39 +324,52 @@ end
 
 local EntityController = {}
 
-function EntityController.new(
-	def    : EntityDef,
-	config : EntityConfig
-): any
+function EntityController.new(def: EntityDef, config: EntityConfig): any
 	_counter += 1
 	local id = "ec_" .. tostring(_counter)
 
 	-- tags 합치기
 	local tags: { string } = {}
-	if def.tags then for _, t in def.tags do table.insert(tags, t) end end
-	if config.tags then for _, t in config.tags do table.insert(tags, t) end end
+	if def.tags then
+		for _, t in def.tags do
+			table.insert(tags, t)
+		end
+	end
+	if config.tags then
+		for _, t in config.tags do
+			table.insert(tags, t)
+		end
+	end
 
 	-- params 합치기
 	local params: { [string]: any }? = nil
 	if def.params or config.params then
 		params = {}
-		if def.params   then for k, v in def.params   do (params :: any)[k] = v end end
-		if config.params then for k, v in config.params do (params :: any)[k] = v end end
+		if def.params then
+			for k, v in def.params do
+				(params :: any)[k] = v
+			end
+		end
+		if config.params then
+			for k, v in config.params do
+				(params :: any)[k] = v
+			end
+		end
 	end
 
 	-- 최종 def (config 오버라이드)
 	local finalDef: EntityDef = {
-		model       = def.model,
+		model = def.model,
 		modelOffset = def.modelOffset,
-		move        = config.move      or def.move,
-		onMove      = config.onMove    or def.onMove,
-		onSpawn     = config.onSpawn   or def.onSpawn,
-		onHit       = config.onHit     or def.onHit,
-		onMiss      = config.onMiss    or def.onMiss,
-		hitDetect   = config.hitDetect or def.hitDetect,
+		move = config.move or def.move,
+		onMove = config.onMove or def.onMove,
+		onSpawn = config.onSpawn or def.onSpawn,
+		onHit = config.onHit or def.onHit,
+		onMiss = config.onMiss or def.onMiss,
+		hitDetect = config.hitDetect or def.hitDetect,
 		colorFilter = config.colorFilter or def.colorFilter,
-		tags        = tags,
-		params      = params,
+		tags = tags,
+		params = params,
 	}
 
 	-- part 결정
@@ -345,31 +379,31 @@ function EntityController.new(
 	end
 
 	local handle = setmetatable({
-		id              = id,
-		part            = part,
-		spawnCFrame     = config.origin,
-		ownerId         = config.attackerPlayerId,
-		defModule       = nil :: string?,
-		defName         = nil :: string?,
-		tags            = tags,
-		firedAt         = config.firedAt or Workspace:GetServerTimeNow(),
-		_alive          = true,
-		_maid           = Maid.new(),
-		_moveStopped    = false,
-		_fadingOut      = false,
+		id = id,
+		part = part,
+		spawnCFrame = config.origin,
+		ownerId = config.attackerPlayerId,
+		defModule = nil :: string?,
+		defName = nil :: string?,
+		tags = tags,
+		firedAt = config.firedAt or Workspace:GetServerTimeNow(),
+		_alive = true,
+		_maid = Maid.new(),
+		_moveStopped = false,
+		_fadingOut = false,
 		_penetrateCount = 0,
-		_moveElapsed    = 0,
-		_moveOrigin     = config.origin.Position,
-		_moveDir        = config.origin.LookVector,
-		_sweepBase      = nil :: CFrame?,
-		_onHit          = finalDef.onHit,
-		_onMiss         = finalDef.onMiss,
+		_moveElapsed = 0,
+		_moveOrigin = config.origin.Position,
+		_moveDir = config.origin.LookVector,
+		_sweepBase = nil :: CFrame?,
+		_onHit = finalDef.onHit,
+		_onMiss = finalDef.onMiss,
 		-- config.teamContext 직접 주입 우선, 없으면 attackerPlayerId 기반 폴백
-		_teamContext    = config.teamContext or buildTeamContext(config.attackerPlayerId),
-		_def            = finalDef,
-		_params         = params,
+		_teamContext = config.teamContext or buildTeamContext(config.attackerPlayerId),
+		_def = finalDef,
+		_params = params,
 		-- SpawnEntity가 하위 엔티티에 색상을 전달하기 위해 보관
-		_spawnColor     = config.color,
+		_spawnColor = config.color,
 	}, EntityHandle_mt) :: any
 
 	-- colorFilter 적용 (실제 Model일 때만)
@@ -382,9 +416,7 @@ function EntityController.new(
 
 	-- PivotTo origin (modelOffset 적용)
 	if config.part then
-		local pivotCF = finalDef.modelOffset
-			and (config.origin * finalDef.modelOffset)
-			or config.origin
+		local pivotCF = finalDef.modelOffset and (config.origin * finalDef.modelOffset) or config.origin
 		config.part:PivotTo(pivotCF)
 	end
 
