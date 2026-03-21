@@ -112,14 +112,12 @@ function AnimReplicationClient.Start(self: AnimReplicationClient): ()
 			end
 		)
 	)
-	self._maid:GiveTask(
-		AnimReplicationRemoting.AnimStopBroadcast:Connect(function(userId, animDefModuleName, animName)
-			if userId == Players.LocalPlayer.UserId then
-				return
-			end
-			self:_onAnimStopBroadcast(userId, animDefModuleName, animName)
-		end)
-	)
+	self._maid:GiveTask(AnimReplicationRemoting.AnimStopBroadcast:Connect(function(userId, animDefModuleName, animName)
+		if userId == Players.LocalPlayer.UserId then
+			return
+		end
+		self:_onAnimStopBroadcast(userId, animDefModuleName, animName)
+	end))
 	self._maid:GiveTask(RunService.Heartbeat:Connect(function(dt)
 		self:_update(dt)
 	end))
@@ -258,7 +256,6 @@ function AnimReplicationClient:_onAnimBroadcast(
 			duration = animDuration,
 			elapsed = 0,
 		}
-
 	elseif animType == "modify" then
 		local jointEntries: { [string]: JointEntry } = {}
 		for jointName, factory in def.joints do
@@ -286,11 +283,7 @@ function AnimReplicationClient:_onAnimBroadcast(
 	end
 end
 
-function AnimReplicationClient:_onAnimStopBroadcast(
-	userId: number,
-	animDefModuleName: unknown,
-	animName: unknown
-)
+function AnimReplicationClient:_onAnimStopBroadcast(userId: number, animDefModuleName: unknown, animName: unknown)
 	local state = self._remoteStates[userId]
 	if not state then
 		return
@@ -315,30 +308,42 @@ end
 
 function AnimReplicationClient:_update(dt: number)
 	for _, state in self._remoteStates do
-		local activeJoints: { [Motor6D]: boolean } = {}
 		local toRemove: { string } = {}
 
+		-- 1. elapsed 누적 + 만료 수집
 		for animKey, animEntry in state.anims do
 			animEntry.elapsed += dt
 			if animEntry.elapsed >= animEntry.duration then
 				table.insert(toRemove, animKey)
-				continue
 			end
+		end
+		for _, animKey in toRemove do
+			state.anims[animKey] = nil
+		end
+
+		-- 2. 관절별 최고 레이어 아님 찾기
+		local bestPerJoint: { [Motor6D]: { layer: number, entry: JointEntry } } = {}
+		for _, animEntry in state.anims do
 			for jointName, jointEntry in animEntry.joints do
 				local joint = state.joints[jointName]
 				if not joint then
 					continue
 				end
-				activeJoints[joint] = true
-				jointEntry.onUpdate(joint, dt)
+				local best = bestPerJoint[joint]
+				if not best or animEntry.layer > best.layer then
+					bestPerJoint[joint] = { layer = animEntry.layer, entry = jointEntry }
+				end
 			end
 		end
 
-		for _, animKey in toRemove do
-			state.anims[animKey] = nil
+		-- 3. 각 관절에 최고 레이어 애니메이션만 실행
+		local activeJoints: { [Motor6D]: boolean } = {}
+		for joint, data in bestPerJoint do
+			activeJoints[joint] = true
+			data.entry.onUpdate(joint, dt)
 		end
 
-		-- 비활성 관절 → defaultC0로 spring 복귀
+		-- 4. 비활성 관절 → defaultC0로 spring 복귀 (기존 코드 그대로)
 		for jointName, joint in state.joints do
 			if activeJoints[joint] then
 				continue
@@ -348,16 +353,13 @@ function AnimReplicationClient:_update(dt: number)
 				continue
 			end
 			local defaultC0 = state.defaultC0s[jointName] or joint.C0
-
 			springs.pos.Speed = 20
 			springs.pos.Damper = 0.8
 			springs.rot.Speed = 20
 			springs.rot.Damper = 0.8
-
 			local tx, ty, tz = defaultC0:ToEulerAnglesXYZ()
 			springs.pos.Target = defaultC0.Position
 			springs.rot.Target = Vector3.new(tx, ty, tz)
-
 			local p = springs.pos.Position
 			local r = springs.rot.Position
 			joint.C0 = CFrame.new(p) * CFrame.fromEulerAnglesXYZ(r.X, r.Y, r.Z)
@@ -367,11 +369,7 @@ end
 
 -- ─── 헬퍼 ────────────────────────────────────────────────────────────────────
 
-function AnimReplicationClient:_ensureJointSprings(
-	state: RemotePlayerState,
-	joint: Motor6D,
-	defaultC0: CFrame
-)
+function AnimReplicationClient:_ensureJointSprings(state: RemotePlayerState, joint: Motor6D, defaultC0: CFrame)
 	if state.jointSprings[joint] then
 		return
 	end

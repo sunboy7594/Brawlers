@@ -19,10 +19,10 @@ local AbilityTypes = require("AbilityTypes")
 export type BasicAttackDef = AbilityTypes.AbilityDef
 
 local BasicAttackDefs: { [string]: BasicAttackDef } = {
-	Tank_Punch          = require("Tank_PunchDef"),
-	Tank_CannonTest     = require("Tank_CannonTestDef"),
+	Tank_Punch = require("Tank_PunchDef"),
+	Tank_CannonTest = require("Tank_CannonTestDef"),
 	Tank_RapidFirePunch = require("Tank_RapidFirePunchDef"),
-	Tank_JumpPunch      = require("Tank_JumpPunchDef"),  -- ← 추가
+	Tank_JumpPunch = require("Tank_JumpPunchDef"), -- ← 추가
 }
 
 return BasicAttackDefs

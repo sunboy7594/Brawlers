@@ -17,14 +17,17 @@
 local require = require(script.Parent.loader).load(script)
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService        = game:GetService("RunService")
+local RunService = game:GetService("RunService")
 
 local Remoting = require("Remoting")
 
 local HRPMoveRemoting
 if RunService:IsServer() then
 	HRPMoveRemoting = Remoting.Server.new(ReplicatedStorage, "HRPMove")
-	HRPMoveRemoting.Move:DeclareEvent()
+	HRPMoveRemoting.Move:Connect(function(token, defModule, defName, origin, params)
+		print("[HRPMoveClient] 수신:", defName, "origin:", origin)
+		-- ...
+	end)
 	HRPMoveRemoting.LandingReport:DeclareEvent()
 else
 	HRPMoveRemoting = Remoting.Client.new(ReplicatedStorage, "HRPMove")
