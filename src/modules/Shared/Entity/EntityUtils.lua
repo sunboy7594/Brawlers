@@ -7,6 +7,7 @@
 	─── Move ─────────────────────────────────────────────────────────────────
 	Linear(config)         → 직선 등속
 	Arc(config)            → 포물선
+	                         rotate?: boolean (기본 true) - false면 위치만 이동, 회전 고정
 	Sweep(config)          → 호 스윗
 
 	─── Detect ───────────────────────────────────────────────────────────────
@@ -20,6 +21,8 @@
 	─── 공용 콜백 ──────────────────────────────────────────────────────────────
 	Despawn(config?)       → delay 포함 즉시 소멸
 	AutoDespawn(duration)  → onSpawn에서 사용. duration 후 자동 소멸 (move=nil 엔티티 수명 관리)
+	AnchorPart()           → onSpawn에서 사용. HRP Anchored+NetworkOwner+PlatformStand 고정.
+	                         handle 소멸 시 자동 복원. (끊김 방지)
 	Sequence(callbacks)    → 순서 실행
 	StopMove()             → 이동 중단
 	SpawnEntity(...)       → 그 자리에서 새 엔티티 생성
@@ -63,8 +66,6 @@ local function getEntityPlayer(): any
 end
 
 -- ─── per-instance 상태 키 생성 ───────────────────────────────────────────────
--- EntityUtils.ScaleTo() 같은 팩토리를 호출할 때마다 고유 키를 부여.
--- 같은 def가 require 캐싱으로 공유되더라도 각 handle이 독립 상태를 가짐.
 local _cbCounter = 0
 local function newStateKey(): string
 	_cbCounter += 1
@@ -90,7 +91,6 @@ local function getAllBaseParts(model: any): { BasePart }
 	return parts
 end
 
--- setTransparency 위에 추가
 local _highlightOriginals: { [any]: { fill: number, outline: number } } = {}
 
 local function setTransparency(model: any, t: number)
@@ -224,9 +224,15 @@ export type ArcConfig = {
 	height: number,
 	speed: number,
 	delay: number?,
+	-- rotate: true(기본값) → 궤도 접선 방향으로 파트 회전 (투사체용)
+	--         false        → 위치만 이동, 회전 고정 (캐릭터 HRP 날리기 등)
+	rotate: boolean?,
 }
 
 function EntityUtils.Arc(config: ArcConfig)
+	-- nil이면 true (기본 회전), 명시적 false일 때만 고정
+	local shouldRotate = config.rotate ~= false
+
 	return function(dt: number, handle: any, _params: { [string]: any }?): boolean
 		local h = handle :: any
 		local elapsed = h._moveElapsed or 0
@@ -251,15 +257,21 @@ function EntityUtils.Arc(config: ArcConfig)
 		local verticalY = 4 * config.height * t * (1 - t)
 		local newPos = Vector3.new(horizontal.X, origin.Y + verticalY, horizontal.Z)
 
-		local nextT = math.min(t + 0.01, 1)
-		local nextH = origin + dir * (config.distance * nextT)
-		local nextVY = 4 * config.height * nextT * (1 - nextT)
-		local nextPos = Vector3.new(nextH.X, origin.Y + nextVY, nextH.Z)
-		local lookDir = nextPos - newPos
-		if lookDir.Magnitude > 0.001 then
-			h.part:PivotTo(CFrame.new(newPos, newPos + lookDir.Unit))
+		if shouldRotate then
+			-- 궤도 접선 방향으로 파트 회전 (투사체 기본 동작)
+			local nextT = math.min(t + 0.01, 1)
+			local nextH = origin + dir * (config.distance * nextT)
+			local nextVY = 4 * config.height * nextT * (1 - nextT)
+			local nextPos = Vector3.new(nextH.X, origin.Y + nextVY, nextH.Z)
+			local lookDir = nextPos - newPos
+			if lookDir.Magnitude > 0.001 then
+				h.part:PivotTo(CFrame.new(newPos, newPos + lookDir.Unit))
+			else
+				h.part:PivotTo(CFrame.new(newPos))
+			end
 		else
-			h.part:PivotTo(CFrame.new(newPos))
+			-- 위치만 이동, 수평 방향 고정 (캐릭터용 - 수직 유지)
+			h.part:PivotTo(CFrame.new(newPos, newPos + dir))
 		end
 
 		return t < 1
@@ -334,6 +346,7 @@ function EntityUtils.Box(config: BoxConfig): BoxConfig
 end
 
 function EntityUtils.Sphere(config: SphereConfig): SphereConfig
+	config._isSphere = true
 	return config
 end
 
@@ -375,7 +388,7 @@ function EntityUtils.Despawn(config: { delay: number? }?)
 			return
 		end
 		if delay and delay > 0 then
-			handle._deferredDespawn = true -- ← 추가: EntityController 자동소멸 방지
+			handle._deferredDespawn = true
 			local elapsed = 0
 			local conn: RBXScriptConnection
 			conn = RunService.Heartbeat:Connect(function(dt)
@@ -398,9 +411,6 @@ end
 	AutoDespawn(duration)
 	  onSpawn 콜백으로 사용. move=nil인 이펙트 엔티티에 수명을 부여합니다.
 	  duration 초 후 자동으로 _destroyNoMiss() 호출.
-
-	  예)
-	    onSpawn = EntityUtils.AutoDespawn(1.5),
 ]=]
 function EntityUtils.AutoDespawn(duration: number)
 	return function(handle: any)
@@ -419,6 +429,85 @@ function EntityUtils.AutoDespawn(duration: number)
 			end
 		end)
 		handle._maid:GiveTask(conn)
+	end
+end
+
+--[=[
+	AnchorPart()
+	  onSpawn 콜백으로 사용.
+	  BasePart 또는 Model 안의 HumanoidRootPart를 물리 간섭 없이 고정합니다.
+
+	  적용:
+	    1. Anchored = true          → 물리 시뮬레이션 정지
+	    2. SetNetworkOwner(nil)      → 서버가 네트워크 소유권 획득 (클라이언트 덮어쓰기 차단)
+	    3. PlatformStand = true      → Humanoid 상태머신 간섭 차단
+	    4. velocity 초기화           → 잔여 운동량 제거
+
+	  handle._maid에 복원 등록 → handle 소멸 시 모두 원래 값으로 자동 복원.
+
+	  사용 예)
+	    onSpawn = EntityUtils.Sequence({
+	        EntityUtils.AnchorPart(),
+	        EntityUtils.AutoDespawn(2.0),
+	    }),
+]=]
+function EntityUtils.AnchorPart()
+	return function(handle: any)
+		local part = handle.part
+		if not part or typeof(part) ~= "Instance" then return end
+
+		-- BasePart 직접 또는 Model 안의 HumanoidRootPart 탐색
+		local bp: BasePart?
+		if (part :: Instance):IsA("BasePart") then
+			bp = part :: BasePart
+		else
+			bp = (part :: Instance):FindFirstChild("HumanoidRootPart") :: BasePart?
+		end
+		if not bp then return end
+
+		-- Humanoid 탐색
+		local humanoid: Humanoid?
+		local model = bp.Parent
+		if model and (model :: Instance):IsA("Model") then
+			humanoid = (model :: Instance):FindFirstChildOfClass("Humanoid") :: Humanoid?
+		end
+
+		-- 네트워크 소유자 기억
+		local prevOwner: Player? = nil
+		local canSetOwner = false
+		local ok, owner = pcall(function() return bp:GetNetworkOwner() end)
+		if ok then
+			prevOwner = owner
+			canSetOwner = true
+		end
+
+		-- ── 적용 ────────────────────────────────────────────────────────────
+		local wasAnchored = bp.Anchored
+		bp.Anchored = true
+		bp.AssemblyLinearVelocity  = Vector3.zero
+		bp.AssemblyAngularVelocity = Vector3.zero
+
+		if canSetOwner then
+			pcall(function() bp:SetNetworkOwner(nil) end)
+		end
+
+		local wasPlatformStand = false
+		if humanoid then
+			wasPlatformStand = humanoid.PlatformStand
+			humanoid.PlatformStand = true
+		end
+
+		-- ── 복원 ────────────────────────────────────────────────────────────
+		handle._maid:GiveTask(function()
+			if not (bp :: Instance).Parent then return end
+			bp.Anchored = wasAnchored
+			if canSetOwner then
+				pcall(function() bp:SetNetworkOwner(prevOwner) end)
+			end
+			if humanoid and (humanoid :: Instance).Parent then
+				humanoid.PlatformStand = wasPlatformStand
+			end
+		end)
 	end
 end
 
@@ -462,28 +551,6 @@ function EntityUtils.FireEntity(defModule: string, defName: string, options: { [
 	end
 end
 
---[=[
-	Animate(onMoveCb)
-	  onHit / onMiss / onSpawn 에서 onMove 시그니처 콜백을 매 프레임 실행.
-	  handle이 살아있는 동안 Heartbeat로 구동, 소멸 시 _maid가 자동 해제.
-
-	  dt가 필요한 Transform 계열(FadeTo, ScaleTo, RotateTo, MoveTo 등) 전부 사용 가능.
-	  각 유틸의 delay 옵션도 그대로 동작.
-
-	  예)
-	    onMiss = EntityUtils.Animate(
-	        EntityUtils.FadeTo({ from = 0, to = 1, duration = 0.3, speed = 10 })
-	    ),
-
-	    onHit = EntityUtils.Sequence({
-	        EntityUtils.SpawnEntity("FxDef", "Explosion"),
-	        EntityUtils.Animate(EntityUtils.TransformSequence({
-	            EntityUtils.ScaleTo({ target = Vector3.new(2,2,2), duration = 0.2, speed = 10 }),
-	            EntityUtils.FadeTo({ from = 0, to = 1, duration = 0.2, speed = 10, delay = 0.1 }),
-	        })),
-	        EntityUtils.Despawn({ delay = 0.2 }),
-	    }),
-]=]
 function EntityUtils.Animate(onMoveCb: (model: any, dt: number, params: any?, handle: any?) -> ())
 	return function(handle: any, _hitInfo: any?)
 		if not handle or not handle._maid then
@@ -509,18 +576,12 @@ export type RotateToConfig = {
 	delay: number?,
 }
 
---[=[
-	RotateTo(config)
-	  방향 기준 회전 (도/초).
-	  delay 수정: totalElapsed + handle per-instance 상태로 delay 정상 동작.
-]=]
 function EntityUtils.RotateTo(config: RotateToConfig)
 	local sk = newStateKey()
 	return function(model: any, dt: number, _params: { [string]: any }?, handle: any?)
 		if typeof(model) ~= "Instance" then
 			return
 		end
-		-- handle 없으면 delay 없이 즉시 회전 (하위 호환)
 		if handle then
 			local s: any = handle[sk]
 			if not s then
@@ -784,7 +845,6 @@ function EntityUtils.RandomOffsetTo(config: RandomOffsetToConfig)
 	end
 end
 
--- _stopped: 약한 참조 테이블 (model GC 시 자동 해제, 메모리 누수 방지)
 local _stopped: { [any]: boolean } = setmetatable({}, { __mode = "k" } :: any)
 
 function EntityUtils.Stop()
@@ -799,7 +859,6 @@ function EntityUtils.Resume()
 	end
 end
 
--- handle을 각 콜백에 전달하여 per-instance 상태가 정상 동작하도록 함
 function EntityUtils.TransformSequence(callbacks: { (any, number, { [string]: any }?, any?) -> () })
 	return function(model: any, dt: number, params: { [string]: any }?, handle: any?)
 		if _stopped[model] then
