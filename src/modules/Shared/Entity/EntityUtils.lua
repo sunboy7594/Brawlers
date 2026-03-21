@@ -20,10 +20,10 @@
 
 	─── 공용 콜백 ──────────────────────────────────────────────────────────────
 	Despawn(config?)       → delay 포함 즉시 소멸
-	AutoDespawn(duration)  → onSpawn에서 사용. duration 후 자동 소멸 (move=nil 엔티티 수명 관리)
-	AnchorPart()           → onSpawn에서 사용. HRP 이동 시 물리/Humanoid 간섭 차단.
-	                         Anchored/SetNetworkOwner 사용하지 않으므로 PivotTo가 다른 클라이언트에 복제됨.
-	                         handle 소멸 시 자동 복원. (끊김 방지)
+	AutoDespawn(duration)  → onSpawn에서 사용. duration 후 자동 소멸
+	AnchorPart()           → onSpawn에서 사용. HRP 이동 시 Humanoid 상태머신 간섭 차단.
+	                         velocity 강제 초기화 없음 → 자연스러운 arc 시작 (snap 방지)
+	                         handle 소멸 시 PlatformStand 자동 복원.
 	Sequence(callbacks)    → 순서 실행
 	StopMove()             → 이동 중단
 	SpawnEntity(...)       → 그 자리에서 새 엔티티 생성
@@ -259,7 +259,6 @@ function EntityUtils.Arc(config: ArcConfig)
 		local newPos = Vector3.new(horizontal.X, origin.Y + verticalY, horizontal.Z)
 
 		if shouldRotate then
-			-- 궤도 접선 방향으로 파트 회전 (투사체 기본 동작)
 			local nextT = math.min(t + 0.01, 1)
 			local nextH = origin + dir * (config.distance * nextT)
 			local nextVY = 4 * config.height * nextT * (1 - nextT)
@@ -271,7 +270,6 @@ function EntityUtils.Arc(config: ArcConfig)
 				h.part:PivotTo(CFrame.new(newPos))
 			end
 		else
-			-- 위치만 이동, 수평 방향 고정 (캐릭터용 - 수직 유지)
 			h.part:PivotTo(CFrame.new(newPos, newPos + dir))
 		end
 
@@ -408,11 +406,6 @@ function EntityUtils.Despawn(config: { delay: number? }?)
 	end
 end
 
---[=[
-	AutoDespawn(duration)
-	  onSpawn 콜백으로 사용. move=nil인 이펙트 엔티티에 수명을 부여합니다.
-	  duration 초 후 자동으로 _destroyNoMiss() 호출.
-]=]
 function EntityUtils.AutoDespawn(duration: number)
 	return function(handle: any)
 		if not handle or not handle._maid then
@@ -436,27 +429,18 @@ end
 --[=[
 	AnchorPart()
 	  onSpawn 콜백으로 사용.
-	  HRP 이동 중 물리/Humanoid 간섭을 차단하면서 복제가 정상 동작하도록 합니다.
+	  HRP 이동 중 Humanoid 상태머신 간섭을 차단합니다.
 
 	  ──────────────────────────────────────────────────────────────────────
-	  ⚠️  Anchored와 SetNetworkOwner(nil)은 사용하지 않습니다.
-	     이 둘을 사용하면 서버가 소유권을 가져가 클라이언트의 PivotTo가
-	     로컬에서만 실행되어 다른 플레이어에게 복제되지 않습니다.
+	  ⚠️  velocity 강제 초기화를 하지 않습니다.
+	     velocity=0으로 강제하면 걷고 있던 캐릭터가 순간 멈춤 → snap처럼 보임.
+	     Arc의 PivotTo가 매 프레임 위치를 덮어쓰므로 velocity 제거 불필요.
 	  ──────────────────────────────────────────────────────────────────────
 
 	  적용:
-	    1. PlatformStand = true         → Humanoid 상태머신 간섭 차단
-	    2. velocity 초기화              → 잔여 운동량 제거
-	    3. Heartbeat: velocity 매 프레임 0으로 유지 → 중력/물리 축적 방지
+	    1. PlatformStand = true → Humanoid 상태머신 간섭 차단
 
-	  클라이언트가 소유권 유지 → PivotTo가 서버/다른 클라이언트에 정상 복제됨.
 	  handle._maid 소멸 시 PlatformStand 자동 복원.
-
-	  사용 예)
-	    onSpawn = EntityUtils.Sequence({
-	        EntityUtils.AnchorPart(),
-	        EntityUtils.AutoDespawn(2.0),
-	    }),
 ]=]
 function EntityUtils.AnchorPart()
 	return function(handle: any)
@@ -479,34 +463,16 @@ function EntityUtils.AnchorPart()
 			humanoid = (model :: Instance):FindFirstChildOfClass("Humanoid") :: Humanoid?
 		end
 
-		-- ── 잔여 운동량 제거 ─────────────────────────────────────────────
-		bp.AssemblyLinearVelocity  = Vector3.zero
-		bp.AssemblyAngularVelocity = Vector3.zero
-
-		-- ── PlatformStand: Humanoid 상태머신 간섭 차단 ──────────────────
+		-- PlatformStand: Humanoid 상태머신 간섭 차단
+		-- velocity는 건드리지 않음 → 자연스러운 arc 시작 (snap 방지)
 		local wasPlatformStand = false
 		if humanoid then
 			wasPlatformStand = humanoid.PlatformStand
 			humanoid.PlatformStand = true
 		end
 
-		-- ── 매 프레임 velocity=0: 중력 축적 방지 ────────────────────────
-		-- Anchored를 쓰지 않으므로 클라이언트 네트워크 소유권 유지됨.
-		-- → PivotTo가 서버/다른 클라이언트에 정상 복제됨.
-		local velConn: RBXScriptConnection
-		velConn = RunService.Heartbeat:Connect(function()
-			if not (bp :: Instance).Parent then
-				velConn:Disconnect()
-				return
-			end
-			bp.AssemblyLinearVelocity  = Vector3.zero
-			bp.AssemblyAngularVelocity = Vector3.zero
-		end)
-		handle._maid:GiveTask(velConn)
-
-		-- ── 복원 ────────────────────────────────────────────────────────
+		-- 복원
 		handle._maid:GiveTask(function()
-			velConn:Disconnect()
 			if humanoid and (humanoid :: Instance).Parent then
 				humanoid.PlatformStand = wasPlatformStand
 			end

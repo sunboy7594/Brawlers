@@ -8,26 +8,25 @@
 	채널:
 	- Move:          (서버 → 클라이언트) HRP 이동 권한 부여
 	                 전달: token(string), defModule(string), defName(string),
-	                       origin(CFrame), params({ [string]: any }?)
+	                       direction(Vector3), speed(number), distance(number),
+	                       height(number), params({ [string]: any }?)
+	                 클라이언트가 현재 위치 기준으로 findActualLanding 직접 계산
 	- LandingReport: (클라이언트 → 서버) 이동 완료 후 착지 위치 보고
 	                 전달: token(string), actualPos(Vector3)
-	                 서버는 token 유효성 + 위치 오차 검증 후 강제 보정
+	                 서버는 token 유효성 + 이동 거리 검증 후 필요 시 강제 보정
 ]=]
 
 local require = require(script.Parent.loader).load(script)
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
+local RunService        = game:GetService("RunService")
 
 local Remoting = require("Remoting")
 
 local HRPMoveRemoting
 if RunService:IsServer() then
 	HRPMoveRemoting = Remoting.Server.new(ReplicatedStorage, "HRPMove")
-	HRPMoveRemoting.Move:Connect(function(token, defModule, defName, origin, params)
-		print("[HRPMoveClient] 수신:", defName, "origin:", origin)
-		-- ...
-	end)
+	HRPMoveRemoting.Move:DeclareEvent()
 	HRPMoveRemoting.LandingReport:DeclareEvent()
 else
 	HRPMoveRemoting = Remoting.Client.new(ReplicatedStorage, "HRPMove")

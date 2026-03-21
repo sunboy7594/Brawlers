@@ -9,22 +9,22 @@
 	  - def 파일 로드
 	  - def.model로 ReplicatedStorage에서 Clone
 	  - EntityController.new() 생성
-	  - 서버에서 생성된 모델은 Roblox가 자동 복제
-	  - 복제 트리거 불필요
 
 	PlayDirect(config):
 	  - def 없이 직접 실행
 
 	PlayHRP(player, defModule, defName, config):
-	  - part가 HRP인 경우 클라이언트에서 로컬 실행 (끊김 방지)
-	  - 토큰 발급 → FireClient → 서버 착지 위치 검증
+	  - 클라이언트에서 HRP를 직접 이동 (끊김 방지)
+	  - 토큰 발급 → FireClient(direction, speed, distance, height)
+	  - 클라이언트가 현재 위치 기준으로 findActualLanding 직접 계산
+	  - 착지 후 LandingReport 수신 → 거리 검증 → onLanded 콜백 실행
 	  - BindLandingReport()를 서버 시작 시 한 번 호출해야 함
 
 	BindLandingReport():
 	  - LandingReport 이벤트 바인딩 (서버 시작 시 1회 호출)
 
 	Preload(defModuleNames):
-	  - def 모듈 캐싱 (ContentProvider 불필요)
+	  - def 모듈 캐싱
 ]=]
 
 local require = require(script.Parent.loader).load(script)
@@ -40,13 +40,14 @@ local cancellableDelay = require("cancellableDelay")
 local _preloaded: { [string]: boolean } = {}
 
 -- ─── 토큰 저장소 ─────────────────────────────────────────────────────────────
--- [userId][token] = { expectedLanding, expiry, tolerance }
 local _pendingMoves: {
 	[number]: {
 		[string]: {
-			expectedLanding: Vector3,
-			expiry: number,
-			tolerance: number,
+			originPos      : Vector3,
+			maxAllowedDist : number,
+			expiry         : number,
+			tolerance      : number,
+			onLanded       : ((actualPos: Vector3) -> ())?,
 		}
 	}
 } = {}
@@ -75,48 +76,26 @@ export type PlayConfig = {
 }
 
 export type PlayHRPConfig = {
-	origin: CFrame,
-	params: { [string]: any }?,
-	-- arc 총 소요 시간 (검증 타이머 기준)
-	duration: number,
-	-- 서버가 계산한 예상 착지 위치 (수평)
-	expectedLanding: Vector3,
-	-- 허용 오차 (스터드), 기본 9
-	tolerance: number?,
+	-- 이동 파라미터 (클라이언트가 findActualLanding에 사용)
+	direction      : Vector3,  -- 정규화된 수평 방향
+	speed          : number,
+	distance       : number,   -- 기본 거리 (클라이언트가 벽 보정)
+	height         : number,   -- 기본 높이 (클라이언트가 벽 높이 보정)
+	-- 서버 검증용
+	originPos      : Vector3,  -- 서버 기준 발사 위치 (검증 기준점)
+	duration       : number,   -- fallback 타이머
+	maxAllowedDist : number,   -- 최대 허용 이동 거리
+	tolerance      : number?,  -- 추가 허용 오차
+	-- 착지 확인 후 콜백 (선택적, fist 발사 등)
+	onLanded       : ((actualPos: Vector3) -> ())?,
+	-- fireMaid 소멸 시 토큰 자동 소멸 (전투 취소 시 onLanded 방지)
+	fireMaid       : any?,
+	params         : { [string]: any }?,
 }
 
 local EntityPlayerServer = {}
 
--- ─── 내부: 착지 위치 검증 ─────────────────────────────────────────────────────
-local function validateLanding(player: Player, expectedLanding: Vector3, tolerance: number)
-	local char = player.Character
-	if not char then return end
-	local hrp = char:FindFirstChild("HumanoidRootPart") :: BasePart?
-	if not hrp then return end
-
-	local actual = hrp.Position
-	local diff = Vector3.new(
-		actual.X - expectedLanding.X,
-		0,
-		actual.Z - expectedLanding.Z
-	).Magnitude
-
-	if diff > tolerance then
-		-- 예상 착지 위치로 강제 보정 (Y는 실제값 유지)
-		hrp:PivotTo(CFrame.new(expectedLanding.X, actual.Y, expectedLanding.Z))
-	end
-end
-
 -- ─── PlayHRP ─────────────────────────────────────────────────────────────────
---[=[
-	서버 권한 부여 후 클라이언트에서 HRP를 직접 이동.
-
-	흐름:
-	  1. 토큰 생성 및 저장
-	  2. FireClient(player) → 클라이언트가 로컬 arc 실행
-	  3. duration + buffer 후 착지 위치 검증
-	     클라이언트가 먼저 LandingReport를 보내면 즉시 검증 후 토큰 소멸
-]=]
 function EntityPlayerServer.PlayHRP(
 	player    : Player,
 	defModule : string,
@@ -131,36 +110,79 @@ function EntityPlayerServer.PlayHRP(
 		_pendingMoves[userId] = {}
 	end
 	_pendingMoves[userId][token] = {
-		expectedLanding = config.expectedLanding,
-		expiry          = os.clock() + config.duration + 1.5,
-		tolerance       = tolerance,
+		originPos      = config.originPos,
+		maxAllowedDist = config.maxAllowedDist,
+		expiry         = os.clock() + config.duration + 1.5,
+		tolerance      = tolerance,
+		onLanded       = config.onLanded,
 	}
 
+	-- fireMaid 소멸 시 토큰 소멸 (전투 취소 시 onLanded 방지)
+	if config.fireMaid then
+		config.fireMaid:GiveTask(function()
+			local pending = _pendingMoves[userId]
+			if pending then
+				pending[token] = nil
+			end
+		end)
+	end
+
 	-- 클라이언트에 이동 권한 부여
+	-- origin 대신 direction/speed/distance/height 전달
+	-- 클라이언트가 현재 위치 기준으로 findActualLanding 직접 계산
 	HRPMoveRemoting.Move:FireClient(
 		player,
 		token,
 		defModule,
 		defName,
-		config.origin,
+		config.direction,
+		config.speed,
+		config.distance,
+		config.height,
 		config.params
 	)
 
-	-- fallback: 클라이언트가 LandingReport를 안 보낼 경우 서버가 직접 검증
+	-- fallback: LandingReport가 안 오면 duration 후 서버가 직접 처리
 	task.delay(config.duration + 0.6, function()
 		local pending = _pendingMoves[userId]
 		if not pending or not pending[token] then return end
+
+		local p = pending[token]
 		pending[token] = nil
-		validateLanding(player, config.expectedLanding, tolerance)
+
+		-- 현재 위치 확인
+		local char = player.Character
+		local hrp  = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
+		if not hrp then
+			if p.onLanded then p.onLanded(p.originPos) end
+			return
+		end
+
+		local actualPos = hrp.Position
+		local diff = Vector3.new(
+			actualPos.X - p.originPos.X,
+			0,
+			actualPos.Z - p.originPos.Z
+		).Magnitude
+
+		if diff > p.maxAllowedDist then
+			-- exploit: 최대 허용 거리로 클램핑
+			local toActual = Vector3.new(actualPos.X - p.originPos.X, 0, actualPos.Z - p.originPos.Z)
+			if toActual.Magnitude > 0.001 then
+				local clampedPos = p.originPos + toActual.Unit * p.maxAllowedDist
+				hrp:PivotTo(CFrame.new(clampedPos.X, hrp.Position.Y, clampedPos.Z))
+				actualPos = hrp.Position
+			end
+		end
+
+		-- fallback onLanded 호출 (fist 등 후처리)
+		if p.onLanded then
+			p.onLanded(actualPos)
+		end
 	end)
 end
 
 -- ─── BindLandingReport ───────────────────────────────────────────────────────
---[=[
-	LandingReport 이벤트를 바인딩합니다.
-	서버 서비스 Start() 시 1회 호출해야 합니다.
-	(예: BasicAttackService.Start 또는 별도 HRPMoveService.Start)
-]=]
 local _bound = false
 function EntityPlayerServer.BindLandingReport(): ()
 	if _bound then return end
@@ -176,35 +198,41 @@ function EntityPlayerServer.BindLandingReport(): ()
 		if not pending then return end
 
 		local p = pending[token]
-		if not p then return end  -- 없거나 이미 소멸된 토큰 → 무시
+		if not p then return end
 
 		-- 토큰 즉시 소멸 (재사용 방지)
 		pending[token] = nil
 
 		-- 만료 확인
-		if os.clock() > p.expiry then
-			validateLanding(player, p.expectedLanding, p.tolerance)
-			return
-		end
+		if os.clock() > p.expiry then return end
 
-		-- 착지 위치 검증
+		-- 이동 거리 검증
 		local diff = Vector3.new(
-			actualPos.X - p.expectedLanding.X,
+			actualPos.X - p.originPos.X,
 			0,
-			actualPos.Z - p.expectedLanding.Z
+			actualPos.Z - p.originPos.Z
 		).Magnitude
 
-		if diff > p.tolerance then
+		if diff > p.maxAllowedDist then
+			-- exploit: 최대 허용 거리로 클램핑
 			local char = player.Character
-			local hrp = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
+			local hrp  = char and char:FindFirstChild("HumanoidRootPart") :: BasePart?
 			if hrp then
-				local el = p.expectedLanding
-				hrp:PivotTo(CFrame.new(el.X, hrp.Position.Y, el.Z))
+				local toActual = Vector3.new(actualPos.X - p.originPos.X, 0, actualPos.Z - p.originPos.Z)
+				if toActual.Magnitude > 0.001 then
+					local clampedPos = p.originPos + toActual.Unit * p.maxAllowedDist
+					hrp:PivotTo(CFrame.new(clampedPos.X, hrp.Position.Y, clampedPos.Z))
+					actualPos = hrp.Position
+				end
 			end
+		end
+
+		-- 착지 확인 후 콜백 (fist 발사 등)
+		if p.onLanded then
+			p.onLanded(actualPos)
 		end
 	end)
 
-	-- 플레이어 퇴장 시 토큰 정리
 	Players.PlayerRemoving:Connect(function(player)
 		_pendingMoves[player.UserId] = nil
 	end)
