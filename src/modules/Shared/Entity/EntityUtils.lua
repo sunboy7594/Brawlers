@@ -97,11 +97,24 @@ local function setTransparency(model: any, t: number)
 	if typeof(model) ~= "Instance" then
 		return
 	end
+	local hasHighlight = false
+	for _, d in (model :: Instance):GetDescendants() do
+		if d.ClassName == "Highlight" then
+			hasHighlight = true
+			break
+		end
+	end
 	for _, d in (model :: Instance):GetDescendants() do
 		if d:IsA("BasePart") then
 			local bp = d :: BasePart
 			if not _highlightOriginals[bp] then
-				_highlightOriginals[bp] = { fill = bp.Transparency }
+				_highlightOriginals[bp] = {
+					fill = bp.Transparency,
+					material = bp.Material,
+				}
+				if hasHighlight then
+					bp.Material = Enum.Material.Glass
+				end
 				bp.Destroying:Connect(function()
 					_highlightOriginals[bp] = nil
 				end)
@@ -334,6 +347,14 @@ function EntityUtils.TriggerMiss()
 end
 
 -- ─── 공용 콜백 ───────────────────────────────────────────────────────────────
+
+function EntityUtils.LockHit()
+	return function(handle: any, _hitInfo: any?)
+		if handle then
+			handle._fadingOut = true
+		end
+	end
+end
 
 function EntityUtils.Despawn(config: { delay: number? }?)
 	local delay = config and config.delay or 0

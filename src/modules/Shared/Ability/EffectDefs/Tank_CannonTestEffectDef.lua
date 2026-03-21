@@ -40,8 +40,8 @@ return {
 		}),
 
 		onHit = EntityUtils.Sequence({
+			EntityUtils.LockHit(), -- ← 첫 줄에 추가
 			EntityUtils.SpawnEntity("Tank_CannonTestEffectDef", "CannonExplosion"),
-			-- 맞는 순간 빠르게 fade out 후 소멸
 			EntityUtils.Animate(EntityUtils.FadeTo({ from = 0, to = 1, duration = 1.0, speed = 20 })),
 			EntityUtils.Despawn({ delay = 1.0 }),
 		}),
