@@ -43,6 +43,7 @@ local AbilityTypes = require("AbilityTypes")
 local BasicAttackDefs = require("BasicAttackDefs")
 local BasicAttackRemoting = require("BasicAttackRemoting")
 local ClassService = require("ClassService")
+local EntityPlayerServer = require("EntityPlayerServer")
 local InstantHit = require("InstantHit")
 local LoadoutRemoting = require("LoadoutRemoting")
 local Maid = require("Maid")
@@ -120,11 +121,7 @@ export type BasicAttackState = {
 	hitInfo: any?,
 
 	-- 판정 파이프라인 콜백
-	-- onHitResult: InstantHit → (hitMap, nil, nil), ProjectileHit → (nil, handle, hitInfo)
-	--   enemies > 0 → onHitChecked, enemies = 0 → onMissChecked
 	onHitResult: ((hitMap: InstantHit.HitMapResult?, handle: any?, hitInfo: any?) -> ())?,
-	-- onMissResult: 투사체 사거리 초과 시 (ProjectileHit 전용)
-	--   → onMissChecked
 	onMissResult: ((hitMap: InstantHit.HitMapResult?, handle: any?) -> ())?,
 
 	-- 팀 판정용 주입 필드
@@ -196,6 +193,9 @@ function BasicAttackService.Init(self: BasicAttackService, serviceBag: ServiceBa
 end
 
 function BasicAttackService.Start(self: BasicAttackService): ()
+	-- HRP 이동 착지 검증 바인딩 (PlayHRP 사용 어빌리티용)
+	EntityPlayerServer.BindLandingReport()
+
 	self._maid:GiveTask(Players.PlayerAdded:Connect(function(player)
 		self:_onPlayerAdded(player)
 	end))
@@ -452,7 +452,7 @@ function BasicAttackService:_onFireEnd(player: Player)
 		return
 	end
 	if not state.isFiring then
-		return -- 이미 종료 상태면 무시 (spurious FireEnd 방어)
+		return
 	end
 
 	state.isFiring = false
@@ -607,18 +607,12 @@ function BasicAttackService:_executeFire(
 	snapshot.playerStateController = self._playerStateController
 	snapshot.attackerStates = self._playerStateController:GetActiveEffects(player)
 
-	-- ─── onHitResult 콜백 ─────────────────────────────────────────────────────
-	-- InstantHit: onHitResult(hitMap, nil, nil)
-	-- ProjectileHit: onHitResult(nil, handle, hitInfo)
-	-- enemies > 0 → onHitChecked(snapshot, state)
-	-- enemies = 0 → onMissChecked(snapshot, state)
 	state.onHitResult = function(hitMap: InstantHit.HitMapResult?, handle: any?, hitInfo: any?)
 		local merged: InstantHit.VictimSet = { enemies = {}, teammates = {}, self = nil }
 		local seenEnemies: { [Model]: boolean } = {}
 		local seenTeammates: { [Model]: boolean } = {}
 
 		if hitMap then
-			-- InstantHit 경로: hitMap에서 모든 shape 합산
 			for _, vs in hitMap do
 				if vs.self and not merged.self then
 					merged.self = vs.self
@@ -637,7 +631,6 @@ function BasicAttackService:_executeFire(
 				end
 			end
 		elseif hitInfo then
-			-- ProjectileHit 경로: 단일 hitInfo에서 분류
 			local hi = hitInfo :: any
 			if hi.relation == "enemy" then
 				if hi.target and (hi.target :: any):IsA("Model") then
@@ -651,7 +644,6 @@ function BasicAttackService:_executeFire(
 				if hi.target and (hi.target :: any):IsA("Model") then
 					merged.self = hi.target :: Model
 				end
-				-- obstacle: merged에 포함하지 않음 (onMissChecked로 라우팅됨)
 			end
 		end
 
@@ -686,7 +678,6 @@ function BasicAttackService:_executeFire(
 			end
 			BasicAttackRemoting.HitChecked:FireClient(player, victimUserIds)
 		else
-			-- enemies 없음 (obstacle만 맞았거나 아무도 안 맞음) → onMissChecked
 			if entry.module.onMissChecked then
 				for _, fn in entry.module.onMissChecked do
 					fn(snapshot, state)
@@ -695,9 +686,6 @@ function BasicAttackService:_executeFire(
 		end
 	end
 
-	-- ─── onMissResult 콜백 ────────────────────────────────────────────────────
-	-- 투사체 사거리 초과 시 호출 (ProjectileHit 전용)
-	-- → 항상 onMissChecked(snapshot, state) 실행
 	state.onMissResult = function(hitMap: InstantHit.HitMapResult?, handle: any?)
 		snapshot.hitMap = hitMap
 		snapshot.handle = handle
