@@ -445,34 +445,50 @@ end
 function EntityUtils.AnchorPart()
 	return function(handle: any)
 		local part = handle.part
-		if not part or typeof(part) ~= "Instance" then return end
+		if not part or typeof(part) ~= "Instance" then
+			return
+		end
 
-		-- BasePart 직접 또는 Model 안의 HumanoidRootPart 탐색
 		local bp: BasePart?
 		if (part :: Instance):IsA("BasePart") then
 			bp = part :: BasePart
 		else
 			bp = (part :: Instance):FindFirstChild("HumanoidRootPart") :: BasePart?
 		end
-		if not bp then return end
+		if not bp then
+			return
+		end
 
-		-- Humanoid 탐색
 		local humanoid: Humanoid?
 		local model = bp.Parent
 		if model and (model :: Instance):IsA("Model") then
 			humanoid = (model :: Instance):FindFirstChildOfClass("Humanoid") :: Humanoid?
 		end
 
-		-- PlatformStand: Humanoid 상태머신 간섭 차단
-		-- velocity는 건드리지 않음 → 자연스러운 arc 시작 (snap 방지)
+		-- 초기 velocity 초기화 없음 → snap 방지
+		-- (걷던 캐릭터를 순간 멈추지 않음)
+
 		local wasPlatformStand = false
 		if humanoid then
 			wasPlatformStand = humanoid.PlatformStand
 			humanoid.PlatformStand = true
 		end
 
-		-- 복원
+		-- Heartbeat마다 velocity=0 유지 → 중력 축적 방지 (뚝뚝 끊힘 방지)
+		-- Anchored/SetNetworkOwner 사용 안 함 → 클라이언트 소유권 유지 → 복제 정상
+		local velConn: RBXScriptConnection
+		velConn = RunService.Heartbeat:Connect(function()
+			if not (bp :: Instance).Parent then
+				velConn:Disconnect()
+				return
+			end
+			bp.AssemblyLinearVelocity = Vector3.zero
+			bp.AssemblyAngularVelocity = Vector3.zero
+		end)
+		handle._maid:GiveTask(velConn)
+
 		handle._maid:GiveTask(function()
+			velConn:Disconnect()
 			if humanoid and (humanoid :: Instance).Parent then
 				humanoid.PlatformStand = wasPlatformStand
 			end
