@@ -13,6 +13,8 @@ serviceBag:GetService(require("BrawlersServiceClient"))
 -- ─── 카메라 / 애니메이션 / 이동 ────────────────────────
 serviceBag:GetService(require("MouseShiftLockService"))
 serviceBag:GetService(require("PlayerBinderClient"))
+require("CloneBroadcastClient")
+
 serviceBag:GetService(require("AnimationControllerClient"))
 serviceBag:GetService(require("CameraControllerClient"))
 serviceBag:GetService(require("BasicMovementClient"))

@@ -3,14 +3,21 @@
 	@class Tank_JumpPunchClient
 
 	탱크 점프 펀치 클라이언트 모듈.
-	실제 HRP 이동은 HRPMoveClient가 서버 신호 수신 후 로컬에서 처리.
-	이 모듈은 조준 인디케이터 + 애니메이션만 담당.
+	조준 인디케이터 + 애니메이션 + lerp alpha 조절 담당.
+
+	lerp alpha:
+	  onFire: 0.2로 낮춤 (큰 이동 구간)
+	  fireMaid 정리 시 자동 복원 (ResetLerpAlpha)
 ]=]
 
 local require = require(script.Parent.loader).load(script)
 
 local LINE_RANGE = 15
 local LINE_WIDTH = 1.5
+
+local JUMP_ANIM_DURATION = 15 / 28 + 0.5 -- arc 시간 + 여유
+
+local LERP_ALPHA_JUMP = 0.2 -- 점프 중 낮은 lerp (빠른 이동)
 
 type BasicAttackState = {
 	origin: Vector3,
@@ -22,6 +29,7 @@ type BasicAttackState = {
 	animator: any?,
 	fireMaid: any?,
 	teamContext: { color: Color3?, [string]: any }?,
+	cloneBroadcastClient: any?, -- BasicAttackClient에서 주입
 }
 
 return {
@@ -54,10 +62,19 @@ return {
 		function(state: BasicAttackState)
 			state.indicator:hideAll()
 
+			-- 점프 구간 동안 lerp alpha 낮춤
+			local cbc = state.cloneBroadcastClient
+			if cbc then
+				cbc:SetLerpAlpha(LERP_ALPHA_JUMP)
+				if state.fireMaid then
+					state.fireMaid:GiveTask(function()
+						cbc:ResetLerpAlpha()
+					end)
+				end
+			end
+
 			if state.animator then
-				-- JUMP_ANIM_DURATION 후 자동 만료 → defaultC0 복귀
-				-- fireMaid 소멸 시에도 StopAnimation 호출 (어느 쪽이 먼저든 정상 종료)
-				state.animator:PlayAnimation("JumpPunch", 0.15, nil, true)
+				state.animator:PlayAnimation("JumpPunch", JUMP_ANIM_DURATION, nil, true)
 				if state.fireMaid then
 					state.fireMaid:GiveTask(function()
 						state.animator:StopAnimation("JumpPunch")
@@ -70,6 +87,12 @@ return {
 	onCancel = {
 		function(state: BasicAttackState)
 			state.indicator:hideAll()
+
+			-- 취소 시에도 lerp 복원
+			local cbc = state.cloneBroadcastClient
+			if cbc then
+				cbc:ResetLerpAlpha()
+			end
 		end,
 	},
 

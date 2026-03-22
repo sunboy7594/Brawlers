@@ -4,18 +4,16 @@
 
 	다른 플레이어의 절차적 애니메이션을 로컬에서 실행하는 클라이언트 서비스.
 
-	동작:
-	- AnimBroadcast 수신 → animDefModuleName으로 AnimDef require
-	  → factory(joint, defaultC0, localAC, params) 실행 → Heartbeat마다 onUpdate(joint, dt)
-	- AnimStopBroadcast 수신 → 해당 애니메이션 제거
-	  (animDefModuleName/animName이 nil이면 해당 플레이어 전체 정지 — 퇴장 처리)
-	- 레이트 조인: 서버가 CharacterAdded 시 기존 상태 전송 → 동일하게 처리
-	- 자기 자신(LocalPlayer)의 이벤트는 userId 비교로 무시
+	변경사항 (CloneBroadcast 연동):
+	  - onCharacterAdded: humanoid/rootPart만 설정, joints는 비워둠
+	  - CloneBroadcastClient.CloneReady 수신 → 클론 Motor6D로 state.joints 교체
+	  → 애니메이션이 원본이 아닌 클론 관절에 적용됨
 
-	localAC (AnimationControllerClient 대체):
-	- spring(joint, targetC0, speed, damper, dt) : Nevermore Spring 보간 후 joint.C0 적용
-	- GetMoveDir()                                : 해당 플레이어 MoveDirection 로컬 좌표 변환
-	- GetDefaultC0(joint)                         : 전송받은 defaultC0Map에서 반환
+	나머지 동작은 기존과 동일:
+	- AnimBroadcast 수신 → AnimDef require → factory 실행 → Heartbeat onUpdate
+	- AnimStopBroadcast 수신 → 해당 애니메이션 제거
+	- 레이트 조인: 서버가 기존 상태 전송 → 동일 처리
+	- 자기 자신(LocalPlayer) 이벤트는 userId 비교로 무시
 ]=]
 
 local require = require(script.Parent.loader).load(script)
@@ -24,6 +22,7 @@ local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 
 local AnimReplicationRemoting = require("AnimReplicationRemoting")
+local CloneBroadcastClient = require("CloneBroadcastClient")
 local Maid = require("Maid")
 local ServiceBag = require("ServiceBag")
 local Spring = require("Spring")
@@ -62,6 +61,7 @@ export type AnimReplicationClient = typeof(setmetatable(
 		_serviceBag: ServiceBag.ServiceBag,
 		_maid: any,
 		_remoteStates: { [number]: RemotePlayerState },
+		_cloneBroadcastClient: any,
 	},
 	{} :: typeof({ __index = {} })
 ))
@@ -77,6 +77,7 @@ function AnimReplicationClient.Init(self: AnimReplicationClient, serviceBag: Ser
 	self._serviceBag = serviceBag
 	self._maid = Maid.new()
 	self._remoteStates = {}
+	self._cloneBroadcastClient = serviceBag:GetService(CloneBroadcastClient)
 end
 
 function AnimReplicationClient.Start(self: AnimReplicationClient): ()
@@ -93,6 +94,12 @@ function AnimReplicationClient.Start(self: AnimReplicationClient): ()
 	self._maid:GiveTask(Players.PlayerRemoving:Connect(function(player)
 		self:_onPlayerRemoving(player)
 	end))
+
+	-- CloneReady: 클론 생성 완료 → 해당 플레이어 state.joints를 클론 Motor6D로 교체
+	self._maid:GiveTask(self._cloneBroadcastClient.CloneReady:Connect(function(userId: number, clone: Model)
+		self:_onCloneReady(userId, clone)
+	end))
+
 	self._maid:GiveTask(
 		AnimReplicationRemoting.AnimBroadcast:Connect(
 			function(userId, animDefModuleName, animName, animType, layer, duration, defaultC0Map, animParams)
@@ -143,23 +150,46 @@ function AnimReplicationClient:_onPlayerAdded(player: Player)
 	self._remoteStates[player.UserId] = state
 
 	local function onCharacterAdded(char: Model)
+		-- 애니메이션/관절 상태 초기화
 		state.anims = {}
-		state.joints = {}
+		state.joints = {} -- 클론 대기, CloneReady에서 채워짐
 		state.defaultC0s = {}
 		state.jointSprings = {}
+
+		-- humanoid/rootPart는 MoveDir 계산용으로 원본 참조
 		state.humanoid = char:WaitForChild("Humanoid") :: Humanoid
 		state.rootPart = char:WaitForChild("HumanoidRootPart") :: BasePart
-		for _, desc in char:GetDescendants() do
-			if desc:IsA("Motor6D") then
-				state.joints[desc.Name] = desc
-			end
-		end
 	end
 
 	if player.Character then
 		onCharacterAdded(player.Character)
 	end
 	pMaid:GiveTask(player.CharacterAdded:Connect(onCharacterAdded))
+end
+
+--[=[
+	CloneBroadcastClient.CloneReady 수신.
+	클론의 Motor6D를 state.joints에 등록합니다.
+	진행 중인 애니메이션은 초기화 (클론 교체 시 관절 참조가 바뀌므로).
+]=]
+function AnimReplicationClient:_onCloneReady(userId: number, clone: Model)
+	local state = self._remoteStates[userId]
+	if not state then
+		return
+	end
+
+	-- 진행 중 애니메이션 초기화 (관절 참조 교체 전 정리)
+	state.anims = {}
+	state.joints = {}
+	state.defaultC0s = {}
+	state.jointSprings = {}
+
+	-- 클론 Motor6D 수집
+	for _, desc in clone:GetDescendants() do
+		if desc:IsA("Motor6D") then
+			state.joints[desc.Name] = desc :: Motor6D
+		end
+	end
 end
 
 function AnimReplicationClient:_onPlayerRemoving(player: Player)
@@ -200,6 +230,11 @@ function AnimReplicationClient:_onAnimBroadcast(
 		return
 	end
 
+	-- joints가 비어 있으면 클론 미준비 → 무시
+	if next(state.joints) == nil then
+		return
+	end
+
 	-- defaultC0Map 병합
 	for jointName, c0 in defaultC0Map :: { [string]: unknown } do
 		if type(jointName) == "string" and typeof(c0) == "CFrame" then
@@ -228,7 +263,6 @@ function AnimReplicationClient:_onAnimBroadcast(
 			return
 		end
 
-		-- 같은 layer 기존 항목 교체
 		for existingKey, existing in state.anims do
 			if existing.layer == (layer :: number) then
 				state.anims[existingKey] = nil
@@ -289,7 +323,6 @@ function AnimReplicationClient:_onAnimStopBroadcast(userId: number, animDefModul
 		return
 	end
 
-	-- nil이면 플레이어 퇴장 → 전부 정지
 	if animDefModuleName == nil then
 		state.anims = {}
 		return
@@ -310,7 +343,6 @@ function AnimReplicationClient:_update(dt: number)
 	for _, state in self._remoteStates do
 		local toRemove: { string } = {}
 
-		-- 1. elapsed 누적 + 만료 수집
 		for animKey, animEntry in state.anims do
 			animEntry.elapsed += dt
 			if animEntry.elapsed >= animEntry.duration then
@@ -321,7 +353,6 @@ function AnimReplicationClient:_update(dt: number)
 			state.anims[animKey] = nil
 		end
 
-		-- 2. 관절별 최고 레이어 아님 찾기
 		local bestPerJoint: { [Motor6D]: { layer: number, entry: JointEntry } } = {}
 		for _, animEntry in state.anims do
 			for jointName, jointEntry in animEntry.joints do
@@ -336,14 +367,12 @@ function AnimReplicationClient:_update(dt: number)
 			end
 		end
 
-		-- 3. 각 관절에 최고 레이어 애니메이션만 실행
 		local activeJoints: { [Motor6D]: boolean } = {}
 		for joint, data in bestPerJoint do
 			activeJoints[joint] = true
 			data.entry.onUpdate(joint, dt)
 		end
 
-		-- 4. 비활성 관절 → defaultC0로 spring 복귀 (기존 코드 그대로)
 		for jointName, joint in state.joints do
 			if activeJoints[joint] then
 				continue
@@ -383,7 +412,6 @@ function AnimReplicationClient:_ensureJointSprings(state: RemotePlayerState, joi
 	state.jointSprings[joint] = { pos = posSpring, rot = rotSpring }
 end
 
--- localAC: factory에 주입하는 컨트롤러 (serverAC와 동일한 인터페이스)
 function AnimReplicationClient:_makeLocalAC(state: RemotePlayerState): any
 	local localAC = {
 		_springs = {} :: { [Motor6D]: { pos: any, rot: any } },
