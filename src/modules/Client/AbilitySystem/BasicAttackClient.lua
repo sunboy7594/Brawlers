@@ -77,7 +77,6 @@ local AnimationControllerClient = require("AnimationControllerClient")
 local BasicAttackDefs = require("BasicAttackDefs")
 local BasicAttackRemoting = require("BasicAttackRemoting")
 local ClassRemoting = require("ClassRemoting")
-local CloneBroadcastClient = require("CloneBroadcastClient")
 local DynamicIndicator = require("DynamicIndicator")
 local EntityAnimator = require("EntityAnimator")
 local LoadoutRemoting = require("LoadoutRemoting")
@@ -165,8 +164,6 @@ export type BasicAttackState = {
 		color: Color3?,
 		isEnemy: (a: Player, b: Player) -> boolean,
 	}?,
-
-	cloneBroadcastClient: any?,
 }
 
 -- ─── 타입 ────────────────────────────────────────────────────────────────────
@@ -213,7 +210,6 @@ function BasicAttackClient.Init(self: BasicAttackClient, serviceBag: ServiceBag.
 	self._coordinator = serviceBag:GetService(AbilityCoordinator)
 	self._playerStateClient = serviceBag:GetService(PlayerStateClient)
 	self._teamClient = serviceBag:GetService(TeamClient)
-	self._cloneBroadcastClient = serviceBag:GetService(CloneBroadcastClient)
 
 	self._equippedAttackId = nil
 	self._joints = nil
@@ -371,8 +367,6 @@ function BasicAttackClient:SetEquippedAttack(attackId: string)
 		indicator = indicator,
 		animator = nil,
 		teamContext = teamContext,
-
-		cloneBroadcastClient = self._cloneBroadcastClient,
 	}
 
 	self:_rebuildAnimator()
@@ -755,11 +749,7 @@ function BasicAttackClient:_startFireLoop(entry: { def: any, module: any, animDe
 
 				local loopChar = Players.LocalPlayer.Character
 				local loopHrp = loopChar and loopChar:FindFirstChild("HumanoidRootPart") :: BasePart?
-				BasicAttackRemoting.Fire:FireServer(
-					state.direction,
-					Workspace:GetServerTimeNow(),
-					loopHrp and loopHrp.Position
-				)
+				BasicAttackRemoting.Fire:FireServer(state.direction, Workspace:GetServerTimeNow(), loopHrp and loopHrp.Position)
 				AbilityExecutor.OnFire(entry.module, state)
 			end
 

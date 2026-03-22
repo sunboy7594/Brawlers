@@ -14,8 +14,6 @@ local serviceBag = require("ServiceBag").new()
 -- ─── Core ────────────────────────────────────────────
 serviceBag:GetService(require("BrawlersService"))
 serviceBag:GetService(require("TagService"))
-require("CloneBroadcastService")
-
 serviceBag:GetService(require("BasicAttackService"))
 serviceBag:GetService(require("ClassService"))
 serviceBag:GetService(require("TeamService"))
