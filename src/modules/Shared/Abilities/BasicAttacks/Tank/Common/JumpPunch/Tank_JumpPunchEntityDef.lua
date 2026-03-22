@@ -103,45 +103,4 @@ return {
 			depthMode = "AlwaysOnTop",
 		}),
 	},
-
-	-- PlayerJump
-	PlayerJump = {
-		move = function(dt: number, handle: any, params: any): boolean
-			local distance = params and params.actualDistance or JUMP_DISTANCE
-			local height = params and params.actualHeight or JUMP_HEIGHT
-			return EntityUtils.Arc({
-				distance = distance,
-				height = height,
-				speed = JUMP_SPEED,
-				rotate = false,
-			})(dt, handle, params)
-		end,
-		-- onSpawn 없음 (AutoDespawn 제거, AnchorPart는 HRPMoveClient에서 주입)
-		hitDetect = EntityUtils.Sphere({
-			radius = 2.8,
-			relations = { "obstacle" },
-			activateAt = 0.15,
-		}),
-		onHit = onFloorHit,
-	},
-
-	-- PlayerThrow
-	PlayerThrow = {
-		move = function(dt: number, handle: any, params: any): boolean
-			local distance = params and params.actualDistance or THROW_DISTANCE
-			local height = params and params.actualHeight or THROW_HEIGHT
-			return EntityUtils.Arc({
-				distance = distance,
-				height = height,
-				speed = THROW_SPEED,
-				rotate = false,
-			})(dt, handle, params)
-		end,
-		hitDetect = EntityUtils.Sphere({
-			radius = 2.8,
-			relations = { "obstacle" },
-			activateAt = 0.15,
-		}),
-		onHit = onFloorHit,
-	},
 }
