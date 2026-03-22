@@ -102,7 +102,7 @@ return {
 					speed = JUMP_SPEED,
 					rotate = false,
 				}),
-				onSpawn = EntityUtils.AnchorPart(), -- 서버에서는 스킵, 클라이언트 연출용
+				onSpawn = EntityUtils.AnchorPart(),
 				onMiss = function(handle)
 					-- arc 완료 = 착지. 현재 HRP 위치에서 fist 발사
 					local landingPos = hrp.Position
@@ -188,7 +188,7 @@ return {
 						speed = THROW_SPEED,
 						rotate = false,
 					}),
-					onSpawn = EntityUtils.AnchorPart(), -- 서버에서는 스킵
+					onSpawn = EntityUtils.AnchorPart(),
 				})
 			end
 		end,
