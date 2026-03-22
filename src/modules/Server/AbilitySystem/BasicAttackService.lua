@@ -8,7 +8,7 @@
 	- 플레이어별 리소스 상태 관리
 	- stack: 독립 재생 (Heartbeat) → 장전 틱마다 ResourceSync
 	- gauge: 발사 중 drain, 종료 후 regenDelay → regen (Heartbeat)
-	         소진 시 / max 도달 시 ResourceSync
+	         소진 시 / max 독로 ResourceSync
 	- BasicAttackRemoting.Fire 수신 → 검증 → onFire 실행 → ResourceSync
 	- BasicAttackRemoting.FireEnd 수신 → hold/toggle 상태 관리
 	- 히트 체크 후 HitChecked:FireClient(공격자) 발송 (enemies만)
@@ -48,7 +48,6 @@ local AbilityTypes = require("AbilityTypes")
 local BasicAttackDefs = require("BasicAttackDefs")
 local BasicAttackRemoting = require("BasicAttackRemoting")
 local ClassService = require("ClassService")
-local EntityPlayerServer = require("EntityPlayerServer")
 local InstantHit = require("InstantHit")
 local LoadoutRemoting = require("LoadoutRemoting")
 local Maid = require("Maid")
@@ -199,9 +198,6 @@ function BasicAttackService.Init(self: BasicAttackService, serviceBag: ServiceBa
 end
 
 function BasicAttackService.Start(self: BasicAttackService): ()
-	-- HRP 이동 착지 검증 바인딩 (PlayHRP 사용 어빌리티용)
-	EntityPlayerServer.BindLandingReport()
-
 	self._maid:GiveTask(Players.PlayerAdded:Connect(function(player)
 		self:_onPlayerAdded(player)
 	end))
