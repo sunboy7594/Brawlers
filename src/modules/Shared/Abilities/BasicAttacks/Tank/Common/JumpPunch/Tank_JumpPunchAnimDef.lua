@@ -9,16 +9,16 @@
 ]=]
 
 local Layer = {
-	BASE     = 0,
-	ACTION   = 1,
+	BASE = 0,
+	ACTION = 1,
 	OVERRIDE = 2,
 }
 
-type OnUpdate    = (joint: Motor6D, dt: number) -> ()
+type OnUpdate = (joint: Motor6D, dt: number) -> ()
 type AnimFactory = (joint: Motor6D, defaultC0: CFrame, ac: any) -> OnUpdate
 
 type AnimDef =
-	{ type: "anim",   layer: number, joints: { [string]: AnimFactory } }
+	{ type: "anim", layer: number, joints: { [string]: AnimFactory } }
 	| { type: "modify", joints: { [string]: (joint: Motor6D, defaultC0: CFrame, ac: any) -> (CFrame, number) -> CFrame } }
 
 local Tank_JumpPunchAnimDef: { [string]: AnimDef } = {}
@@ -26,7 +26,7 @@ local Tank_JumpPunchAnimDef: { [string]: AnimDef } = {}
 -- ─── JumpPunch (양손 오버헤드 내려찍기) ──────────────────────────────────────
 
 Tank_JumpPunchAnimDef["JumpPunch"] = {
-	type  = "anim",
+	type = "anim",
 	layer = Layer.OVERRIDE,
 	joints = {
 		RightShoulder = function(_joint: Motor6D, defaultC0: CFrame, ac: any): OnUpdate

@@ -8,6 +8,9 @@
 	Linear(config)         → 직선 등속
 	Arc(config)            → 포물선
 	                         rotate?: boolean (기본 true) - false면 위치만 이동, 회전 고정
+	                         서버에서 part가 HumanoidRootPart일 경우:
+	                           SetNetworkOwner(nil) + PlatformStand + PivotTo + velocity 보간
+	                           벽 감지 후 distance/height 자동 보정
 	Sweep(config)          → 호 스윗
 
 	─── Detect ───────────────────────────────────────────────────────────────
@@ -22,8 +25,8 @@
 	Despawn(config?)       → delay 포함 즉시 소멸
 	AutoDespawn(duration)  → onSpawn에서 사용. duration 후 자동 소멸
 	AnchorPart()           → onSpawn에서 사용. HRP 이동 시 Humanoid 상태머신 간섭 차단.
-	                         velocity 강제 초기화 없음 → 자연스러운 arc 시작 (snap 방지)
-	                         handle 소멸 시 PlatformStand 자동 복원.
+	                         서버에서는 Arc가 직접 처리하므로 스킵.
+	                         클라이언트에서만 velocity=0 유지.
 	Sequence(callbacks)    → 순서 실행
 	StopMove()             → 이동 중단
 	SpawnEntity(...)       → 그 자리에서 새 엔티티 생성
@@ -54,6 +57,7 @@
 local require = require(script.Parent.loader).load(script)
 
 local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
 
 local EntityUtils = {}
 
@@ -166,6 +170,74 @@ local function setSize(model: any, scale: Vector3)
 	m:ScaleTo(m:GetScale() * delta)
 end
 
+-- ─── HRP 서버 이동용: 착지점 보정 (서버 레이캐스트) ──────────────────────────
+
+local HRP_EXTRA_DISTANCE = 5 -- 역방향 Ray 탐색 여유 거리
+
+--[=[
+	서버에서 HRP arc 이동 시 벽을 감지해 실제 착지 거리/높이를 보정합니다.
+	HRPMoveClient의 findActualLanding과 동일한 로직.
+]=]
+local function findActualLandingServer(
+	originPos: Vector3,
+	dir: Vector3,
+	distance: number,
+	baseHeight: number,
+	filterInstance: Instance?
+): (number, number)
+	local heightRatio = baseHeight / math.max(distance, 0.001)
+
+	local rayParams = RaycastParams.new()
+	rayParams.FilterType = Enum.RaycastFilterType.Exclude
+	if filterInstance then
+		rayParams.FilterDescendantsInstances = { filterInstance }
+	end
+
+	-- 1. 순방향 Ray: 벽 앞면 감지
+	local forwardRay = Workspace:Raycast(originPos, dir * distance, rayParams)
+	if not forwardRay then
+		return distance, baseHeight
+	end
+	local frontDist = forwardRay.Distance
+
+	-- 2. 역방향 Ray: 벽 뒷면 위치
+	local probePos = originPos + dir * (distance + HRP_EXTRA_DISTANCE)
+	local backwardRay = Workspace:Raycast(probePos, -dir * (distance + HRP_EXTRA_DISTANCE), rayParams)
+	local wallBackDist: number
+	if backwardRay then
+		wallBackDist = (distance + HRP_EXTRA_DISTANCE) - backwardRay.Distance
+	else
+		wallBackDist = distance + HRP_EXTRA_DISTANCE
+	end
+
+	-- 3. 착지 거리 결정
+	local jumpingOver = wallBackDist > frontDist and wallBackDist < distance
+	local actualDist: number
+	local actualHeight: number
+	if jumpingOver then
+		-- 얇은 벽 → 벽 너머 착지
+		actualDist = wallBackDist + 1
+		-- 수직 Ray로 벽 꼭대기 측정 → 높이 보정
+		local midPos = originPos + dir * ((frontDist + wallBackDist) / 2)
+		local topRay = Workspace:Raycast(
+			Vector3.new(midPos.X, originPos.Y + baseHeight + 5, midPos.Z),
+			Vector3.new(0, -(baseHeight + 6), 0),
+			rayParams
+		)
+		if topRay then
+			actualHeight = math.max(topRay.Position.Y - originPos.Y + 1.5, baseHeight)
+		else
+			actualHeight = baseHeight
+		end
+	else
+		-- 두꺼운 벽 → 코앞 착지
+		actualDist = math.max(frontDist - 1.5, 1)
+		actualHeight = actualDist * heightRatio
+	end
+
+	return actualDist, actualHeight
+end
+
 -- ─── Move ────────────────────────────────────────────────────────────────────
 
 export type LinearConfig = {
@@ -242,26 +314,95 @@ function EntityUtils.Arc(config: ArcConfig)
 			return true
 		end
 
+		-- ─── 초기화 (첫 틱) ───────────────────────────────────────────────────
 		if not h._moveDir or not h._moveOrigin then
 			local cf = h.part and h.part:GetPivot() or CFrame.identity
 			h._moveDir = cf.LookVector
 			h._moveOrigin = cf.Position
+			h._arcDistance = config.distance
+			h._arcHeight = config.height
+
+			-- HRP 감지 + 서버 전용 처리
+			local part = h.part
+			if
+				part
+				and typeof(part) == "Instance"
+				and (part :: Instance):IsA("BasePart")
+				and (part :: BasePart).Name == "HumanoidRootPart"
+				and RunService:IsServer()
+			then
+				local hrp = part :: BasePart
+				local model = hrp.Parent
+				local humanoid: Humanoid? = if model and typeof(model) == "Instance"
+					then (model :: Instance):FindFirstChildOfClass("Humanoid") :: Humanoid?
+					else nil
+
+				-- 벽 보정 (서버 레이캐스트)
+				local filterInst: Instance? = if model and typeof(model) == "Instance" then model :: Instance else nil
+				local actualDist, actualHeight =
+					findActualLandingServer(h._moveOrigin, h._moveDir, config.distance, config.height, filterInst)
+				h._arcDistance = actualDist
+				h._arcHeight = actualHeight
+
+				-- 네트워크 소유권 서버로 (물리 권위 확보)
+				hrp:SetNetworkOwner(nil)
+
+				-- Humanoid 상태머신 차단
+				if humanoid then
+					h._wasPS = humanoid.PlatformStand
+					humanoid.PlatformStand = true
+				end
+
+				h._isHRPMove = true
+				h._hrpPart = hrp
+				h._hrpHumanoid = humanoid
+
+				-- 완료 시 복원
+				handle._maid:GiveTask(function()
+					if humanoid and (humanoid :: Instance).Parent then
+						humanoid.PlatformStand = h._wasPS or false
+					end
+					if hrp.Parent then
+						hrp:SetNetworkOwnershipAuto()
+						hrp.AssemblyLinearVelocity = Vector3.zero
+						hrp.AssemblyAngularVelocity = Vector3.zero
+					end
+				end)
+			end
 		end
 
-		local activeElapsed = elapsed - delay
-		local totalTime = config.distance / config.speed
-		local t = math.clamp(activeElapsed / totalTime, 0, 1)
-
+		-- ─── 이동 계산 ────────────────────────────────────────────────────────
+		local distance = h._arcDistance or config.distance -- ← fallback 추가
+		local height = h._arcHeight or config.height -- ← fallback 추가
 		local origin: Vector3 = h._moveOrigin
 		local dir: Vector3 = h._moveDir
-		local horizontal = origin + dir * (config.distance * t)
-		local verticalY = 4 * config.height * t * (1 - t)
+
+		local activeElapsed = elapsed - delay
+		local totalTime = distance / config.speed
+		local t = math.clamp(activeElapsed / math.max(totalTime, 0.001), 0, 1)
+
+		local horizontal = origin + dir * (distance * t)
+		local verticalY = 4 * height * t * (1 - t)
 		local newPos = Vector3.new(horizontal.X, origin.Y + verticalY, horizontal.Z)
 
-		if shouldRotate then
+		if h._isHRPMove then
+			-- 서버 HRP 이동: PivotTo + velocity 힌트로 클라이언트 보간
+			local nextT = math.min(t + dt / math.max(totalTime, 0.001), 1)
+			local nextH = origin + dir * (distance * nextT)
+			local nextVY = 4 * height * nextT * (1 - nextT)
+			local nextPos = Vector3.new(nextH.X, origin.Y + nextVY, nextH.Z)
+
+			local hrp = h._hrpPart :: BasePart
+			hrp:PivotTo(CFrame.new(newPos, newPos + dir))
+			if dt > 0.001 then
+				local velH = dir * (distance / totalTime) -- 수평 속도 (일정)
+				local velY = 4 * height * (1 - 2 * t) / totalTime -- 수직 속도 (t에 따라 변화)
+				hrp.AssemblyLinearVelocity = Vector3.new(velH.X, velY, velH.Z)
+			end
+		elseif shouldRotate then
 			local nextT = math.min(t + 0.01, 1)
-			local nextH = origin + dir * (config.distance * nextT)
-			local nextVY = 4 * config.height * nextT * (1 - nextT)
+			local nextH = origin + dir * (distance * nextT)
+			local nextVY = 4 * height * nextT * (1 - nextT)
 			local nextPos = Vector3.new(nextH.X, origin.Y + nextVY, nextH.Z)
 			local lookDir = nextPos - newPos
 			if lookDir.Magnitude > 0.001 then
@@ -431,14 +572,12 @@ end
 	  onSpawn 콜백으로 사용.
 	  HRP 이동 중 Humanoid 상태머신 간섭을 차단합니다.
 
-	  ──────────────────────────────────────────────────────────────────────
-	  ⚠️  velocity 강제 초기화를 하지 않습니다.
-	     velocity=0으로 강제하면 걷고 있던 캐릭터가 순간 멈춤 → snap처럼 보임.
-	     Arc의 PivotTo가 매 프레임 위치를 덮어쓰므로 velocity 제거 불필요.
-	  ──────────────────────────────────────────────────────────────────────
+	  서버에서는 Arc가 직접 SetNetworkOwner + PlatformStand + velocity를 처리하므로
+	  AnchorPart는 클라이언트에서만 동작합니다.
 
-	  적용:
+	  클라이언트 적용:
 	    1. PlatformStand = true → Humanoid 상태머신 간섭 차단
+	    2. Heartbeat velocity=0 유지 → 중력 축적 방지
 
 	  handle._maid 소멸 시 PlatformStand 자동 복원.
 ]=]
@@ -459,14 +598,15 @@ function EntityUtils.AnchorPart()
 			return
 		end
 
+		-- 서버 HRP: Arc가 SetNetworkOwner + PlatformStand + velocity 전부 처리 → 스킵
+		if RunService:IsServer() and bp.Name == "HumanoidRootPart" then
+			return
+		end
 		local humanoid: Humanoid?
 		local model = bp.Parent
 		if model and (model :: Instance):IsA("Model") then
 			humanoid = (model :: Instance):FindFirstChildOfClass("Humanoid") :: Humanoid?
 		end
-
-		-- 초기 velocity 초기화 없음 → snap 방지
-		-- (걷던 캐릭터를 순간 멈추지 않음)
 
 		local wasPlatformStand = false
 		if humanoid then
@@ -474,8 +614,7 @@ function EntityUtils.AnchorPart()
 			humanoid.PlatformStand = true
 		end
 
-		-- Heartbeat마다 velocity=0 유지 → 중력 축적 방지 (뚝뚝 끊힘 방지)
-		-- Anchored/SetNetworkOwner 사용 안 함 → 클라이언트 소유권 유지 → 복제 정상
+		-- Heartbeat마다 velocity=0 유지 → 중력 축적 방지
 		local velConn: RBXScriptConnection
 		velConn = RunService.Heartbeat:Connect(function()
 			if not (bp :: Instance).Parent then
