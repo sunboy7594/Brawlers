@@ -6,7 +6,9 @@
 
 	채널 목록:
 	- AimStarted:    (클라이언트 → 서버) 조준 시작 알림 (서버의 aimStartTime 기록용)
-	- Fire:          (클라이언트 → 서버) 개별 발사 (direction: Vector3)
+	- Fire:          (클라이언트 → 서버) 개별 발사 (direction: Vector3, sentAt: number, clientOrigin: Vector3?)
+	                 clientOrigin: 발사 시점 클라이언트 HRP 위치 (레이턴시 보정용, 신뢰함)
+	                 서버 rootPart와 8 studs 이상 차이 시 서버 위치로 폴백
 	                 stack: 1회 발사 / hold,toggle: 루프 내 매 틱 발사
 	- FireEnd:       (클라이언트 → 서버) hold/toggle 발사 루프 종료 알림
 	                 서버가 isFiring=false, regenDelay 타이머 시작

@@ -19,6 +19,11 @@
 	- latency = GetServerTimeNow() - sentAt
 	- state.latency에 저장 → 어빌리티 모듈(onFire)에서 delay 보정에 활용
 
+	clientOrigin (발사 위치 보정):
+	- Fire 신호에 클라이언트 HRP 위치 포함 (레이턴시로 인한 발사 origin 차이 보정)
+	- 서버 rootPart.Position과의 차이가 MAX_ORIGIN_DELTA(8 studs) 이하면 clientOrigin 사용
+	- 초과 시 서버 위치로 폴백 (위치 조작 방지)
+
 	fireMaid:
 	- _executeFire 시마다 새 Maid 생성. CancelCombatState 시 Destroy.
 	- 서버 모듈(onFire)이 GiveTask로 딜레이 히트 취소 등록 가능.
@@ -58,6 +63,7 @@ local FIRE_RATE_LIMIT = 0.1
 local MAX_DIRECTION_MAGNITUDE_DELTA = 0.1
 local MIN_RELOAD_RATE_MULT = 0.01
 local MAX_LATENCY = 0.5
+local MAX_ORIGIN_DELTA = 8
 
 -- ⚠️ 주의: BasicAttackClient.lua의 INTERVAL_QUEUE_THRESHOLD와 반드시 동일해야 합니다.
 local INTERVAL_QUEUE_THRESHOLD = AbilityTypes.INTERVAL_QUEUE_THRESHOLD
@@ -214,8 +220,8 @@ function BasicAttackService.Start(self: BasicAttackService): ()
 		self:_onAimStarted(player)
 	end))
 
-	self._maid:GiveTask(BasicAttackRemoting.Fire:Connect(function(player: Player, direction: unknown, sentAt: unknown)
-		self:_onFire(player, direction, sentAt)
+	self._maid:GiveTask(BasicAttackRemoting.Fire:Connect(function(player: Player, direction: unknown, sentAt: unknown, clientOrigin: unknown)
+		self:_onFire(player, direction, sentAt, clientOrigin)
 	end))
 
 	self._maid:GiveTask(BasicAttackRemoting.FireEnd:Connect(function(player: Player)
@@ -461,7 +467,7 @@ end
 
 -- ─── 발사 처리 ───────────────────────────────────────────────────────────────
 
-function BasicAttackService:_onFire(player: Player, direction: unknown, sentAt: unknown)
+function BasicAttackService:_onFire(player: Player, direction: unknown, sentAt: unknown, clientOrigin: unknown)
 	local state = self._playerStates[player.UserId]
 	if not state or not state.humanoid or not state.rootPart then
 		return
@@ -488,6 +494,11 @@ function BasicAttackService:_onFire(player: Player, direction: unknown, sentAt: 
 	local latency = 0
 	if type(sentAt) == "number" then
 		latency = math.clamp(Workspace:GetServerTimeNow() - sentAt, 0, MAX_LATENCY)
+	end
+
+	local origin: Vector3? = nil
+	if typeof(clientOrigin) == "Vector3" then
+		origin = clientOrigin
 	end
 
 	local attackId = state.equippedAttackId
@@ -530,7 +541,7 @@ function BasicAttackService:_onFire(player: Player, direction: unknown, sentAt: 
 				end
 				state.pendingFireCancel = cancellableDelay(remaining, function()
 					state.pendingFireCancel = nil
-					self:_executeFire(player, state, dir, entry, latency)
+					self:_executeFire(player, state, dir, entry, latency, origin)
 				end)
 			end
 			return
@@ -542,7 +553,7 @@ function BasicAttackService:_onFire(player: Player, direction: unknown, sentAt: 
 		end
 	end
 
-	self:_executeFire(player, state, dir, entry, latency)
+	self:_executeFire(player, state, dir, entry, latency, origin)
 end
 
 -- ─── 실제 발사 실행 ──────────────────────────────────────────────────────────
@@ -552,7 +563,8 @@ function BasicAttackService:_executeFire(
 	state: BasicAttackState,
 	dir: Vector3,
 	entry: AttackEntry,
-	latency: number
+	latency: number,
+	clientOrigin: Vector3?
 )
 	if not state.humanoid or not state.rootPart then
 		return
@@ -561,7 +573,12 @@ function BasicAttackService:_executeFire(
 	local now = os.clock()
 
 	state.attacker = state.humanoid.Parent :: Model?
-	state.origin = state.rootPart.Position
+	local serverOrigin = state.rootPart.Position
+	if clientOrigin and (clientOrigin - serverOrigin).Magnitude <= MAX_ORIGIN_DELTA then
+		state.origin = clientOrigin
+	else
+		state.origin = serverOrigin
+	end
 	state.direction = dir
 	state.aimTime = if state.aimStartTime > 0 then now - state.aimStartTime else 0
 	state.idleTime = if state.lastFireTime > 0 then now - state.lastFireTime else math.huge

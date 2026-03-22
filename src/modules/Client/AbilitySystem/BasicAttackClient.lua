@@ -652,7 +652,9 @@ function BasicAttackClient:_executeStack(entry: { def: any, module: any, animDef
 		end)
 
 		-- sentAt: 서버 latency 보정용
-		BasicAttackRemoting.Fire:FireServer(direction, Workspace:GetServerTimeNow())
+		local pendingChar = Players.LocalPlayer.Character
+		local pendingHrp = pendingChar and pendingChar:FindFirstChild("HumanoidRootPart") :: BasePart?
+		BasicAttackRemoting.Fire:FireServer(direction, Workspace:GetServerTimeNow(), pendingHrp and pendingHrp.Position)
 		return
 	end
 
@@ -671,7 +673,9 @@ function BasicAttackClient:_executeStack(entry: { def: any, module: any, animDef
 
 	self:_onFireExecuted(entry, state)
 
-	BasicAttackRemoting.Fire:FireServer(direction, Workspace:GetServerTimeNow())
+	local stackChar = Players.LocalPlayer.Character
+	local stackHrp = stackChar and stackChar:FindFirstChild("HumanoidRootPart") :: BasePart?
+	BasicAttackRemoting.Fire:FireServer(direction, Workspace:GetServerTimeNow(), stackHrp and stackHrp.Position)
 	AbilityExecutor.OnFire(entry.module, state)
 	self._aimController:StartIntervalLock(direction, def.interval)
 end
@@ -743,7 +747,9 @@ function BasicAttackClient:_startFireLoop(entry: { def: any, module: any, animDe
 				end
 				state.fireMaid = Maid.new()
 
-				BasicAttackRemoting.Fire:FireServer(state.direction, Workspace:GetServerTimeNow())
+				local loopChar = Players.LocalPlayer.Character
+				local loopHrp = loopChar and loopChar:FindFirstChild("HumanoidRootPart") :: BasePart?
+				BasicAttackRemoting.Fire:FireServer(state.direction, Workspace:GetServerTimeNow(), loopHrp and loopHrp.Position)
 				AbilityExecutor.OnFire(entry.module, state)
 			end
 
