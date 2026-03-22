@@ -226,9 +226,57 @@ function EntityUtils.Arc(config: ArcConfig)
 			local cf = h.part and h.part:GetPivot() or CFrame.identity
 			h._moveDir = cf.LookVector
 			h._moveOrigin = cf.Position
+
+			-- 서버에서 HRP를 part로 쓰는 경우: Anchored + PlatformStand + 벽 보정
+			local part = h.part
+			if
+				part
+				and typeof(part) == "Instance"
+				and (part :: Instance):IsA("BasePart")
+				and (part :: BasePart).Name == "HumanoidRootPart"
+				and RunService:IsServer()
+			then
+				local hrp = part :: BasePart
+				local model = hrp.Parent
+				local humanoid: Humanoid? = if model and typeof(model) == "Instance"
+					then (model :: Instance):FindFirstChildOfClass("Humanoid") :: Humanoid?
+					else nil
+
+				-- 벽 보정 (레이캐스트)
+				local rayParams = RaycastParams.new()
+				rayParams.FilterType = Enum.RaycastFilterType.Exclude
+				if model and typeof(model) == "Instance" then
+					rayParams.FilterDescendantsInstances = { model :: Instance }
+				end
+				local hit = workspace:Raycast(h._moveOrigin, h._moveDir * config.distance, rayParams)
+				if hit then
+					h._arcDistance = math.max(1, hit.Distance - 1)
+				end
+
+				-- PlatformStand으로 Humanoid 상태머신 차단
+				local prevPS = humanoid and humanoid.PlatformStand or false
+				if humanoid then
+					humanoid.PlatformStand = true
+				end
+
+				-- Anchored = true (서버가 완전히 제어)
+				local prevAnchored = hrp.Anchored
+				hrp.Anchored = true
+
+				-- maid 소멸 시 복원
+				handle._maid:GiveTask(function()
+					if hrp.Parent then
+						hrp.Anchored = prevAnchored
+						hrp.AssemblyLinearVelocity = Vector3.zero
+					end
+					if humanoid and (humanoid :: Instance).Parent then
+						humanoid.PlatformStand = prevPS
+					end
+				end)
+			end
 		end
 
-		local distance = config.distance
+		local distance = h._arcDistance or config.distance
 		local height = config.height
 		local origin: Vector3 = h._moveOrigin
 		local dir: Vector3 = h._moveDir

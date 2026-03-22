@@ -6,12 +6,6 @@
 
 	"PunchFist":
 	  착지 직후 전방으로 짧은 arc를 그리며 날아가는 히트박스 엔티티.
-
-	"PlayerJump":
-	  공격자 HRP arc 점프용. HRPMoveClient가 수신 후 로컬에서 PlayDirect로 실행.
-
-	"PlayerThrow":
-	  피격자 HRP arc 날리기용. HRPMoveClient가 수신 후 로컬에서 실행.
 ]=]
 
 local require = require(script.Parent.loader).load(script)
@@ -24,14 +18,6 @@ local EntityUtils = require("EntityUtils")
 local FIST_SPEED = 35
 local FIST_DISTANCE = 4
 local FIST_HEIGHT = 0.8
-
-local JUMP_DISTANCE = 15
-local JUMP_HEIGHT = 6
-local JUMP_SPEED = 28
-
-local THROW_DISTANCE = 22
-local THROW_HEIGHT = 10
-local THROW_SPEED = 28
 
 -- ─── 엔티티 정의 테이블 ──────────────────────────────────────────────────────
 
@@ -79,29 +65,5 @@ return {
 			outlineTransparency = 0,
 			depthMode = "AlwaysOnTop",
 		}),
-	},
-
-	-- ─── PlayerJump: 공격자 HRP 로컬 arc 점프 ───────────────────────────────
-	PlayerJump = {
-		-- model = nil → HRPMoveClient가 HRP 자체를 part로 전달
-		move = EntityUtils.Arc({
-			distance = JUMP_DISTANCE,
-			height = JUMP_HEIGHT,
-			speed = JUMP_SPEED,
-			rotate = false,
-		}),
-		onSpawn = EntityUtils.AnchorPart(),
-	},
-
-	-- ─── PlayerThrow: 피격자 HRP 로컬 arc 날리기 ────────────────────────────
-	PlayerThrow = {
-		-- model = nil → HRPMoveClient가 HRP 자체를 part로 전달
-		move = EntityUtils.Arc({
-			distance = THROW_DISTANCE,
-			height = THROW_HEIGHT,
-			speed = THROW_SPEED,
-			rotate = false,
-		}),
-		onSpawn = EntityUtils.AnchorPart(),
 	},
 }

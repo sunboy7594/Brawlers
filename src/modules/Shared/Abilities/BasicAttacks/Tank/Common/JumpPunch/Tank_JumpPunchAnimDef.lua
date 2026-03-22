@@ -37,7 +37,7 @@ Tank_JumpPunchAnimDef["JumpPunch"] = {
 		end,
 		RightElbow = function(_joint: Motor6D, defaultC0: CFrame, ac: any): OnUpdate
 			return function(joint: Motor6D, dt: number)
-				local target = defaultC0 * CFrame.Angles(math.rad(-45), 0, 0)
+				local target = defaultC0 * CFrame.Angles(math.rad(45), 0, 0)
 				ac:spring(joint, target, 22, 0.85, dt)
 			end
 		end,
@@ -49,7 +49,7 @@ Tank_JumpPunchAnimDef["JumpPunch"] = {
 		end,
 		LeftElbow = function(_joint: Motor6D, defaultC0: CFrame, ac: any): OnUpdate
 			return function(joint: Motor6D, dt: number)
-				local target = defaultC0 * CFrame.Angles(math.rad(-45), 0, 0)
+				local target = defaultC0 * CFrame.Angles(math.rad(45), 0, 0)
 				ac:spring(joint, target, 22, 0.85, dt)
 			end
 		end,

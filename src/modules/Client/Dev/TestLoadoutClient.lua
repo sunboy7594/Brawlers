@@ -51,11 +51,11 @@ function TestLoadoutClient.Start(self: TestLoadoutClient): ()
 
 		-- 2. 기본 공격 장착 요청
 		local success: unknown, _result: unknown =
-			LoadoutRemoting.RequestEquipBasicAttack:InvokeServer("Tank_CannonTest")
+			LoadoutRemoting.RequestEquipBasicAttack:InvokeServer("Tank_JumpPunch")
 
 		-- 3. 성공 시 클라이언트 상태 갱신
 		if success == true then
-			self._basicAttackClient:SetEquippedAttack("Tank_CannonTest")
+			self._basicAttackClient:SetEquippedAttack("Tank_JumpPunch")
 		end
 	end
 

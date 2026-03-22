@@ -5,22 +5,22 @@
 	탱크 점프 펀치 서버 모듈.
 
 	onFire:
-	  HRPMoveRemoting.PlayMove로 공격자 클라이언트에게 PlayerJump 신호 전송.
-	  클라이언트가 로컬에서 HRP를 PivotTo로 직접 이동 → 끊김 없음.
-	  서버는 arc 시간(JUMP_DISTANCE/JUMP_SPEED)만큼 delay 후 착지 위치에서 fist 발사.
+	  EntityPlayerServer.PlayDirect로 공격자 HRP arc 이동.
+	  EntityUtils.Arc가 서버에서 HRP 감지 → Anchored=true + PivotTo.
+	  arc 완료(onMiss) 시 착지 위치에서 fist 발사.
 
 	onHitChecked:
 	  ① damage 35
 	  ② stun 2.0s
-	  ③ HRPMoveRemoting.PlayMove로 피격자 클라이언트에게 PlayerThrow 신호 전송.
+	  ③ EntityPlayerServer.PlayDirect로 피격자 HRP arc 날리기.
 ]=]
 
 local require = require(script.Parent.loader).load(script)
 
 local Players = game:GetService("Players")
 
+local EntityPlayerServer = require("EntityPlayerServer")
 local EntityUtils = require("EntityUtils")
-local HRPMoveRemoting = require("HRPMoveRemoting")
 local PlayerStateUtils = require("PlayerStateUtils")
 local ProjectileHit = require("ProjectileHit")
 
@@ -41,8 +41,6 @@ local STUN_DURATION = 2.0
 local THROW_DISTANCE = 22
 local THROW_HEIGHT = 10
 local THROW_SPEED = 28
-
-local JUMP_DURATION = JUMP_DISTANCE / JUMP_SPEED -- ≈ 0.54s
 
 -- ─── 타입 ────────────────────────────────────────────────────────────────────
 
@@ -86,14 +84,6 @@ return {
 			local dir = Vector3.new(state.direction.X, 0, state.direction.Z)
 			dir = if dir.Magnitude > 0.001 then dir.Unit else Vector3.new(0, 0, -1)
 
-			local originCF = CFrame.new(hrp.Position, hrp.Position + dir)
-
-			-- 클라이언트에서 로컬 HRP 이동
-			HRPMoveRemoting.PlayMove:FireClient(attackerPlayer, "Tank_JumpPunchEntityDef", "PlayerJump", originCF)
-
-			-- 착지 위치: 수학적으로 계산 (arc 수평 이동량)
-			local landingPos = hrp.Position + dir * JUMP_DISTANCE
-
 			local capturedDir = dir
 			local onHitResult = state.onHitResult
 			local onMissResult = state.onMissResult
@@ -101,44 +91,48 @@ return {
 			local fireMaid = state.fireMaid
 			local attacker = state.attacker
 
-			-- arc 완료 후 fist 발사
-			local cancelled = false
-			if fireMaid then
-				fireMaid:GiveTask(function()
-					cancelled = true
-				end)
-			end
+			-- 서버가 HRP 직접 arc 이동
+			-- EntityUtils.Arc가 HRP 감지 → Anchored=true + Heartbeat PivotTo
+			EntityPlayerServer.PlayDirect({
+				part = hrp,
+				origin = CFrame.new(hrp.Position, hrp.Position + dir),
+				move = EntityUtils.Arc({
+					distance = JUMP_DISTANCE,
+					height = JUMP_HEIGHT,
+					speed = JUMP_SPEED,
+					rotate = false,
+				}),
+				onMiss = function(_handle)
+					-- arc 완료 = 착지. 현재 HRP 위치에서 fist 발사
+					if not attacker or not attacker.Parent then
+						return
+					end
 
-			task.delay(JUMP_DURATION, function()
-				if cancelled then
-					return
-				end
-				if not attacker or not attacker.Parent then
-					return
-				end
+					local landingPos = hrp.Position
+					local origin2 = CFrame.new(landingPos, landingPos + capturedDir)
 
-				local origin2 = CFrame.new(landingPos, landingPos + capturedDir)
-
-				ProjectileHit.verdict(attacker, origin2, {
-					move = EntityUtils.Arc({
-						distance = FIST_DISTANCE,
-						height = FIST_HEIGHT,
-						speed = FIST_SPEED,
-					}),
-					hitDetect = EntityUtils.Box({
-						size = FIST_BOX_SIZE,
-						relations = { "enemy" },
-					}),
-					onHitResult = onHitResult,
-					onMissResult = onMissResult,
-					onHit = EntityUtils.Sequence({
-						EntityUtils.LockHit(),
-						EntityUtils.Despawn({ delay = 0 }),
-					}),
-					onMiss = EntityUtils.Despawn({ delay = 0 }),
-					latency = 0,
-				}, fireMaid, teamService, attackerPlayer)
-			end)
+					ProjectileHit.verdict(attacker, origin2, {
+						move = EntityUtils.Arc({
+							distance = FIST_DISTANCE,
+							height = FIST_HEIGHT,
+							speed = FIST_SPEED,
+						}),
+						hitDetect = EntityUtils.Box({
+							size = FIST_BOX_SIZE,
+							relations = { "enemy" },
+						}),
+						onHitResult = onHitResult,
+						onMissResult = onMissResult,
+						onHit = EntityUtils.Sequence({
+							EntityUtils.LockHit(),
+							EntityUtils.Despawn({ delay = 0 }),
+						}),
+						onMiss = EntityUtils.Despawn({ delay = 0 }),
+						latency = 0,
+					}, fireMaid, teamService, attackerPlayer)
+				end,
+				taskMaid = fireMaid,
+			})
 		end,
 	},
 
@@ -187,9 +181,18 @@ return {
 					force = true,
 				})
 
-				-- ③ 피격자 클라이언트에서 로컬 HRP 날리기
-				local throwOrigin = CFrame.new(victimHRP.Position, victimHRP.Position + throwDir)
-				HRPMoveRemoting.PlayMove:FireClient(victimPlayer, "Tank_JumpPunchEntityDef", "PlayerThrow", throwOrigin)
+				-- ③ 피격자 HRP 서버 직접 arc 날리기
+				-- EntityUtils.Arc가 HRP 감지 → Anchored=true + Heartbeat PivotTo
+				EntityPlayerServer.PlayDirect({
+					part = victimHRP,
+					origin = CFrame.new(victimHRP.Position, victimHRP.Position + throwDir),
+					move = EntityUtils.Arc({
+						distance = THROW_DISTANCE,
+						height = THROW_HEIGHT,
+						speed = THROW_SPEED,
+						rotate = false,
+					}),
+				})
 			end
 		end,
 	},
