@@ -24,9 +24,8 @@
 	─── 공용 콜백 ──────────────────────────────────────────────────────────────
 	Despawn(config?)       → delay 포함 즉시 소멸
 	AutoDespawn(duration)  → onSpawn에서 사용. duration 후 자동 소멸
-	AnchorPart()           → onSpawn에서 사용. HRP 이동 시 Humanoid 상태머신 간섭 차단.
-	                         서버에서는 Arc가 직접 처리하므로 스킵.
-	                         클라이언트에서만 velocity=0 유지.
+	AnchorPart()           → onSpawn에서 사용. HRP 이동 시 Humanoid 상태머신(PlatformStand) 차단.
+	                         서버/클라이언트 양쪽에서 동작. handle._maid 소멸 시 자동 복원.
 	Sequence(callbacks)    → 순서 실행
 	StopMove()             → 이동 중단
 	SpawnEntity(...)       → 그 자리에서 새 엔티티 생성
@@ -176,7 +175,6 @@ local HRP_EXTRA_DISTANCE = 5 -- 역방향 Ray 탐색 여유 거리
 
 --[=[
 	서버에서 HRP arc 이동 시 벽을 감지해 실제 착지 거리/높이를 보정합니다.
-	HRPMoveClient의 findActualLanding과 동일한 로직.
 ]=]
 local function findActualLandingServer(
 	originPos: Vector3,
@@ -372,8 +370,8 @@ function EntityUtils.Arc(config: ArcConfig)
 		end
 
 		-- ─── 이동 계산 ────────────────────────────────────────────────────────
-		local distance = h._arcDistance or config.distance -- ← fallback 추가
-		local height = h._arcHeight or config.height -- ← fallback 추가
+		local distance = h._arcDistance or config.distance
+		local height = h._arcHeight or config.height
 		local origin: Vector3 = h._moveOrigin
 		local dir: Vector3 = h._moveDir
 
@@ -386,19 +384,12 @@ function EntityUtils.Arc(config: ArcConfig)
 		local newPos = Vector3.new(horizontal.X, origin.Y + verticalY, horizontal.Z)
 
 		if h._isHRPMove then
-			-- 서버 HRP 이동: PivotTo + velocity 힌트로 클라이언트 보간
-			local nextT = math.min(t + dt / math.max(totalTime, 0.001), 1)
-			local nextH = origin + dir * (distance * nextT)
-			local nextVY = 4 * height * nextT * (1 - nextT)
-			local nextPos = Vector3.new(nextH.X, origin.Y + nextVY, nextH.Z)
-
+			-- 서버 HRP 이동: PivotTo + 접선벡터 velocity로 클라이언트 dead reckoning 보간
 			local hrp = h._hrpPart :: BasePart
 			hrp:PivotTo(CFrame.new(newPos, newPos + dir))
-			if dt > 0.001 then
-				local velH = dir * (distance / totalTime) -- 수평 속도 (일정)
-				local velY = 4 * height * (1 - 2 * t) / totalTime -- 수직 속도 (t에 따라 변화)
-				hrp.AssemblyLinearVelocity = Vector3.new(velH.X, velY, velH.Z)
-			end
+			local velH = dir * (distance / math.max(totalTime, 0.001)) -- 수평 속도 (일정)
+			local velY = 4 * height * (1 - 2 * t) / math.max(totalTime, 0.001) -- 수직 속도
+			hrp.AssemblyLinearVelocity = Vector3.new(velH.X, velY, velH.Z)
 		elseif shouldRotate then
 			local nextT = math.min(t + 0.01, 1)
 			local nextH = origin + dir * (distance * nextT)
@@ -570,14 +561,8 @@ end
 --[=[
 	AnchorPart()
 	  onSpawn 콜백으로 사용.
-	  HRP 이동 중 Humanoid 상태머신 간섭을 차단합니다.
-
-	  서버에서는 Arc가 직접 SetNetworkOwner + PlatformStand + velocity를 처리하므로
-	  AnchorPart는 클라이언트에서만 동작합니다.
-
-	  클라이언트 적용:
-	    1. PlatformStand = true → Humanoid 상태머신 간섭 차단
-	    2. Heartbeat velocity=0 유지 → 중력 축적 방지
+	  HRP 이동 중 Humanoid 상태머신(PlatformStand)을 차단합니다.
+	  서버/클라이언트 양쪽에서 동작합니다.
 
 	  handle._maid 소멸 시 PlatformStand 자동 복원.
 ]=]
@@ -598,10 +583,6 @@ function EntityUtils.AnchorPart()
 			return
 		end
 
-		-- 서버 HRP: Arc가 SetNetworkOwner + PlatformStand + velocity 전부 처리 → 스킵
-		if RunService:IsServer() and bp.Name == "HumanoidRootPart" then
-			return
-		end
 		local humanoid: Humanoid?
 		local model = bp.Parent
 		if model and (model :: Instance):IsA("Model") then
@@ -614,20 +595,7 @@ function EntityUtils.AnchorPart()
 			humanoid.PlatformStand = true
 		end
 
-		-- Heartbeat마다 velocity=0 유지 → 중력 축적 방지
-		local velConn: RBXScriptConnection
-		velConn = RunService.Heartbeat:Connect(function()
-			if not (bp :: Instance).Parent then
-				velConn:Disconnect()
-				return
-			end
-			bp.AssemblyLinearVelocity = Vector3.zero
-			bp.AssemblyAngularVelocity = Vector3.zero
-		end)
-		handle._maid:GiveTask(velConn)
-
 		handle._maid:GiveTask(function()
-			velConn:Disconnect()
 			if humanoid and (humanoid :: Instance).Parent then
 				humanoid.PlatformStand = wasPlatformStand
 			end
