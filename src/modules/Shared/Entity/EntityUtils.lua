@@ -301,7 +301,6 @@ export type ArcConfig = {
 }
 
 function EntityUtils.Arc(config: ArcConfig)
-	-- nil이면 true (기본 회전), 명시적 false일 때만 고정
 	local shouldRotate = config.rotate ~= false
 
 	return function(dt: number, handle: any, _params: { [string]: any }?): boolean
@@ -320,7 +319,6 @@ function EntityUtils.Arc(config: ArcConfig)
 			h._arcDistance = config.distance
 			h._arcHeight = config.height
 
-			-- HRP 감지 + 서버 전용 처리
 			local part = h.part
 			if
 				part
@@ -342,10 +340,7 @@ function EntityUtils.Arc(config: ArcConfig)
 				h._arcDistance = actualDist
 				h._arcHeight = actualHeight
 
-				-- 네트워크 소유권 서버로 (물리 권위 확보)
-				hrp:SetNetworkOwner(nil)
-
-				-- Humanoid 상태머신 차단
+				-- PlatformStand로 Humanoid 상태머신 차단
 				if humanoid then
 					h._wasPS = humanoid.PlatformStand
 					humanoid.PlatformStand = true
@@ -361,7 +356,6 @@ function EntityUtils.Arc(config: ArcConfig)
 						humanoid.PlatformStand = h._wasPS or false
 					end
 					if hrp.Parent then
-						hrp:SetNetworkOwnershipAuto()
 						hrp.AssemblyLinearVelocity = Vector3.zero
 						hrp.AssemblyAngularVelocity = Vector3.zero
 					end
@@ -379,30 +373,31 @@ function EntityUtils.Arc(config: ArcConfig)
 		local totalTime = distance / config.speed
 		local t = math.clamp(activeElapsed / math.max(totalTime, 0.001), 0, 1)
 
-		local horizontal = origin + dir * (distance * t)
-		local verticalY = 4 * height * t * (1 - t)
-		local newPos = Vector3.new(horizontal.X, origin.Y + verticalY, horizontal.Z)
-
 		if h._isHRPMove then
-			-- 서버 HRP 이동: PivotTo + 접선벡터 velocity로 클라이언트 dead reckoning 보간
+			-- 클라이언트 소유권 유지, velocity만으로 arc 유도
 			local hrp = h._hrpPart :: BasePart
-			hrp:PivotTo(CFrame.new(newPos, newPos + dir))
-			local velH = dir * (distance / math.max(totalTime, 0.001)) -- 수평 속도 (일정)
-			local velY = 4 * height * (1 - 2 * t) / math.max(totalTime, 0.001) -- 수직 속도
+			local velH = dir * (distance / math.max(totalTime, 0.001))
+			local velY = 4 * height * (1 - 2 * t) / math.max(totalTime, 0.001)
 			hrp.AssemblyLinearVelocity = Vector3.new(velH.X, velY, velH.Z)
-		elseif shouldRotate then
-			local nextT = math.min(t + 0.01, 1)
-			local nextH = origin + dir * (distance * nextT)
-			local nextVY = 4 * height * nextT * (1 - nextT)
-			local nextPos = Vector3.new(nextH.X, origin.Y + nextVY, nextH.Z)
-			local lookDir = nextPos - newPos
-			if lookDir.Magnitude > 0.001 then
-				h.part:PivotTo(CFrame.new(newPos, newPos + lookDir.Unit))
-			else
-				h.part:PivotTo(CFrame.new(newPos))
-			end
 		else
-			h.part:PivotTo(CFrame.new(newPos, newPos + dir))
+			local horizontal = origin + dir * (distance * t)
+			local verticalY = 4 * height * t * (1 - t)
+			local newPos = Vector3.new(horizontal.X, origin.Y + verticalY, horizontal.Z)
+
+			if shouldRotate then
+				local nextT = math.min(t + 0.01, 1)
+				local nextH = origin + dir * (distance * nextT)
+				local nextVY = 4 * height * nextT * (1 - nextT)
+				local nextPos = Vector3.new(nextH.X, origin.Y + nextVY, nextH.Z)
+				local lookDir = nextPos - newPos
+				if lookDir.Magnitude > 0.001 then
+					h.part:PivotTo(CFrame.new(newPos, newPos + lookDir.Unit))
+				else
+					h.part:PivotTo(CFrame.new(newPos))
+				end
+			else
+				h.part:PivotTo(CFrame.new(newPos, newPos + dir))
+			end
 		end
 
 		return t < 1
